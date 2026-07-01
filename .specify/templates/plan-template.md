@@ -22,6 +22,11 @@
 
 **Primary Dependencies**: [e.g., FastAPI, UIKit, LLVM or NEEDS CLARIFICATION]
 
+**New Dependencies Requiring Justification** *(Constitution Principles XII–XIII)*: [List any package
+not already installed that this feature needs. For each: state why Next.js/Fastify/Node's standard
+library/an existing dependency can't reasonably cover it, and confirm explicit sign-off was obtained
+before any install command runs. Write "None" if no new dependency is needed.]
+
 **Storage**: [if applicable, e.g., PostgreSQL, CoreData, files or N/A]
 
 **Testing**: [e.g., pytest, XCTest, cargo test or NEEDS CLARIFICATION]

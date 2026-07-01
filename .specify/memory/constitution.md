@@ -1,21 +1,20 @@
 <!--
 Sync Impact Report
-Version change: 1.0.0 → 1.1.0
+Version change: 1.1.0 → 1.2.0
 Modified principles: N/A (no existing principle redefined)
 Added sections:
-  - Development Workflow (new principle X: branch hygiene — clean working tree before starting a
-    new feature branch, one branch per spec)
+  - Technology Stack & Tooling Discipline (new principles XI–XIII: fixed Next.js/Fastify stack,
+    prefer built-in utilities over new dependencies, no new package installed without explicit
+    permission)
 Removed sections: N/A
 Templates requiring updates:
-  - .specify/templates/plan-template.md ✅ no changes needed (Constitution Check gate is already generic and reads from this file)
-  - .specify/templates/spec-template.md ✅ already updated in a prior amendment with a Constitution
-    Alignment checklist; no further change needed for this workflow principle (it governs branch/repo
-    hygiene, not spec content)
+  - .specify/templates/plan-template.md ✅ updated — Technical Context now requires new dependencies
+    to be listed with justification per Principles XII–XIII
+  - .specify/templates/spec-template.md ✅ no change needed (dependency discipline is a plan/implementation
+    concern, not spec content)
   - .specify/templates/tasks-template.md ✅ no changes needed (task categorization is generic)
-  - .specify/scripts/bash/create-new-feature.sh ⚠ pending — this script computes a branch name and
-    feature directory but does not itself check for a clean working tree or create/checkout the git
-    branch. Flagged for a follow-up change so branch creation actually enforces Principle X; not
-    modified in this run since it is an operational script, not a template.
+  - .specify/scripts/bash/create-new-feature.sh ⚠ still pending from prior amendment (Principle X
+    clean-working-tree check not yet enforced by the script)
   - No command files or CLAUDE.md/README.md exist yet in this repo to reconcile
 Follow-up TODOs:
   - None blocking.
@@ -144,6 +143,41 @@ or roll back one feature without dragging in another. A clean starting point per
 feature independently reviewable and deployable — the same independence Principle IV expects at the
 spec level.
 
+## Technology Stack & Tooling Discipline
+
+### XI. Stack Is Fixed: Next.js Frontend, Fastify Backend
+
+Frontend work is built in Next.js; backend/API work is built on Fastify. Specs and plans MUST assume
+this stack rather than re-litigating it per feature. Any proposal to introduce a different framework
+or runtime for a specific feature requires explicit justification and sign-off — it is a
+constitution-level decision, not a per-feature implementation choice.
+
+**Rationale**: A platform serving many tenants on shared infrastructure needs one operational surface
+to secure, monitor, and scale. Letting each feature pick its own framework fragments that surface and
+multiplies the isolation and tooling work required by Principles I and V.
+
+### XII. Prefer Built-In/Native Utilities Over New Dependencies
+
+Before adding a package, check whether Next.js, Fastify, Node's standard library, or an
+already-installed dependency can do the job. New packages are the fallback, not the default. This
+applies to both AI-assisted and manual development — speed of implementation is not sufficient
+justification for adding a dependency that a built-in utility could cover with reasonable effort.
+
+**Rationale**: Every added dependency is a supply-chain surface and a long-term maintenance cost across
+every tenant on the platform. Reaching for a package by default trades a one-time convenience for a
+permanent liability.
+
+### XIII. No New Package Is Installed Without Explicit Permission
+
+Claude (or any contributor, human or AI) MUST NOT run install commands (npm/pnpm/yarn install of a new
+package) without first stating the package, its purpose, why a built-in alternative won't do, and
+getting explicit go-ahead. This applies during spec creation, planning, and implementation phases
+alike. Silent dependency additions are treated as a constitution violation, not a minor convenience.
+
+**Rationale**: Dependency choices are cheap to propose and expensive to unwind once code depends on
+them. Requiring sign-off keeps the decision with the people accountable for the platform's long-term
+maintenance burden, not buried in an implementation diff.
+
 ## Quality Bar
 
 - Data model changes MUST state their tenant-isolation model impact (shared schema w/ RLS,
@@ -176,7 +210,8 @@ what changed and why.
 - **PATCH**: Clarifications, wording, or typo fixes that do not change meaning.
 
 **Compliance review**: Every spec and plan produced under `speckit` MUST be checked against the Core
-Principles, Development Workflow, and Quality Bar above before moving to implementation. Any unresolved
-conflict blocks implementation until resolved per the amendment procedure or the spec is revised.
+Principles, Development Workflow, Technology Stack & Tooling Discipline, and Quality Bar above before
+moving to implementation. Any unresolved conflict blocks implementation until resolved per the
+amendment procedure or the spec is revised.
 
-**Version**: 1.1.0 | **Ratified**: 2026-07-01 | **Last Amended**: 2026-07-01
+**Version**: 1.2.0 | **Ratified**: 2026-07-01 | **Last Amended**: 2026-07-01
