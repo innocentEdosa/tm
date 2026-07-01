@@ -1,0 +1,55 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# Turbo
+.turbo/
+
+# Environment files (never push secrets/credentials)
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Secrets & keys
+*.pem
+*.key
+*.crt
+*.p12
+*.cert
+secrets/
+
+# Test & coverage
+coverage/
+.nyc_output/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Next.js
+next-env.d.ts
+
+# Local tool state (not shared with the team)
+.claude/settings.local.json
