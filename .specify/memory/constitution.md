@@ -1,25 +1,24 @@
 <!--
 Sync Impact Report
-Version change: [TEMPLATE] → 1.0.0 (initial ratification)
-Modified principles: N/A (first ratified version)
+Version change: 1.0.0 → 1.1.0
+Modified principles: N/A (no existing principle redefined)
 Added sections:
-  - Project Identity
-  - Core Principles (I–IX)
-  - Quality Bar
-  - Governance
-Removed sections: N/A (template placeholders only)
+  - Development Workflow (new principle X: branch hygiene — clean working tree before starting a
+    new feature branch, one branch per spec)
+Removed sections: N/A
 Templates requiring updates:
   - .specify/templates/plan-template.md ✅ no changes needed (Constitution Check gate is already generic and reads from this file)
-  - .specify/templates/spec-template.md ⚠ pending — recommend adding a "Constitution Alignment" checklist
-    (tenant-isolation model, configurability, AI review gate, ROI formula, downgrade/cancellation note,
-    design-system reference) so specs are forced to answer the Quality Bar questions below. Not applied
-    automatically in this run; flagged for a follow-up edit.
+  - .specify/templates/spec-template.md ✅ already updated in a prior amendment with a Constitution
+    Alignment checklist; no further change needed for this workflow principle (it governs branch/repo
+    hygiene, not spec content)
   - .specify/templates/tasks-template.md ✅ no changes needed (task categorization is generic)
-  - .specify/templates/checklist-template.md — not reviewed for principle-specific content this pass
+  - .specify/scripts/bash/create-new-feature.sh ⚠ pending — this script computes a branch name and
+    feature directory but does not itself check for a clean working tree or create/checkout the git
+    branch. Flagged for a follow-up change so branch creation actually enforces Principle X; not
+    modified in this run since it is an operational script, not a template.
   - No command files or CLAUDE.md/README.md exist yet in this repo to reconcile
 Follow-up TODOs:
-  - None blocking. RATIFICATION_DATE set to the date this constitution was adopted (today), since no
-    prior constitution existed.
+  - None blocking.
 -->
 
 # TM Constitution
@@ -130,6 +129,21 @@ delivery communication stays honest with a non-technical audience.
 **Rationale**: A non-technical stakeholder judges progress by what they can see. Conflating "done" with
 "demoable" erodes trust when infrastructure work (correctly) produces nothing visible.
 
+## Development Workflow
+
+### X. Every Feature Starts in a New Branch, from a Clean Working Tree
+
+No feature work begins on a branch that has uncommitted or pending changes waiting to merge. Before
+creating a new feature branch, all prior work MUST be either merged, committed and pushed, or
+explicitly stashed with intent to return to it. This applies even under fast, AI-assisted iteration —
+speed is not a reason to stack unrelated changes on top of an unmerged branch. Each spec (via speckit)
+maps to its own branch; branches are not reused across unrelated features.
+
+**Rationale**: Stacking unrelated changes onto an unmerged branch makes it impossible to review, ship,
+or roll back one feature without dragging in another. A clean starting point per spec keeps each
+feature independently reviewable and deployable — the same independence Principle IV expects at the
+spec level.
+
 ## Quality Bar
 
 - Data model changes MUST state their tenant-isolation model impact (shared schema w/ RLS,
@@ -162,7 +176,7 @@ what changed and why.
 - **PATCH**: Clarifications, wording, or typo fixes that do not change meaning.
 
 **Compliance review**: Every spec and plan produced under `speckit` MUST be checked against the Core
-Principles and Quality Bar above before moving to implementation. Any unresolved conflict blocks
-implementation until resolved per the amendment procedure or the spec is revised.
+Principles, Development Workflow, and Quality Bar above before moving to implementation. Any unresolved
+conflict blocks implementation until resolved per the amendment procedure or the spec is revised.
 
-**Version**: 1.0.0 | **Ratified**: 2026-07-01 | **Last Amended**: 2026-07-01
+**Version**: 1.1.0 | **Ratified**: 2026-07-01 | **Last Amended**: 2026-07-01
