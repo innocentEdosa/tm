@@ -2,13 +2,14 @@ services:
   postgres:
     image: postgres:16-alpine
     ports:
-      - "5432:5432"
+      - "5433:5432"
     environment:
       POSTGRES_USER: tm
       POSTGRES_PASSWORD: tm_password
       POSTGRES_DB: tm_dev
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./apps/api/drizzle/init:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U tm"]
       interval: 5s
