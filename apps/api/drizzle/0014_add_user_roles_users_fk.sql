@@ -1,0 +1,8 @@
+-- Intentionally a no-op. Originally intended to add a FK from user_roles.user_id -> users.id, now
+-- that this feature creates `users`. Reverted during implementation: `users.tenant_id` is NOT NULL,
+-- but Spec 1's platform-level Super Admin role assignment (`roles.tenant_id IS NULL`) has no
+-- tenant to attach a `users` row to — no spec has yet defined how a platform operator/internal
+-- staff member is represented as a row in this tenant-scoped `users` table. Adding this FK would
+-- have blocked Super Admin role assignment entirely. Left as an explicit non-decision for whichever
+-- future spec addresses platform-operator identity (data-model.md `user_roles` amendment,
+-- research.md §6) — `user_roles.user_id` remains a bare uuid with no FK, unchanged from Spec 1.

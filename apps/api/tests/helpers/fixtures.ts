@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { inArray } from "drizzle-orm";
+import { inArray, isNull } from "drizzle-orm";
 import { withTenantDb } from "./pg";
 import { roles, rolePermissions, userRoles } from "../../src/db/schema/roles";
 import { permissions } from "../../src/db/schema/permissions";
+import { getPlatformReaderDb } from "../../src/db/platform-reader";
 
 /** Creates a tenant-scoped role with the given permission keys and assigns it to `userId`. */
 export async function seedUserWithRole(
@@ -59,5 +60,28 @@ export async function seedRole(
 export async function assignRole(tenantId: string, userId: string, roleId: string): Promise<void> {
   await withTenantDb(tenantId, async (db) => {
     await db.insert(userRoles).values({ tenantId, userId, roleId });
+  });
+}
+
+/**
+ * Assigns `userId` the platform Super Admin role (`roles.tenant_id IS NULL`), for tests exercising
+ * `requirePlatformPermission`-guarded routes. Looks up the role id via the BYPASSRLS platform-reader
+ * connection (the same one `isSuperAdminWithPermission` uses) — a normal tenant-scoped connection can
+ * never see that row by design (FR-007). The `user_roles` row itself still needs some `tenant_id`
+ * (NOT NULL column, functionally unused by the platform-reader lookup, which joins only on
+ * `role_id`/`user_id`), so a throwaway sentinel tenant id is used for that one column.
+ */
+export async function seedSuperAdminUser(userId: string): Promise<void> {
+  const [superAdminRole] = await getPlatformReaderDb()
+    .select({ id: roles.id })
+    .from(roles)
+    .where(isNull(roles.tenantId));
+  if (!superAdminRole) {
+    throw new Error("Platform Super Admin role not seeded — run migrations through 0007+");
+  }
+
+  const sentinelTenantId = randomUUID();
+  await withTenantDb(sentinelTenantId, async (db) => {
+    await db.insert(userRoles).values({ tenantId: sentinelTenantId, userId, roleId: superAdminRole.id });
   });
 }

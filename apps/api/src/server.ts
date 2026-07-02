@@ -6,6 +6,7 @@ import tenantContext from "./plugins/tenant-context";
 import adminRoutes from "./permissions/admin-routes";
 import demoRoutes from "./permissions/demo-routes";
 import tenantRoleRoutes from "./permissions/tenant-role-routes";
+import provisioningRoutes from "./provisioning/provisioning-routes";
 
 export interface BuildServerOptions {
   /**
@@ -59,6 +60,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Fas
   await server.register(adminRoutes);
   await server.register(demoRoutes);
   await server.register(tenantRoleRoutes);
+  await server.register(provisioningRoutes);
 
   server.get("/health", async () => ({
     status: "ok",

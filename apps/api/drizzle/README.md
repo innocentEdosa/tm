@@ -32,6 +32,23 @@ one back independently of the schema itself.
 | 0002–0004 | `000{2,3,4}_rls_*.sql` | Enables + forces RLS on `roles`/`role_permissions`/`user_roles`. |
 | 0005–0007 | `000{5,6,7}_seed_*.sql` | Seeds the permission catalog, the four role templates, the one platform Super Admin role. |
 | 0008 | `0008_platform_reader_grants.sql` | `tm_platform_reader` grants (see below). |
+| 0009 | `0009_init_tenant_provisioning.sql` | Creates `tenants`, `department_templates`, `departments`, `users` (Tenant Provisioning Core spec). |
+| 0010–0012 | `001{0,1,2}_rls_*.sql` | Enables + forces RLS on `tenants`, `departments`, `users` — same idiom as `roles`/`user_roles` (data-model.md `tenants` Isolation). |
+| 0013 | `0013_lock_department_catalog_grants.sql` | `tm_app` grants: `department_templates` read-only, `tenants`/`departments`/`users` full CRUD. |
+| 0014 | `0014_add_user_roles_users_fk.sql` | **No-op.** A FK from `user_roles.user_id` to `users.id` was attempted and reverted here — it would have blocked the platform Super Admin's role assignment, since `users.tenant_id` is `NOT NULL` and Super Admin isn't tied to any tenant. See research.md §6. |
+| 0015 | `0015_seed_provision_tenant_permission.sql` | Seeds the `provision_tenant` permission, granted only to the platform Super Admin role. |
+| 0016 | `0016_seed_department_templates.sql` | Seeds the six default department templates. |
+
+## Tenant/department/user RLS bootstrap idiom (research.md §1)
+
+`tenants`, `departments`, and `users` use the exact same tenant-isolation policy shape as `roles`
+and `user_roles` (`USING/WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::uuid)`,
+or `id = ...` for `tenants` itself, since its own `id` *is* the tenant id). The one difference from
+Spec 1: a brand-new tenant's id doesn't exist in the database yet when provisioning starts, so
+`apps/api/src/provisioning/provision-tenant.ts` generates the `tenantId` in application code
+*before* opening its transaction, then runs `SELECT set_config('app.tenant_id', $1, true)` with that
+generated id before the first `INSERT` — so `WITH CHECK` passes for the tenant's own row from the
+very first write, with no elevated/`BYPASSRLS` role needed anywhere in this flow.
 
 ## Operational notes — connection pooling (research.md §5)
 
