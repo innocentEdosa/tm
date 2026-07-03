@@ -19,5 +19,19 @@ declare module "fastify" {
      * `SET LOCAL app.tenant_id` already applied — see plugins/tenant-context.ts.
      */
     tenantDb: Db;
+    /**
+     * Decorated by platform-auth/super-admin-context.ts from a validated `super_admin_sessions`
+     * lookup only — never from client-supplied input (spec FR-012).
+     */
+    superAdmin?: {
+      id: string;
+      email: string;
+      name: string;
+    };
+    /**
+     * Drizzle instance bound to this request's transaction-scoped client, with
+     * `SET LOCAL app.is_super_admin` already applied — see platform-auth/super-admin-context.ts.
+     */
+    superAdminDb?: Db;
   }
 }

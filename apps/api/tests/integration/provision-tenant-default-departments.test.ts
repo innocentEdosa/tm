@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
 import { closeTestPool, withTenantTransaction } from "../helpers/pg";
-import { seedSuperAdminUser } from "../helpers/fixtures";
+import { seedSuperAdminSession } from "../helpers/fixtures";
 import { buildTestServer } from "../helpers/test-server";
 
 describe("POST /provisioning/tenants — default departments applied when omitted (US3)", () => {
@@ -11,14 +11,13 @@ describe("POST /provisioning/tenants — default departments applied when omitte
 
   it("creates exactly the six default departments, each with source_template_id set", async () => {
     const server = await buildTestServer();
-    const superAdminUserId = randomUUID();
-    await seedSuperAdminUser(superAdminUserId);
+    const { cookieHeader } = await seedSuperAdminSession();
     const subdomain = `acme-${randomUUID()}`;
 
     const response = await server.inject({
       method: "POST",
       url: "/provisioning/tenants",
-      headers: { "x-test-user-id": superAdminUserId, "x-test-tenant-id": randomUUID() },
+      headers: { cookie: cookieHeader },
       payload: {
         company: {
           name: "Acme Corp",

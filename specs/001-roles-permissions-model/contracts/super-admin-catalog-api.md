@@ -1,5 +1,14 @@
 # Contract: Super Admin — Permission Catalog & Role Template View
 
+> **Superseded, 2026-07-03**: the guard described below (`requirePlatformPermission`, backed by the
+> `roles.tenant_id IS NULL` platform role and the `tm_platform_reader` `BYPASSRLS` role) has been
+> retired. Both routes now use `requireSuperAdminSession` from the Super Admin Authentication spec
+> — a real, revocable session against the dedicated `super_admins` table, with no `BYPASSRLS`
+> anywhere in the codebase. The **`403`** responses documented below are now **`401`** in practice.
+> Kept here for historical record rather than rewritten; see
+> `specs/003-super-admin-authentication/contracts/platform-auth-api.md` and
+> `apps/api/drizzle/README.md`'s "Platform-reader role" section for the current mechanism.
+
 Fastify JSON endpoints backing spec User Story 1 (P1) and the feature's demoable slice (FR-013). Read
 -only for this spec — no endpoint here creates, edits, or deletes catalog data (that only happens via
 migrations, per FR-002).

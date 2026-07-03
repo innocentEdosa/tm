@@ -9,8 +9,6 @@ import { join } from "node:path";
 const defaults: Record<string, string> = {
   DATABASE_URL: "postgresql://tm:tm_password@localhost:5433/tm_dev",
   APP_DATABASE_URL: "postgresql://tm_app:tm_app_password@localhost:5433/tm_dev",
-  PLATFORM_READER_DATABASE_URL:
-    "postgresql://tm_platform_reader:tm_platform_reader_password@localhost:5433/tm_dev",
 };
 
 const envTestPath = join(__dirname, "..", ".env.test");

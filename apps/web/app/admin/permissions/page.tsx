@@ -1,6 +1,16 @@
+"use client";
+
 // Follows the existing minimal, nascent conventions (Tailwind v4, @tm/ui palette/tokens) pending a
-// fully locked design system — the constitution Principle V "flag a design-system proposal" for
-// this screen; no new palette/font/component library introduced.
+// fully locked design system — constitution Principle V, matching every other UI surface. Client
+// component: guarded by `requireSuperAdminSession` (Super Admin Authentication spec), which reads
+// the `tm_super_admin_session` cookie — a Server Component running on apps/web's own server has no
+// access to that browser cookie, so this must fetch from the browser with `credentials: "include"`,
+// same pattern as `app/platform/page.tsx`. Fetches go through next.config.ts's rewrite proxy
+// (relative /platform-api/* path) so the cookie stays same-origin — see next.config.ts. Superseded
+// the old dev-only `x-dev-user-id` header stub entirely — that mechanism is now actively rejected
+// by the guard (research.md §4 of the Super Admin Authentication spec), not just unrelated to it.
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import type { ApiResponse } from "@tm/types";
 
 interface Permission {
@@ -20,46 +30,61 @@ interface RoleTemplate {
   permissions: string[];
 }
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
+const API_BASE = "/platform-api";
 
-interface FetchResult<T> {
-  data: T[] | null;
-  forbidden: boolean;
-  error: boolean;
-}
+type LoadState =
+  | { status: "loading" }
+  | { status: "unauthenticated" }
+  | { status: "error" }
+  | { status: "ready"; permissions: Permission[]; roleTemplates: RoleTemplate[] };
 
-// DEV-ONLY: apps/api's server.ts has no real auth yet and stubs `request.user` from
-// x-dev-user-id when NODE_ENV=development (never staging/production). Set DEV_SUPER_ADMIN_USER_ID
-// locally to view this screen with real data. Delete once real auth ships.
-const devHeaders: Record<string, string> =
-  process.env.NODE_ENV === "development" && process.env.DEV_SUPER_ADMIN_USER_ID
-    ? { "x-dev-user-id": process.env.DEV_SUPER_ADMIN_USER_ID }
-    : {};
-
-async function fetchAdmin<T>(path: string): Promise<FetchResult<T>> {
-  try {
-    const res = await fetch(`${API_URL}${path}`, { cache: "no-store", headers: devHeaders });
-    if (res.status === 403) {
-      return { data: null, forbidden: true, error: false };
-    }
-    if (!res.ok) {
-      return { data: null, forbidden: false, error: true };
-    }
-    const json = (await res.json()) as ApiResponse<T[]>;
-    return { data: json.data, forbidden: false, error: false };
-  } catch {
-    return { data: null, forbidden: false, error: true };
+async function fetchJson<T>(path: string): Promise<{ ok: true; data: T } | { ok: false; status: number }> {
+  const res = await fetch(`${API_BASE}${path}`, { credentials: "include", cache: "no-store" });
+  if (!res.ok) {
+    return { ok: false, status: res.status };
   }
+  const json = (await res.json()) as ApiResponse<T>;
+  return { ok: true, data: json.data };
 }
 
-export default async function AdminPermissionsPage() {
-  const [permissionsResult, templatesResult] = await Promise.all([
-    fetchAdmin<Permission>("/admin/permissions"),
-    fetchAdmin<RoleTemplate>("/admin/role-templates"),
-  ]);
+export default function AdminPermissionsPage() {
+  const router = useRouter();
+  const [state, setState] = useState<LoadState>({ status: "loading" });
 
-  const forbidden = permissionsResult.forbidden || templatesResult.forbidden;
-  const error = permissionsResult.error || templatesResult.error;
+  useEffect(() => {
+    let cancelled = false;
+
+    Promise.all([
+      fetchJson<Permission[]>("/admin/permissions"),
+      fetchJson<RoleTemplate[]>("/admin/role-templates"),
+    ])
+      .then(([permissionsResult, templatesResult]) => {
+        if (cancelled) return;
+        if (!permissionsResult.ok || !templatesResult.ok) {
+          const status = !permissionsResult.ok ? permissionsResult.status : (templatesResult as { status: number }).status;
+          setState(status === 401 ? { status: "unauthenticated" } : { status: "error" });
+          return;
+        }
+        setState({
+          status: "ready",
+          permissions: permissionsResult.data,
+          roleTemplates: templatesResult.data,
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setState({ status: "error" });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (state.status === "unauthenticated") {
+      router.replace("/platform/login");
+    }
+  }, [state.status, router]);
 
   return (
     <main className="mx-auto max-w-5xl px-6 py-12">
@@ -70,16 +95,11 @@ export default async function AdminPermissionsPage() {
         Platform-wide permission catalog and default role templates. Read-only.
       </p>
 
-      {forbidden && (
-        <div
-          role="alert"
-          className="mt-8 rounded-md border border-gray-300 bg-gray-50 px-4 py-3 text-sm text-gray-900"
-        >
-          Forbidden — this view requires the platform Super Admin role.
-        </div>
+      {(state.status === "loading" || state.status === "unauthenticated") && (
+        <p className="mt-8 text-sm text-gray-600">Loading…</p>
       )}
 
-      {!forbidden && error && (
+      {state.status === "error" && (
         <div
           role="alert"
           className="mt-8 rounded-md border border-gray-300 bg-gray-50 px-4 py-3 text-sm text-gray-900"
@@ -88,11 +108,11 @@ export default async function AdminPermissionsPage() {
         </div>
       )}
 
-      {!forbidden && !error && (
+      {state.status === "ready" && (
         <>
           <section className="mt-10">
             <h2 className="text-xl font-semibold text-gray-900">Permission Catalog</h2>
-            {permissionsResult.data && permissionsResult.data.length > 0 ? (
+            {state.permissions.length > 0 ? (
               <div className="mt-4 overflow-x-auto rounded-md border border-gray-200">
                 <table className="min-w-full divide-y divide-gray-200 text-sm">
                   <thead className="bg-gray-50">
@@ -112,7 +132,7 @@ export default async function AdminPermissionsPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100 bg-white">
-                    {permissionsResult.data.map((permission) => (
+                    {state.permissions.map((permission) => (
                       <tr key={permission.id}>
                         <td className="px-4 py-2 font-mono text-xs text-gray-900">
                           {permission.key}
@@ -136,9 +156,9 @@ export default async function AdminPermissionsPage() {
 
           <section className="mt-12">
             <h2 className="text-xl font-semibold text-gray-900">Role Templates</h2>
-            {templatesResult.data && templatesResult.data.length > 0 ? (
+            {state.roleTemplates.length > 0 ? (
               <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                {templatesResult.data.map((template) => (
+                {state.roleTemplates.map((template) => (
                   <div key={template.id} className="rounded-md border border-gray-200 p-4">
                     <div className="flex items-center justify-between gap-2">
                       <h3 className="font-semibold text-gray-900">{template.name}</h3>

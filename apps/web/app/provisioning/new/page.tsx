@@ -2,13 +2,16 @@
 
 // Follows the existing minimal, nascent conventions (Tailwind v4, @tm/ui palette/tokens) pending a
 // fully locked design system — constitution Principle V "flag a design-system proposal" for this
-// screen; no new palette/font/component library introduced. Mirrors
-// apps/web/app/admin/permissions/page.tsx's dev-header-stub and visual language exactly.
+// screen; no new palette/font/component library introduced. Guarded by `requireSuperAdminSession`
+// (Super Admin Authentication spec) — authenticates via the real `tm_super_admin_session` cookie,
+// so the submit fetch uses `credentials: "include"` (same pattern as `app/platform/page.tsx`), not
+// the old dev-only header stub. Goes through next.config.ts's rewrite proxy (relative
+// /platform-api/* path) so the cookie stays same-origin from the browser's point of view.
 import { useState } from "react";
 import { Button } from "@tm/ui";
 import type { ApiResponse } from "@tm/types";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
+const API_BASE = "/platform-api";
 
 const DEFAULT_DEPARTMENTS = [
   "Human Resources",
@@ -20,18 +23,6 @@ const DEFAULT_DEPARTMENTS = [
 ];
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-// DEV-ONLY: apps/api's server.ts has no real auth yet and stubs `request.user` from
-// x-dev-user-id when NODE_ENV=development (never staging/production). Set
-// NEXT_PUBLIC_DEV_SUPER_ADMIN_USER_ID locally to submit this form with real data. Unlike
-// admin/permissions/page.tsx (a server component, where plain env vars work), this page is a
-// client component — the fetch call runs in the browser, so the var needs the NEXT_PUBLIC_
-// prefix for Next.js to inline it into the client bundle at build time. Delete once real auth
-// ships.
-const devHeaders: Record<string, string> =
-  process.env.NODE_ENV === "development" && process.env.NEXT_PUBLIC_DEV_SUPER_ADMIN_USER_ID
-    ? { "x-dev-user-id": process.env.NEXT_PUBLIC_DEV_SUPER_ADMIN_USER_ID }
-    : {};
 
 interface CompanyDetails {
   name: string;
@@ -178,9 +169,10 @@ export default function ProvisionTenantPage() {
     };
 
     try {
-      const res = await fetch(`${API_URL}/provisioning/tenants`, {
+      const res = await fetch(`${API_BASE}/provisioning/tenants`, {
         method: "POST",
-        headers: { "content-type": "application/json", ...devHeaders },
+        credentials: "include",
+        headers: { "content-type": "application/json" },
         body: JSON.stringify(payload),
       });
       const json = (await res.json()) as ApiResponse<ProvisionedTenant>;
@@ -189,10 +181,10 @@ export default function ProvisionTenantPage() {
         setSubmit({ status: "success", data: json.data });
         return;
       }
-      if (res.status === 403) {
+      if (res.status === 401) {
         setSubmit({
           status: "error",
-          message: "Forbidden — this action requires the platform Super Admin role.",
+          message: "You need to be logged in as a platform Super Admin to do this.",
         });
         return;
       }

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
 import { closeTestPool, withTenantTransaction } from "../helpers/pg";
-import { seedSuperAdminUser } from "../helpers/fixtures";
+import { seedSuperAdminSession } from "../helpers/fixtures";
 import { buildTestServer } from "../helpers/test-server";
 
 describe("POST /provisioning/tenants — customized department list (US3)", () => {
@@ -11,8 +11,7 @@ describe("POST /provisioning/tenants — customized department list (US3)", () =
 
   it("creates exactly the submitted list (rename + add + remove relative to defaults), source_template_id NULL", async () => {
     const server = await buildTestServer();
-    const superAdminUserId = randomUUID();
-    await seedSuperAdminUser(superAdminUserId);
+    const { cookieHeader } = await seedSuperAdminSession();
     const subdomain = `acme-${randomUUID()}`;
 
     // Relative to the six defaults: "Human Resources" renamed to "People Ops", "Sales" and
@@ -28,7 +27,7 @@ describe("POST /provisioning/tenants — customized department list (US3)", () =
     const response = await server.inject({
       method: "POST",
       url: "/provisioning/tenants",
-      headers: { "x-test-user-id": superAdminUserId, "x-test-tenant-id": randomUUID() },
+      headers: { cookie: cookieHeader },
       payload: {
         company: {
           name: "Acme Corp",

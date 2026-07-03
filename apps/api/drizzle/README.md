@@ -18,7 +18,7 @@ needs one ships a hand-authored paired `..._down.sql` file. To roll back:
 |---|---|---|
 | `0000_init_roles_permissions.sql` | `0000_init_roles_permissions_down.sql` | Drops all six tables, reverse FK order. Full teardown of this feature — only run if nothing else references these tables. |
 
-`0001`–`0008` are grants/RLS/seed migrations with no corresponding down files — they're each a
+`0001`–`0007` are grants/RLS/seed migrations with no corresponding down files — they're each a
 single `GRANT`/`REVOKE`/`CREATE POLICY`/`INSERT` statement, safe to reverse by hand if ever needed
 (`REVOKE`/`DROP POLICY`/`DELETE`), but not scripted since nothing in this feature has needed to roll
 one back independently of the schema itself.
@@ -31,13 +31,14 @@ one back independently of the schema itself.
 | 0001 | `0001_lock_catalog_grants.sql` | `tm_app` grants: catalog read-only, tenant tables full CRUD. |
 | 0002–0004 | `000{2,3,4}_rls_*.sql` | Enables + forces RLS on `roles`/`role_permissions`/`user_roles`. |
 | 0005–0007 | `000{5,6,7}_seed_*.sql` | Seeds the permission catalog, the four role templates, the one platform Super Admin role. |
-| 0008 | `0008_platform_reader_grants.sql` | `tm_platform_reader` grants (see below). |
-| 0009 | `0009_init_tenant_provisioning.sql` | Creates `tenants`, `department_templates`, `departments`, `users` (Tenant Provisioning Core spec). |
-| 0010–0012 | `001{0,1,2}_rls_*.sql` | Enables + forces RLS on `tenants`, `departments`, `users` — same idiom as `roles`/`user_roles` (data-model.md `tenants` Isolation). |
-| 0013 | `0013_lock_department_catalog_grants.sql` | `tm_app` grants: `department_templates` read-only, `tenants`/`departments`/`users` full CRUD. |
-| 0014 | `0014_add_user_roles_users_fk.sql` | **No-op.** A FK from `user_roles.user_id` to `users.id` was attempted and reverted here — it would have blocked the platform Super Admin's role assignment, since `users.tenant_id` is `NOT NULL` and Super Admin isn't tied to any tenant. See research.md §6. |
-| 0015 | `0015_seed_provision_tenant_permission.sql` | Seeds the `provision_tenant` permission, granted only to the platform Super Admin role. |
-| 0016 | `0016_seed_department_templates.sql` | Seeds the six default department templates. |
+| 0008 | `0008_init_tenant_provisioning.sql` | Creates `tenants`, `department_templates`, `departments`, `users` (Tenant Provisioning Core spec). |
+| 0009–0011 | `00{9,10,11}_rls_*.sql` | Enables + forces RLS on `tenants`, `departments`, `users` — same idiom as `roles`/`user_roles` (data-model.md `tenants` Isolation). |
+| 0012 | `0012_lock_department_catalog_grants.sql` | `tm_app` grants: `department_templates` read-only, `tenants`/`departments`/`users` full CRUD. |
+| 0013 | `0013_add_user_roles_users_fk.sql` | **No-op.** A FK from `user_roles.user_id` to `users.id` was attempted and reverted here — it would have blocked the platform Super Admin's role assignment, since `users.tenant_id` is `NOT NULL` and Super Admin isn't tied to any tenant. See research.md §6. |
+| 0014 | `0014_seed_provision_tenant_permission.sql` | Seeds the `provision_tenant` permission, granted only to the platform Super Admin role. |
+| 0015 | `0015_seed_department_templates.sql` | Seeds the six default department templates. |
+| 0016 | `0016_init_super_admin_auth.sql` | Creates `super_admins` and `super_admin_sessions` (Super Admin Authentication spec). Neither has RLS — no `tenant_id` column, no tenant dimension. |
+| 0017 | `0017_lock_super_admin_grants.sql` | `tm_app` grants: `super_admins` gets `SELECT`/`UPDATE` only — deliberately **no `INSERT`**, so the running server can never create a Super Admin account (see "Super Admin bootstrap" below). `super_admin_sessions` gets full `SELECT`/`INSERT`/`UPDATE`. |
 
 ## Tenant/department/user RLS bootstrap idiom (research.md §1)
 
@@ -49,6 +50,16 @@ Spec 1: a brand-new tenant's id doesn't exist in the database yet when provision
 *before* opening its transaction, then runs `SELECT set_config('app.tenant_id', $1, true)` with that
 generated id before the first `INSERT` — so `WITH CHECK` passes for the tenant's own row from the
 very first write, with no elevated/`BYPASSRLS` role needed anywhere in this flow.
+
+## Super Admin bootstrap (`super_admins` has no `INSERT` grant for `tm_app`)
+
+Unlike every other table in this schema, `super_admins` cannot be written to by the running server
+at all — `0017_lock_super_admin_grants.sql` grants `tm_app` only `SELECT`/`UPDATE`. The only way to
+create a Super Admin account is `pnpm --filter api seed:super-admin`
+(`apps/api/scripts/seed-super-admin.ts`), a standalone script that connects via `DATABASE_URL` (the
+migration/owner role, same as migrations). This makes "Super Admin creation is not a network-reachable
+endpoint" a database-level guarantee, not just an application-code convention — see the Super Admin
+Authentication spec's research.md §7 and `contracts/seed-super-admin-script.md`.
 
 ## Operational notes — connection pooling (research.md §5)
 
@@ -79,14 +90,18 @@ migrations against a new Neon project, an operator must create the restricted ro
 in the deployment's secret manager — never commit a real password), then point `APP_DATABASE_URL`
 at that role's pooled connection string.
 
-## Platform-reader role (`tm_platform_reader`)
+## Super Admin access checks — no `BYPASSRLS` role
 
 RLS on `roles`/`user_roles` intentionally makes the platform Super Admin role's row unreachable
-through `tm_app`'s tenant-scoped connection (FR-007 — no tenant session can ever see it). That
-means `tm_app` also can't be used to verify "is this caller the Super Admin" for
-`GET /admin/permissions`/`GET /admin/role-templates`. `tm_platform_reader`
-(`drizzle/init/02-platform-reader-role.sql`, granted in `0008_platform_reader_grants.sql`) is the
-narrow, intentional exception: `BYPASSRLS`, `SELECT`-only on `roles`, `user_roles`,
-`role_permissions`, and `permissions`, used by exactly one function (`isSuperAdminWithPermission`
-in `apps/api/src/permissions/require-platform-permission.ts`).
-Same Neon caveat as `tm_app` — an operator must create it by hand in staging/production.
+through `tm_app`'s tenant-scoped connection (FR-007 — no tenant session can ever see it), so
+`tm_app` alone can't answer "is this caller the Super Admin" for `GET /admin/permissions`,
+`GET /admin/role-templates`, or `POST /provisioning/tenants`. Those three routes use
+`requireSuperAdminSession` instead — a dedicated `super_admins` table plus a server-set
+`app.is_super_admin` session indicator (`apps/api/src/platform-auth/`). Nothing in this codebase
+uses `BYPASSRLS`.
+
+**Consequence**: Super Admin access to these three routes is a binary "does a valid `super_admins`
+session exist" check, not a permission-key check — the `view_permission_catalog` and
+`provision_tenant` catalog permissions still exist (nothing currently reads them), a leftover from
+an earlier model kept rather than deleted, since removing catalog permissions is treated as a
+deliberate, separate action (Spec 1 FR-002).

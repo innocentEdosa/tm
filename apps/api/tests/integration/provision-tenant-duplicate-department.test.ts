@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
 import { closeTestPool, withTenantTransaction } from "../helpers/pg";
-import { seedSuperAdminUser } from "../helpers/fixtures";
+import { seedSuperAdminSession } from "../helpers/fixtures";
 import { buildTestServer } from "../helpers/test-server";
 
 describe("POST /provisioning/tenants — duplicate department name rolls back the whole attempt (US3)", () => {
@@ -11,14 +11,13 @@ describe("POST /provisioning/tenants — duplicate department name rolls back th
 
   it("returns 409 and leaves no tenants/departments/users/user_roles row from the attempt", async () => {
     const server = await buildTestServer();
-    const superAdminUserId = randomUUID();
-    await seedSuperAdminUser(superAdminUserId);
+    const { cookieHeader } = await seedSuperAdminSession();
     const subdomain = `acme-${randomUUID()}`;
 
     const response = await server.inject({
       method: "POST",
       url: "/provisioning/tenants",
-      headers: { "x-test-user-id": superAdminUserId, "x-test-tenant-id": randomUUID() },
+      headers: { cookie: cookieHeader },
       payload: {
         company: {
           name: "Acme Corp",
@@ -39,7 +38,7 @@ describe("POST /provisioning/tenants — duplicate department name rolls back th
     const retry = await server.inject({
       method: "POST",
       url: "/provisioning/tenants",
-      headers: { "x-test-user-id": superAdminUserId, "x-test-tenant-id": randomUUID() },
+      headers: { cookie: cookieHeader },
       payload: {
         company: {
           name: "Acme Corp",

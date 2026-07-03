@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
 import { Pool } from "pg";
 import { closeTestPool } from "../helpers/pg";
-import { seedSuperAdminUser } from "../helpers/fixtures";
+import { seedSuperAdminSession } from "../helpers/fixtures";
 import { buildTestServer } from "../helpers/test-server";
 
 /**
@@ -34,8 +34,7 @@ describe("POST /provisioning/tenants — fails closed when hr_admin template is 
     );
 
     const server = await buildTestServer();
-    const superAdminUserId = randomUUID();
-    await seedSuperAdminUser(superAdminUserId);
+    const { cookieHeader } = await seedSuperAdminSession();
     const subdomain = `acme-${randomUUID()}`;
 
     try {
@@ -44,7 +43,7 @@ describe("POST /provisioning/tenants — fails closed when hr_admin template is 
       const response = await server.inject({
         method: "POST",
         url: "/provisioning/tenants",
-        headers: { "x-test-user-id": superAdminUserId, "x-test-tenant-id": randomUUID() },
+        headers: { cookie: cookieHeader },
         payload: {
           company: {
             name: "Acme Corp",

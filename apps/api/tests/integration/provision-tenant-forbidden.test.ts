@@ -20,12 +20,13 @@ describe("POST /provisioning/tenants — forbidden for non-Super-Admin callers",
     await closeTestPool();
   });
 
-  it("returns 403 for an authenticated user who is not the platform Super Admin", async () => {
+  it("returns 401 for an authenticated tenant-scoped user who is not a Super Admin", async () => {
     const server = await buildTestServer();
     const tenantId = randomUUID();
     const userId = randomUUID();
-    // A regular tenant-scoped user with every catalog permission except provision_tenant (which is
-    // platform-only and not grantable to a tenant role at all).
+    // A regular tenant-scoped user, fully permissioned within their own tenant — but Super Admin
+    // status is a separate identity (super_admins table) with no permission-key granularity, not
+    // something any tenant-scoped role/permission can grant (Super Admin Authentication spec).
     await seedUserWithRole(tenantId, userId, [
       "approve_enrollment",
       "edit_content_library",
@@ -40,11 +41,11 @@ describe("POST /provisioning/tenants — forbidden for non-Super-Admin callers",
       payload: validBody(`acme-${randomUUID()}`),
     });
 
-    expect(response.statusCode).toBe(403);
+    expect(response.statusCode).toBe(401);
     await server.close();
   });
 
-  it("returns 403 for an unauthenticated caller", async () => {
+  it("returns 401 for an unauthenticated caller", async () => {
     const server = await buildTestServer();
 
     const response = await server.inject({
@@ -53,7 +54,7 @@ describe("POST /provisioning/tenants — forbidden for non-Super-Admin callers",
       payload: validBody(`acme-${randomUUID()}`),
     });
 
-    expect(response.statusCode).toBe(403);
+    expect(response.statusCode).toBe(401);
     await server.close();
   });
 });

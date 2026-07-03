@@ -2,13 +2,20 @@ import type { FastifyPluginAsync } from "fastify";
 import { eq } from "drizzle-orm";
 import { permissions } from "../db/schema/permissions";
 import { roleTemplates, roleTemplatePermissions } from "../db/schema/role-templates";
-import { requirePlatformPermission } from "./require-platform-permission";
+import { requireSuperAdminSession } from "../platform-auth/require-super-admin-session";
 
-/** contracts/super-admin-catalog-api.md — read-only, platform-connection-context routes. */
+/**
+ * contracts/super-admin-catalog-api.md — read-only, platform-connection-context routes. Guarded by
+ * `requireSuperAdminSession` (Super Admin Authentication spec) — this supersedes the original
+ * `requirePlatformPermission`/`tm_platform_reader` mechanism from the Roles & Permissions Model
+ * spec, which has been retired (see drizzle/README.md). Super Admin access here is now a binary
+ * "are you a Super Admin" check, not a per-permission-key check — the new `super_admins` identity
+ * has no permission-catalog granularity of its own.
+ */
 const adminRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get(
     "/admin/permissions",
-    { preHandler: [requirePlatformPermission("view_permission_catalog")] },
+    { preHandler: [requireSuperAdminSession] },
     async () => {
       const rows = await fastify.db
         .select({
@@ -26,7 +33,7 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
 
   fastify.get(
     "/admin/role-templates",
-    { preHandler: [requirePlatformPermission("view_permission_catalog")] },
+    { preHandler: [requireSuperAdminSession] },
     async () => {
       const templates = await fastify.db
         .select({

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
 import { closeTestPool, withTenantTransaction } from "../helpers/pg";
-import { seedSuperAdminUser } from "../helpers/fixtures";
+import { seedSuperAdminSession } from "../helpers/fixtures";
 import { buildTestServer } from "../helpers/test-server";
 
 function bodyFor(subdomain: string) {
@@ -24,19 +24,18 @@ describe("POST /provisioning/tenants — cross-tenant isolation through the real
 
   it("tenant A's session sees zero of tenant B's departments/users/roles, and vice versa", async () => {
     const server = await buildTestServer();
-    const superAdminUserId = randomUUID();
-    await seedSuperAdminUser(superAdminUserId);
+    const { cookieHeader } = await seedSuperAdminSession();
 
     const resA = await server.inject({
       method: "POST",
       url: "/provisioning/tenants",
-      headers: { "x-test-user-id": superAdminUserId, "x-test-tenant-id": randomUUID() },
+      headers: { cookie: cookieHeader },
       payload: bodyFor(`acme-a-${randomUUID()}`),
     });
     const resB = await server.inject({
       method: "POST",
       url: "/provisioning/tenants",
-      headers: { "x-test-user-id": superAdminUserId, "x-test-tenant-id": randomUUID() },
+      headers: { cookie: cookieHeader },
       payload: bodyFor(`acme-b-${randomUUID()}`),
     });
     expect(resA.statusCode).toBe(201);

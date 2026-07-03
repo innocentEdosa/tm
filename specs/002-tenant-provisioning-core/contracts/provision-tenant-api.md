@@ -1,5 +1,13 @@
 # Contract: `POST /provisioning/tenants`
 
+> **Superseded, 2026-07-03**: the guard described below (`requirePlatformPermission`, backed by the
+> `roles.tenant_id IS NULL` platform role and the retired `tm_platform_reader` role) now reads
+> `requireSuperAdminSession` from the Super Admin Authentication spec — a real session against the
+> dedicated `super_admins` table. The **`403`** "Forbidden" response documented below is now
+> **`401`** "Unauthorized" in practice; Super Admin access is a binary check, no longer tied to the
+> `provision_tenant` catalog permission. Kept here for historical record; see
+> `specs/003-super-admin-authentication/contracts/platform-auth-api.md`.
+
 The single Fastify JSON endpoint backing this spec's entire flow (User Stories 1–3): company details,
 department setup, and initial admin creation with role assignment, submitted once and applied
 atomically (research.md §3; spec FR-013).

@@ -1,5 +1,5 @@
 import type { FastifyPluginAsync } from "fastify";
-import { requirePlatformPermission } from "../permissions/require-platform-permission";
+import { requireSuperAdminSession } from "../platform-auth/require-super-admin-session";
 import {
   provisionTenant,
   SubdomainTakenError,
@@ -20,11 +20,14 @@ function missingField(input: Partial<ProvisionTenantInput>): string | undefined 
 
 /** contracts/provision-tenant-api.md — platform-connection-context route, not tenant-scoped: no
  * tenant exists yet at the start of the request (research.md §1), so this does not use
- * `request.tenantDb`; `provisionTenant` opens and manages its own transaction against `fastify.pg.pool`. */
+ * `request.tenantDb`; `provisionTenant` opens and manages its own transaction against
+ * `fastify.pg.pool`. Guarded by `requireSuperAdminSession` (Super Admin Authentication spec),
+ * superseding the original `requirePlatformPermission("provision_tenant")`/`tm_platform_reader`
+ * mechanism — now a binary Super Admin check, not a permission-key check. */
 const provisioningRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post<{ Body: Partial<ProvisionTenantInput> }>(
     "/provisioning/tenants",
-    { preHandler: [requirePlatformPermission("provision_tenant")] },
+    { preHandler: [requireSuperAdminSession] },
     async (request, reply) => {
       const error = missingField(request.body ?? {});
       if (error) {

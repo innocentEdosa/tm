@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { inArray, isNull } from "drizzle-orm";
+import { Pool } from "pg";
+import { inArray } from "drizzle-orm";
 import { withTenantDb } from "./pg";
 import { roles, rolePermissions, userRoles } from "../../src/db/schema/roles";
 import { permissions } from "../../src/db/schema/permissions";
-import { getPlatformReaderDb } from "../../src/db/platform-reader";
+import { hashSessionToken, generateSessionToken, sessionExpiryFromNow } from "../../src/platform-auth/session";
+import { SUPER_ADMIN_COOKIE_NAME } from "../../src/platform-auth/cookies";
 
 /** Creates a tenant-scoped role with the given permission keys and assigns it to `userId`. */
 export async function seedUserWithRole(
@@ -64,24 +66,33 @@ export async function assignRole(tenantId: string, userId: string, roleId: strin
 }
 
 /**
- * Assigns `userId` the platform Super Admin role (`roles.tenant_id IS NULL`), for tests exercising
- * `requirePlatformPermission`-guarded routes. Looks up the role id via the BYPASSRLS platform-reader
- * connection (the same one `isSuperAdminWithPermission` uses) — a normal tenant-scoped connection can
- * never see that row by design (FR-007). The `user_roles` row itself still needs some `tenant_id`
- * (NOT NULL column, functionally unused by the platform-reader lookup, which joins only on
- * `role_id`/`user_id`), so a throwaway sentinel tenant id is used for that one column.
+ * Creates a real `super_admins` row and a valid, non-expired `super_admin_sessions` row for it
+ * directly (bypassing the login endpoint, matching the pattern already used to seed tenant-scoped
+ * fixtures), returning a ready-to-use `Cookie` header value for `requireSuperAdminSession`-guarded
+ * routes (Super Admin Authentication spec). Opens and closes its own short-lived connection as the
+ * migration/owner role — `tm_app` has no `INSERT` grant on `super_admins` by design (research.md
+ * §7), so this cannot go through `withTenantDb`/`getTestPool()` like the tenant-scoped helpers
+ * above.
  */
-export async function seedSuperAdminUser(userId: string): Promise<void> {
-  const [superAdminRole] = await getPlatformReaderDb()
-    .select({ id: roles.id })
-    .from(roles)
-    .where(isNull(roles.tenantId));
-  if (!superAdminRole) {
-    throw new Error("Platform Super Admin role not seeded — run migrations through 0007+");
-  }
+export async function seedSuperAdminSession(): Promise<{ cookieHeader: string }> {
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  try {
+    const email = `test-super-admin-${randomUUID()}@example.com`;
+    const inserted = await pool.query<{ id: string }>(
+      `INSERT INTO super_admins (email, password_hash, name) VALUES ($1, 'irrelevant', 'Test Super Admin')
+       RETURNING id`,
+      [email],
+    );
+    const superAdminId = inserted.rows[0].id;
 
-  const sentinelTenantId = randomUUID();
-  await withTenantDb(sentinelTenantId, async (db) => {
-    await db.insert(userRoles).values({ tenantId: sentinelTenantId, userId, roleId: superAdminRole.id });
-  });
+    const token = generateSessionToken();
+    await pool.query(
+      `INSERT INTO super_admin_sessions (super_admin_id, token_hash, expires_at) VALUES ($1, $2, $3)`,
+      [superAdminId, hashSessionToken(token), sessionExpiryFromNow()],
+    );
+
+    return { cookieHeader: `${SUPER_ADMIN_COOKIE_NAME}=${token}` };
+  } finally {
+    await pool.end();
+  }
 }
