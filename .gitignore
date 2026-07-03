@@ -53,3 +53,4 @@ next-env.d.ts
 
 # Local tool state (not shared with the team)
 .claude/settings.local.json
+.vercel
