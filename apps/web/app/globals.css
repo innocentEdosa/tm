@@ -1,32 +1,126 @@
 @import "tailwindcss";
 @source "../../../packages/ui/src";
 
+/*
+ * Design system lock (2026-07-04, Tenant Authentication Configuration spec — design-system/tm/).
+ * Per constitution Principle V, this is the binding standard for all screens going forward, not a
+ * one-off for this feature. Navy/blue B2B SaaS palette, Plus Jakarta Sans (layout.tsx).
+ */
+@theme {
+  --font-sans: var(--font-sans), system-ui, sans-serif;
+
+  --color-primary: #0f172a;
+  --color-secondary: #334155;
+  --color-cta: #0369a1;
+  --color-cta-hover: #075985;
+  --color-surface: #f8fafc;
+  --color-text: #020617;
+  --color-border: #e2e8f0;
+
+  --shadow-card-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-card-md: 0 4px 6px rgba(0, 0, 0, 0.1);
+  --shadow-card-lg: 0 10px 15px rgba(0, 0, 0, 0.1);
+}
+
 /* ─── Buttons ─────────────────────────────────────────────────── */
 
 .btn {
-  @apply inline-flex items-center justify-center gap-2 rounded-md font-medium
-         transition-colors focus-visible:outline-none focus-visible:ring-2
-         focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50;
+  @apply inline-flex items-center justify-center gap-2 rounded-lg font-semibold
+         transition-colors duration-200 cursor-pointer focus-visible:outline-none
+         focus-visible:ring-2 focus-visible:ring-offset-2
+         disabled:pointer-events-none disabled:opacity-50 disabled:cursor-not-allowed;
 }
 
 .btn-primary {
-  @apply bg-blue-600 text-white hover:bg-blue-700 focus-visible:ring-blue-600;
+  @apply bg-cta text-white hover:bg-cta-hover focus-visible:ring-cta;
 }
 
 .btn-secondary {
-  @apply bg-gray-100 text-gray-900 hover:bg-gray-200 focus-visible:ring-gray-400;
+  @apply bg-slate-100 text-primary hover:bg-slate-200 focus-visible:ring-slate-400;
 }
 
 .btn-outline {
-  @apply border border-gray-300 bg-transparent text-gray-900
-         hover:bg-gray-50 focus-visible:ring-gray-400;
+  @apply border-2 border-primary bg-transparent text-primary
+         hover:bg-slate-50 focus-visible:ring-slate-400;
 }
 
-.btn-sm  { @apply h-8 px-3 text-sm; }
-.btn-md  { @apply h-10 px-4 text-sm; }
+.btn-sm  { @apply h-9 px-3 text-sm; }
+.btn-md  { @apply h-11 px-4 text-sm; }
 .btn-lg  { @apply h-12 px-6 text-base; }
 
 .btn-spinner {
   @apply block h-4 w-4 animate-spin rounded-full
          border-2 border-current border-t-transparent;
+}
+
+/* ─── Form fields ─────────────────────────────────────────────── */
+
+.field-label {
+  @apply block text-sm font-medium text-primary mb-1.5;
+}
+
+.field-input {
+  @apply block w-full rounded-lg border border-border bg-white px-4 py-2.5 text-base text-text
+         placeholder:text-slate-400 transition-colors duration-200
+         focus:outline-none focus:border-primary focus:ring-3 focus:ring-primary/10
+         disabled:bg-slate-50 disabled:text-slate-400;
+}
+
+.field-error {
+  @apply mt-1.5 text-sm text-red-600;
+}
+
+.field-hint {
+  @apply mt-1.5 text-sm text-slate-500;
+}
+
+/* ─── Cards & surfaces ────────────────────────────────────────── */
+
+.surface-card {
+  @apply rounded-2xl border border-border bg-white p-8;
+  box-shadow: var(--shadow-card-md);
+}
+
+.divider-with-label {
+  @apply relative flex items-center gap-3 text-xs font-medium uppercase tracking-wide text-slate-400;
+}
+.divider-with-label::before,
+.divider-with-label::after {
+  content: "";
+  @apply h-px flex-1 bg-border;
+}
+
+/* ─── Toggle switch (settings) ───────────────────────────────── */
+
+.toggle-track {
+  @apply relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full
+         transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2
+         focus-visible:ring-offset-2 focus-visible:ring-cta disabled:cursor-not-allowed disabled:opacity-50;
+}
+.toggle-track[data-checked="true"] {
+  @apply bg-cta;
+}
+.toggle-track[data-checked="false"] {
+  @apply bg-slate-200;
+}
+.toggle-thumb {
+  @apply inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform duration-200;
+}
+.toggle-thumb[data-checked="true"] {
+  @apply translate-x-6;
+}
+.toggle-thumb[data-checked="false"] {
+  @apply translate-x-1;
+}
+
+/* ─── Status banners ──────────────────────────────────────────── */
+
+.banner-info {
+  @apply rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900;
+}
+.banner-success {
+  @apply rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800;
+}
+.banner-error {
+  @apply rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800;
 }

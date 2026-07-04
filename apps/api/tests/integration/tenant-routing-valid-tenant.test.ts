@@ -33,23 +33,29 @@ describe("resolveTenantBySubdomain — valid tenant subdomains (US1)", () => {
 
   it("resolves a trial-status tenant as valid, with its own name", async () => {
     const result = await resolveTenantBySubdomain(getTestPool(), subdomainTrial);
-    expect(result).toEqual({ state: "valid", tenantName: "Trial Co" });
+    expect(result.state).toBe("valid");
+    expect(result.tenantName).toBe("Trial Co");
+    expect(result.tenantId).toBe(tenantTrial);
+    expect(result.enabledAuthMethods).toEqual([]);
   });
 
   it("resolves an active-status tenant as valid, with its own name", async () => {
     const result = await resolveTenantBySubdomain(getTestPool(), subdomainActive);
-    expect(result).toEqual({ state: "valid", tenantName: "Active Co" });
+    expect(result.state).toBe("valid");
+    expect(result.tenantName).toBe("Active Co");
+    expect(result.tenantId).toBe(tenantActive);
   });
 
   it("never returns one tenant's name when resolving the other's subdomain (spec SC-001)", async () => {
     const trialResult = await resolveTenantBySubdomain(getTestPool(), subdomainTrial);
     const activeResult = await resolveTenantBySubdomain(getTestPool(), subdomainActive);
     expect(trialResult.tenantName).not.toBe(activeResult.tenantName);
+    expect(trialResult.tenantId).not.toBe(activeResult.tenantId);
   });
 
-  it("never returns a tenant_id to the caller", async () => {
-    const result = await resolveTenantBySubdomain(getTestPool(), subdomainActive);
-    expect(result).not.toHaveProperty("id");
-    expect(result).not.toHaveProperty("tenantId");
-  });
+  // Note: resolveTenantBySubdomain() itself now DOES return tenantId, for in-process callers only
+  // (e.g. tenant-auth/tenant-user-context.ts, Tenant Authentication Configuration spec). The "never
+  // leaks tenantId" guarantee moved to the HTTP boundary — see
+  // tenant-routing-http-allowlist.test.ts, which proves GET /tenant-routing/resolve's JSON response
+  // never includes it.
 });

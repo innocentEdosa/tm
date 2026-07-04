@@ -13,9 +13,14 @@ const nextConfig: NextConfig = {
   // rolling out the same default) withholds it regardless of SameSite — found via real-browser
   // verification, not by the automated test suite (Fastify's `.inject()` doesn't model this at
   // all). Client code must fetch relative paths under `/platform-api/*`, never `API_ORIGIN`
-  // directly — see `apps/web/app/platform/login/page.tsx` etc.
+  // directly — see `apps/web/app/platform/login/page.tsx` etc. Same reasoning applies to the
+  // tenant-user session cookie (Tenant Authentication Configuration spec) — `/tenant-api/*` proxies
+  // to the same API_ORIGIN, keeping that cookie same-origin too.
   async rewrites() {
-    return [{ source: "/platform-api/:path*", destination: `${API_ORIGIN}/:path*` }];
+    return [
+      { source: "/platform-api/:path*", destination: `${API_ORIGIN}/:path*` },
+      { source: "/tenant-api/:path*", destination: `${API_ORIGIN}/:path*` },
+    ];
   },
 };
 

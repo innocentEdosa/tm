@@ -7,13 +7,20 @@ declare module "fastify" {
 
   interface FastifyRequest {
     /**
-     * Decorated by the (future) auth mechanism — assumed to already exist, never trusts a
-     * client-supplied header/body value for tenantId (research.md §3, constitution Principle I).
+     * Decorated by tenant-auth/tenant-user-context.ts (Tenant Authentication Configuration spec)
+     * from a validated `user_sessions` lookup — never trusts a client-supplied header/body value for
+     * tenantId (research.md §3, constitution Principle I).
      */
     user?: {
       id: string;
       tenantId: string;
     };
+    /**
+     * True while the authenticated user still has a one-time password active (Tenant Authentication
+     * Configuration spec FR-013a) — only set alongside `request.user`. Guarded routes other than
+     * `POST /tenant-auth/set-password` must reject while this is true.
+     */
+    mustChangePassword?: boolean;
     /**
      * Drizzle instance bound to this request's transaction-scoped client, with
      * `SET LOCAL app.tenant_id` already applied — see plugins/tenant-context.ts.

@@ -11,6 +11,10 @@ import { roleTemplates } from "../db/schema/role-templates";
 import { seedDefaultRolesForTenant } from "../permissions/seed-default-roles";
 import { seedDefaultDepartmentsForTenant } from "./seed-default-departments";
 import { isReservedSubdomain } from "../tenant-routing/reserved-subdomains";
+import { tenantAuthMethods } from "../db/schema/tenant-auth-methods";
+import { generateOneTimePassword, otpExpiryFromNow } from "../tenant-auth/otp";
+import { hashPassword } from "../platform-auth/password";
+import { sendOneTimePasswordEmail } from "../tenant-auth/mailer";
 
 export class SubdomainTakenError extends Error {}
 export class ReservedSubdomainError extends Error {}
@@ -108,10 +112,26 @@ export async function provisionTenant(
       throw err;
     }
 
+    // Tenant Authentication Configuration spec FR-003: a sensible default login method, enabled
+    // automatically with no manual setup — email/password requires no external provider.
+    await tenantDb.insert(tenantAuthMethods).values({ tenantId, method: "email_password" });
+
     // US2 (FR-008-FR-011): create the admin user and assign the HR Admin role.
+    // Tenant Authentication Configuration spec FR-013: the account has no usable password until it
+    // sets one — a one-time password (hashed like any real password, research.md §6) is generated
+    // now and emailed once the transaction commits (below), never before — email delivery must
+    // never gate whether the tenant itself gets created.
+    const oneTimePassword = generateOneTimePassword();
     const [createdAdmin] = await tenantDb
       .insert(users)
-      .values({ tenantId, fullName: input.admin.fullName, email: input.admin.email })
+      .values({
+        tenantId,
+        fullName: input.admin.fullName,
+        email: input.admin.email,
+        passwordHash: await hashPassword(oneTimePassword),
+        mustChangePassword: true,
+        otpExpiresAt: otpExpiryFromNow(),
+      })
       .returning({ id: users.id, fullName: users.fullName, email: users.email });
 
     await seedDefaultRolesForTenant(tenantDb, tenantId);
@@ -146,6 +166,11 @@ export async function provisionTenant(
 
     await client.query("COMMIT");
 
+    // Sent only after COMMIT succeeds, and never allowed to throw (it catches and logs internally,
+    // research.md/spec Edge Cases) — a slow/unreachable SMTP server can never fail or roll back an
+    // otherwise-successful provisioning attempt.
+    await sendProvisioningOneTimePasswordEmail({ email: createdAdmin.email, otp: oneTimePassword });
+
     return {
       tenant: createdTenant,
       departments: createdDepartments,
@@ -161,5 +186,14 @@ export async function provisionTenant(
     throw err;
   } finally {
     client.release();
+  }
+}
+
+/** Never throws — catches and logs internally (see call site's comment above). */
+async function sendProvisioningOneTimePasswordEmail(target: { email: string; otp: string }): Promise<void> {
+  try {
+    await sendOneTimePasswordEmail(target.email, target.otp);
+  } catch (err) {
+    console.error(`Failed to send provisioning one-time-password email to ${target.email}:`, err);
   }
 }
