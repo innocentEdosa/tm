@@ -1,1 +1,3 @@
-{"feature_directory":"specs/005-tenant-auth-config"}
+{
+  "feature_directory": "specs/006-role-dashboard-shell"
+}
