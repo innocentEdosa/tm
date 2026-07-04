@@ -39,6 +39,7 @@ one back independently of the schema itself.
 | 0015 | `0015_seed_department_templates.sql` | Seeds the six default department templates. |
 | 0016 | `0016_init_super_admin_auth.sql` | Creates `super_admins` and `super_admin_sessions` (Super Admin Authentication spec). Neither has RLS — no `tenant_id` column, no tenant dimension. |
 | 0017 | `0017_lock_super_admin_grants.sql` | `tm_app` grants: `super_admins` gets `SELECT`/`UPDATE` only — deliberately **no `INSERT`**, so the running server can never create a Super Admin account (see "Super Admin bootstrap" below). `super_admin_sessions` gets full `SELECT`/`INSERT`/`UPDATE`. |
+| 0018 | `0018_rls_tenants_subdomain_lookup.sql` | Additive — adds a second, `SELECT`-only permissive RLS policy to `tenants` (Domain-Based Tenant Routing spec), gated by a narrow `app.subdomain_lookup` flag, authorizing the pre-authentication subdomain→tenant lookup. Does **not** edit `0009_rls_tenants.sql`'s `tenant_isolation` policy, and requires no grant changes (`tm_app` already has full CRUD on `tenants` per `0012`). Uses a plain text comparison (`current_setting(...) = 'true'`), not a `::boolean` cast — a custom GUC referenced at all on a connection returns `''` (not `NULL`) once unset again, and casting `''` to `boolean` throws; a text comparison never does (research.md §2). |
 
 ## Tenant/department/user RLS bootstrap idiom (research.md §1)
 

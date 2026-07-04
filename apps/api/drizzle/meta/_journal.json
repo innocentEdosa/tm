@@ -127,6 +127,13 @@
       "when": 1783012247458,
       "tag": "0017_lock_super_admin_grants",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1783100000000,
+      "tag": "0018_rls_tenants_subdomain_lookup",
+      "breakpoints": true
     }
   ]
 }

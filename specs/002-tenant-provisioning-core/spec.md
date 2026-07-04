@@ -16,6 +16,15 @@
 - Q: Can more than one user account be created during initial provisioning? → A: No — single admin only. Exactly one user account (the HR Admin) is created during provisioning; additional users/roles are added later via a separate team-invite flow.
 - Q: How is "primary contact" represented in the data model? → A: Metadata only — stored as plain fields (name/email/phone) directly on the Tenant record itself, not as a separate entity and not tied to the Admin User account.
 
+### Session 2026-07-03
+
+- Q: Spec 4 (Domain-Based Tenant Routing) requires a reserved-subdomain list that no tenant may ever
+  claim, so it never resolves as a tenant via routing — should this spec's subdomain validation (FR-002)
+  also reject reserved words at submission time, per Spec 4's dependency note? → A: Yes — added as
+  FR-016. Provisioning MUST reject a submitted subdomain matching Spec 4's reserved-word list through
+  the same rejection path already used for an already-taken subdomain (FR-002), so the two specs never
+  rely on two independently-maintained lists.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Capture Company Details & Create the Tenant Record (Priority: P1)
@@ -111,6 +120,10 @@ no code change or deployment.
 
 - What happens if a submitted subdomain is already taken? The system MUST reject the submission and
   require a different subdomain before a tenant record is created (US1, Acceptance Scenario 2).
+- What happens if a submitted subdomain matches a platform-reserved word (e.g. `www`, `api`, `admin` —
+  see Spec 4's reserved-subdomain list)? The system MUST reject the submission and require a different
+  subdomain before a tenant record is created, using the same rejection path as an already-taken
+  subdomain (FR-016).
 - What happens if provisioning fails partway through (e.g. departments are applied but admin user
   creation fails)? The whole provisioning attempt MUST fail as a single unit — no tenant record,
   department, admin user, or role assignment from a failed attempt is left in a partially-created,
@@ -183,6 +196,10 @@ no code change or deployment.
   team member acting on the prospect's behalf (sales-assisted); self-serve provisioning, where the
   prospect's own staff runs the flow directly with no internal team member involved, is out of scope
   for this milestone (see Clarifications).
+- **FR-016**: System MUST validate a submitted subdomain against the platform's reserved-subdomain list
+  (defined in Spec 4, Domain-Based Tenant Routing) before creating a tenant record, rejecting the
+  submission with a clear message — via the same rejection path as FR-002 — if it matches a reserved
+  word, so a tenant can never claim a subdomain that must never resolve as a tenant via routing.
 
 ### Key Entities
 
@@ -235,9 +252,10 @@ no code change or deployment.
   structure, and count after the default templates are applied (FR-007), and company detail values
   (name, subdomain, contact info) captured at provisioning. Fixed platform-wide, intentionally not
   tenant-configurable — the set of default department templates offered at provisioning time (FR-006;
-  changing the templates themselves is a platform-level change) and the identity of the role
+  changing the templates themselves is a platform-level change), the identity of the role
   (HR Admin) assigned to the initial admin (FR-010), which is fixed by this spec to guarantee every
-  tenant starts with exactly one working administrator.
+  tenant starts with exactly one working administrator, and the reserved-subdomain list a tenant can
+  never claim (FR-016; owned by Spec 4, enforced here at submission time).
 - **AI-generation review/approval step**: N/A — this feature does not generate AI content.
 - **Kirkpatrick L4/L5 data source & formula**: N/A — this feature does not touch Results/ROI evaluation.
 - **Downgrade/cancellation behavior**: N/A for this spec directly — it only establishes the Trial
@@ -273,6 +291,9 @@ no code change or deployment.
   does not prescribe.
 - Subdomains are assumed to be globally unique across the entire platform (FR-002), since they are used
   to route requests to the correct tenant.
+- The reserved-subdomain list enforced by FR-016 is owned and defined by Spec 4 (Domain-Based Tenant
+  Routing), not duplicated here — this spec's provisioning validation consults that single shared list
+  rather than maintaining its own, so the two never drift apart (added 2026-07-03, see Clarifications).
 - Department restructuring during setup is assumed to support at least flat (non-hierarchical)
   add/rename/remove; whether nested/hierarchical department trees are required is left to whichever
   future feature builds the ongoing (post-setup) department management screens, since this spec is

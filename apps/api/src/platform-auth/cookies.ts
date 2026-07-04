@@ -23,11 +23,19 @@ export function parseCookie(header: string | undefined, name: string): string | 
 
 /**
  * Builds a `Set-Cookie` header value for the Super Admin session cookie: `HttpOnly` (never
- * readable by client-side JS), `Secure` (HTTPS-only — modern browsers treat `localhost` as a
- * secure context too, so this is safe to set unconditionally). `Path=/` —
- * `requireSuperAdminSession` guards routes across three different prefixes (`/platform/*`,
- * `/admin/*`, `/provisioning/*`), so a narrower `Path` would silently stop the browser from sending
- * the cookie to any prefix not explicitly covered.
+ * readable by client-side JS), `Secure` in every environment except local development. `Secure`
+ * is NOT safe to set unconditionally: browsers only special-case the literal hostname `localhost`
+ * (and loopback IPs) as a secure context for cookie purposes — a hostname that merely *resolves* to
+ * 127.0.0.1, like `lvh.me` (spec 004's local-dev root domain, used for `{tenant}.lvh.me:3000`
+ * subdomain testing), gets no such exception. A `Secure` cookie set over plain `http://lvh.me:3000`
+ * is silently refused by the browser, breaking the entire Super Admin login flow in local dev
+ * (found via real-browser verification against `lvh.me`, not the automated test suite — same class
+ * of bug the `SameSite` fix below was found the same way). Gated on `NODE_ENV`, matching this
+ * codebase's existing dev-only gating idiom (`apps/api/src/server.ts`'s dev-auth-stub).
+ *
+ * `Path=/` — `requireSuperAdminSession` guards routes across three different prefixes
+ * (`/platform/*`, `/admin/*`, `/provisioning/*`), so a narrower `Path` would silently stop the
+ * browser from sending the cookie to any prefix not explicitly covered.
  *
  * `SameSite=Strict`: `apps/web` and `apps/api` are two different origins — different ports
  * locally, different domains in production (Vercel vs. Railway). Two prior attempts got this
@@ -50,5 +58,6 @@ export function parseCookie(header: string | undefined, name: string): string | 
  * (used on logout).
  */
 export function serializeSuperAdminCookie(value: string, maxAgeSeconds: number): string {
-  return `${SUPER_ADMIN_COOKIE_NAME}=${value}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${maxAgeSeconds}`;
+  const secure = process.env.NODE_ENV === "development" ? "" : " Secure;";
+  return `${SUPER_ADMIN_COOKIE_NAME}=${value}; HttpOnly;${secure} SameSite=Strict; Path=/; Max-Age=${maxAgeSeconds}`;
 }

@@ -3,6 +3,7 @@ import { requireSuperAdminSession } from "../platform-auth/require-super-admin-s
 import {
   provisionTenant,
   SubdomainTakenError,
+  ReservedSubdomainError,
   MissingAdminRoleTemplateError,
   DuplicateDepartmentNameError,
   type ProvisionTenantInput,
@@ -40,6 +41,9 @@ const provisioningRoutes: FastifyPluginAsync = async (fastify) => {
       } catch (err) {
         if (err instanceof SubdomainTakenError) {
           return reply.code(409).send({ success: false, message: "Subdomain already in use" });
+        }
+        if (err instanceof ReservedSubdomainError) {
+          return reply.code(409).send({ success: false, message: "Subdomain is reserved" });
         }
         if (err instanceof DuplicateDepartmentNameError) {
           return reply.code(409).send({ success: false, message: "Duplicate department name" });

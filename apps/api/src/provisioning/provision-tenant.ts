@@ -10,8 +10,10 @@ import { roles, userRoles } from "../db/schema/roles";
 import { roleTemplates } from "../db/schema/role-templates";
 import { seedDefaultRolesForTenant } from "../permissions/seed-default-roles";
 import { seedDefaultDepartmentsForTenant } from "./seed-default-departments";
+import { isReservedSubdomain } from "../tenant-routing/reserved-subdomains";
 
 export class SubdomainTakenError extends Error {}
+export class ReservedSubdomainError extends Error {}
 export class MissingAdminRoleTemplateError extends Error {}
 export class DuplicateDepartmentNameError extends Error {}
 
@@ -67,6 +69,15 @@ export async function provisionTenant(
     if (!hrAdminTemplate) {
       throw new MissingAdminRoleTemplateError(
         "hr_admin role template not found in role_templates catalog",
+      );
+    }
+
+    // Spec 4 FR-016: reject a reserved subdomain before attempting the insert — checked against the
+    // same canonical list tenant routing consults (apps/api/src/tenant-routing/reserved-subdomains.ts),
+    // so this and the routing layer never rely on two independently-maintained lists.
+    if (isReservedSubdomain(input.company.subdomain)) {
+      throw new ReservedSubdomainError(
+        `Subdomain "${input.company.subdomain}" is reserved and cannot be used`,
       );
     }
 
