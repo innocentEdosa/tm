@@ -6,6 +6,13 @@ import { generateSessionToken, hashSessionToken, sessionExpiryFromNow } from "..
 import { parseCookie, serializeTenantUserCookie, TENANT_USER_COOKIE_NAME } from "./cookies";
 import { requireTenantUserSession } from "./require-tenant-user-session";
 import { sendPasswordResetEmail } from "./mailer";
+import { resolveEffectivePermissions } from "../permissions/effective-permissions";
+
+type UserRoleRow = {
+  user_role_id: string;
+  role_name: string;
+  permission_key: string | null;
+};
 
 const RESET_TOKEN_VALIDITY_MS = 60 * 60 * 1000; // 1 hour
 
@@ -133,9 +140,41 @@ const tenantAuthRoutes: FastifyPluginAsync = async (fastify) => {
           sql`SELECT email FROM users WHERE id = ${request.user!.id}`,
         )
       ).rows;
+
+      // Role-Based Dashboard Shell spec (contracts/tenant-auth-me-amendment.md) — additive fields.
+      // One row per (user_role, permission) pair; grouped by user_role_id since a role can carry
+      // multiple permissions. `roleName` is the first role by creation order — per that spec's
+      // Assumptions a user holds exactly one role in practice, so this degrades gracefully rather
+      // than crashing if that's ever violated.
+      const roleRows = await request.tenantDb.execute<UserRoleRow>(sql`
+        SELECT ur.id AS user_role_id, r.name AS role_name, p.key AS permission_key
+        FROM user_roles ur
+        JOIN roles r ON r.id = ur.role_id
+        LEFT JOIN role_permissions rp ON rp.role_id = ur.role_id
+        LEFT JOIN permissions p ON p.id = rp.permission_id
+        WHERE ur.user_id = ${request.user!.id}
+        ORDER BY ur.created_at ASC
+      `);
+      const roleMap = new Map<string, { roleName: string; permissionKeys: string[] }>();
+      for (const row of roleRows.rows) {
+        let entry = roleMap.get(row.user_role_id);
+        if (!entry) {
+          entry = { roleName: row.role_name, permissionKeys: [] };
+          roleMap.set(row.user_role_id, entry);
+        }
+        if (row.permission_key) entry.permissionKeys.push(row.permission_key);
+      }
+      const roleEntries = Array.from(roleMap.values());
+
       return {
         success: true,
-        data: { id: request.user!.id, email: account.email, mustChangePassword: request.mustChangePassword },
+        data: {
+          id: request.user!.id,
+          email: account.email,
+          mustChangePassword: request.mustChangePassword,
+          roleName: roleEntries[0]?.roleName ?? null,
+          permissions: resolveEffectivePermissions(roleEntries),
+        },
       };
     },
   );

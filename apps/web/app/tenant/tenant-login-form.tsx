@@ -53,7 +53,7 @@ export default function TenantLoginForm({
         | null;
 
       if (res.status === 200) {
-        router.push(json?.data?.mustChangePassword ? "/set-password" : "/tenant");
+        router.push(json?.data?.mustChangePassword ? "/set-password" : "/dashboard");
         router.refresh();
         return;
       }

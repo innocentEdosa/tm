@@ -31,7 +31,7 @@ export default function SetPasswordForm({ subdomain }: { subdomain: string }) {
         body: JSON.stringify({ newPassword }),
       });
       if (res.status === 204) {
-        router.push("/tenant");
+        router.push("/dashboard");
         router.refresh();
         return;
       }
