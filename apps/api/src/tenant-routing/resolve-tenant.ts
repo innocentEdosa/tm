@@ -5,7 +5,18 @@ export type TenantRoutingState = "reserved" | "not_found" | "valid" | "suspended
 
 export interface TenantRoutingResult {
   state: TenantRoutingState;
+  /**
+   * Present whenever a real tenant row was found (`valid`/`suspended`/`cancelled`). Deliberately
+   * NOT part of the public `GET /tenant-routing/resolve` HTTP response (research.md §4 of spec
+   * 004) — `tenant-routing-routes.ts` explicitly allow-lists which fields cross that boundary.
+   * This field exists for *in-process* callers only (e.g. `tenant-auth/tenant-user-context.ts`,
+   * Tenant Authentication Configuration spec), which call this function directly rather than over
+   * HTTP and need the real id to scope RLS-protected queries.
+   */
+  tenantId?: string;
   tenantName?: string;
+  /** Only populated when `state === "valid"` (Tenant Authentication Configuration spec). */
+  enabledAuthMethods?: string[];
 }
 
 /**
@@ -13,8 +24,7 @@ export interface TenantRoutingResult {
  * Checks the reserved list first — no query is issued for a reserved word (FR-006), regardless of
  * what (if anything) exists in `tenants`. Otherwise looks up `tenants` by (lowercased) subdomain
  * under the narrow `app.subdomain_lookup` RLS allowance (research.md §2,
- * `0018_rls_tenants_subdomain_lookup.sql`) — never `app.tenant_id`, and never returns the tenant's
- * `id` to the caller (research.md §4): only enough to route (a state) and a display name.
+ * `0018_rls_tenants_subdomain_lookup.sql`) — never `app.tenant_id`.
  */
 export async function resolveTenantBySubdomain(
   pool: Pool,
@@ -40,26 +50,45 @@ export async function resolveTenantBySubdomain(
     // tenant, so only tenant_subdomain_lookup's clause (set next) can grant access here.
     await client.query("SELECT set_config('app.tenant_id', '00000000-0000-0000-0000-000000000000', true)");
     await client.query("SELECT set_config('app.subdomain_lookup', 'true', true)");
-    const result = await client.query<{ name: string; status: string }>(
-      "SELECT name, status FROM tenants WHERE lower(subdomain) = $1",
+    const result = await client.query<{ id: string; name: string; status: string }>(
+      "SELECT id, name, status FROM tenants WHERE lower(subdomain) = $1",
       [label],
     );
-    await client.query("COMMIT");
 
     const tenant = result.rows[0];
     if (!tenant) {
+      await client.query("COMMIT");
       return { state: "not_found" };
     }
 
     switch (tenant.status) {
       case "trial":
-      case "active":
-        return { state: "valid", tenantName: tenant.name };
+      case "active": {
+        // tenant_auth_methods has the *standard* tenant_isolation policy (no subdomain_lookup
+        // allowance) — re-pin app.tenant_id to the now-known real tenant id (still
+        // transaction-local) so this query is normally RLS-scoped, rather than blocked like the
+        // nil-UUID pin above would leave it.
+        await client.query("SELECT set_config('app.tenant_id', $1, true)", [tenant.id]);
+        const methodsResult = await client.query<{ method: string }>(
+          "SELECT method FROM tenant_auth_methods WHERE tenant_id = $1",
+          [tenant.id],
+        );
+        await client.query("COMMIT");
+        return {
+          state: "valid",
+          tenantId: tenant.id,
+          tenantName: tenant.name,
+          enabledAuthMethods: methodsResult.rows.map((r) => r.method),
+        };
+      }
       case "suspended":
-        return { state: "suspended", tenantName: tenant.name };
+        await client.query("COMMIT");
+        return { state: "suspended", tenantId: tenant.id, tenantName: tenant.name };
       case "cancelled":
-        return { state: "cancelled", tenantName: tenant.name };
+        await client.query("COMMIT");
+        return { state: "cancelled", tenantId: tenant.id, tenantName: tenant.name };
       default:
+        await client.query("COMMIT");
         return { state: "not_found" };
     }
   } catch (err) {

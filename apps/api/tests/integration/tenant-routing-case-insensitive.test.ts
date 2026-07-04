@@ -29,7 +29,9 @@ describe("resolveTenantBySubdomain — case-insensitivity (spec Edge Cases)", ()
       subdomain.charAt(0).toUpperCase() + subdomain.slice(1),
     );
 
-    expect(lower).toEqual({ state: "valid", tenantName: "Case Co" });
+    expect(lower.state).toBe("valid");
+    expect(lower.tenantName).toBe("Case Co");
+    expect(lower.tenantId).toBe(tenantId);
     expect(upper).toEqual(lower);
     expect(mixed).toEqual(lower);
   });

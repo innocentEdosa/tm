@@ -10,13 +10,18 @@ import provisioningRoutes from "./provisioning/provisioning-routes";
 import superAdminContext from "./platform-auth/super-admin-context";
 import platformAuthRoutes from "./platform-auth/platform-auth-routes";
 import tenantRoutingRoutes from "./tenant-routing/tenant-routing-routes";
+import tenantUserContext from "./tenant-auth/tenant-user-context";
+import tenantAuthSettingsRoutes from "./tenant-auth/tenant-auth-settings-routes";
+import tenantAuthRoutes from "./tenant-auth/tenant-auth-routes";
+import tenantTeamRoutes from "./tenant-auth/tenant-team-routes";
 
 export interface BuildServerOptions {
   /**
-   * Test-only seam. No auth mechanism exists yet — research.md §3 explicitly assumes a future
-   * auth plugin decorates `request.user` from the server-verified session. Integration tests use
-   * this to set `request.user` from a trusted test fixture (never a client-supplied header) before
-   * the tenant-context plugin reads it — never passed in production.
+   * Test-only seam, kept even though a real tenant-user auth mechanism now exists
+   * (tenant-auth/tenant-user-context.ts) — integration tests use this to set `request.user` from a
+   * trusted test fixture directly (never a client-supplied header), sidestepping a full
+   * OTP/login/session round-trip for tests that only care about tenant-scoping behavior, not login
+   * itself. Never passed in production.
    */
   registerAuthStub?: (server: FastifyInstance) => void;
 }
@@ -44,21 +49,10 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Fas
 
   options.registerAuthStub?.(server);
 
-  // DEV-ONLY AUTH STUB — no real auth mechanism exists yet (research.md §3's explicit assumption;
-  // a future auth spec will replace this). Gated strictly on NODE_ENV === "development" so it can
-  // never activate in staging/production. Lets you manually exercise any route locally by setting
-  // `x-dev-user-id`/`x-dev-tenant-id` headers for a user already seeded in `user_roles`. Delete
-  // this block once real auth ships.
-  if (process.env.NODE_ENV === "development") {
-    server.addHook("onRequest", async (request) => {
-      const userId = request.headers["x-dev-user-id"];
-      if (typeof userId === "string") {
-        const tenantId = request.headers["x-dev-tenant-id"];
-        request.user = { id: userId, tenantId: typeof tenantId === "string" ? tenantId : "" };
-      }
-    });
-  }
-
+  // Real tenant-user auth (Tenant Authentication Configuration spec) — decorates request.user from
+  // a verified user_sessions row before tenant-context.ts reads it. Superseded and removed the
+  // former dev-only `x-dev-user-id`/`x-dev-tenant-id` header stub this comment used to describe.
+  await server.register(tenantUserContext);
   await server.register(tenantContext);
   await server.register(superAdminContext);
   await server.register(adminRoutes);
@@ -67,6 +61,9 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Fas
   await server.register(provisioningRoutes);
   await server.register(platformAuthRoutes);
   await server.register(tenantRoutingRoutes);
+  await server.register(tenantAuthSettingsRoutes);
+  await server.register(tenantAuthRoutes);
+  await server.register(tenantTeamRoutes);
 
   server.get("/health", async () => ({
     status: "ok",

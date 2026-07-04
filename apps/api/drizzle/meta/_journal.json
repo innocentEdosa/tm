@@ -134,6 +134,41 @@
       "when": 1783100000000,
       "tag": "0018_rls_tenants_subdomain_lookup",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1783153804587,
+      "tag": "0019_init_tenant_auth",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1783153804588,
+      "tag": "0020_rls_tenant_auth",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1783153804589,
+      "tag": "0021_lock_tenant_auth_grants",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1783153804590,
+      "tag": "0022_seed_tenant_auth_permissions",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1783153804591,
+      "tag": "0023_backfill_tenant_auth_methods",
+      "breakpoints": true
     }
   ]
 }

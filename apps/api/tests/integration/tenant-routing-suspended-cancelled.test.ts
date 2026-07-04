@@ -32,11 +32,15 @@ describe("resolveTenantBySubdomain — suspended/cancelled tenants (US4)", () =>
 
   it("resolves a suspended tenant with state: suspended and its name — never valid", async () => {
     const result = await resolveTenantBySubdomain(getTestPool(), subdomainSuspended);
-    expect(result).toEqual({ state: "suspended", tenantName: "Suspended Co" });
+    expect(result.state).toBe("suspended");
+    expect(result.tenantName).toBe("Suspended Co");
+    expect(result.tenantId).toBe(tenantSuspended);
   });
 
   it("resolves a cancelled tenant with state: cancelled and its name — never valid", async () => {
     const result = await resolveTenantBySubdomain(getTestPool(), subdomainCancelled);
-    expect(result).toEqual({ state: "cancelled", tenantName: "Cancelled Co" });
+    expect(result.state).toBe("cancelled");
+    expect(result.tenantName).toBe("Cancelled Co");
+    expect(result.tenantId).toBe(tenantCancelled);
   });
 });

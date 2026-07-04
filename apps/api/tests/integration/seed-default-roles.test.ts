@@ -36,7 +36,15 @@ describe("seedDefaultRolesForTenant", () => {
         .where(eq(rolePermissions.roleId, hrAdmin.id));
     });
     expect(hrAdminPermissions.map((p) => p.key).sort()).toEqual(
-      ["approve_enrollment", "edit_content_library", "manage_roles", "view_department_analytics"].sort(),
+      [
+        "approve_enrollment",
+        "edit_content_library",
+        "manage_roles",
+        "view_department_analytics",
+        // Tenant Authentication Configuration spec (0022_seed_tenant_auth_permissions.sql):
+        "manage_authentication_settings",
+        "manage_team_members",
+      ].sort(),
     );
   });
 

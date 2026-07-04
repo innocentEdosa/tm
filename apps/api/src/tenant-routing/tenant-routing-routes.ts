@@ -14,7 +14,17 @@ const tenantRoutingRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const result = await resolveTenantBySubdomain(fastify.pg.pool, subdomain);
-      return reply.code(200).send({ success: true, data: result });
+      // Explicit allow-list — never spread `result` directly. `tenantId` is for in-process callers
+      // only (e.g. tenant-auth/tenant-user-context.ts) and must never cross this HTTP boundary
+      // (research.md §4 of spec 004; TenantRoutingResult's own doc comment).
+      return reply.code(200).send({
+        success: true,
+        data: {
+          state: result.state,
+          tenantName: result.tenantName,
+          enabledAuthMethods: result.enabledAuthMethods,
+        },
+      });
     },
   );
 };
