@@ -1,6 +1,8 @@
 import { redirect } from "next/navigation";
+import { AppShell, type NavSection } from "@tm/ui";
 import { getPlatformSession } from "@/lib/platform-session";
-import PlatformSidebar from "./platform-sidebar";
+
+const API_BASE = "/platform-api";
 
 /**
  * The persistent shell every Super Admin lands on immediately after login (spec FR-001, FR-002).
@@ -9,6 +11,10 @@ import PlatformSidebar from "./platform-sidebar";
  * has neither concept, research.md §5). Lives in the `(platform-shell)` route group (no URL segment
  * of its own) so it wraps `/platform`, `/provisioning/new`, and `/admin/permissions` under one
  * persistent frame — `/platform/login` stays outside the group, unwrapped.
+ *
+ * Renders through the shared `AppShell` (Desktop Shell Visual Language spec, FR-002a) — the same
+ * component the tenant dashboard renders through (Clarifications: both shells converge). Only the
+ * props below (nav items, identity) differ.
  */
 export default async function PlatformLayout({ children }: { children: React.ReactNode }) {
   const session = await getPlatformSession();
@@ -16,10 +22,40 @@ export default async function PlatformLayout({ children }: { children: React.Rea
     redirect("/platform/login");
   }
 
+  const navSections: NavSection[] = [
+    {
+      key: "menu",
+      entries: [{ key: "home", icon: "home", label: "Home", href: "/platform" }],
+    },
+    {
+      key: "platform-tools",
+      entries: [
+        {
+          key: "provisioning",
+          icon: "building2",
+          label: "Provision Tenant",
+          href: "/provisioning/new",
+        },
+        {
+          key: "permissions",
+          icon: "keyRound",
+          label: "Permissions",
+          href: "/admin/permissions",
+        },
+      ],
+    },
+  ];
+
   return (
-    <div className="flex min-h-screen">
-      <PlatformSidebar name={session.name} />
-      <main className="flex-1 px-8 py-8">{children}</main>
-    </div>
+    <AppShell
+      appMarkLabel="TM"
+      appName="TM"
+      navSections={navSections}
+      identity={{ initial: session.name.charAt(0).toUpperCase(), primary: session.name, secondary: session.email }}
+      logoutHref={`${API_BASE}/platform/logout`}
+      afterLogoutHref="/platform/login"
+    >
+      {children}
+    </AppShell>
   );
 }

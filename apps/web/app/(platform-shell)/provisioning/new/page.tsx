@@ -7,7 +7,7 @@
 // Super Admin session before this renders — the submit fetch still uses `credentials: "include"`
 // since this is a Client Component making its own browser-side request.
 import { useState } from "react";
-import { Button } from "@tm/ui";
+import { Button, Badge } from "@tm/ui";
 import type { ApiResponse } from "@tm/types";
 
 const API_BASE = "/platform-api";
@@ -508,12 +508,9 @@ function SuccessSummary({ data }: { data: ProvisionedTenant }) {
       {data.departments.length > 0 ? (
         <div className="mt-3 flex flex-wrap gap-1.5">
           {data.departments.map((d) => (
-            <span
-              key={d.id}
-              className="inline-flex items-center rounded-full bg-cta/10 px-2 py-0.5 text-xs font-medium text-cta"
-            >
+            <Badge key={d.id} variant="accent">
               {d.name}
-            </span>
+            </Badge>
           ))}
         </div>
       ) : (

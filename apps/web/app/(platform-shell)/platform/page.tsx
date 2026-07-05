@@ -1,3 +1,4 @@
+import { PageHeader, Card } from "@tm/ui";
 import { getPlatformSession } from "@/lib/platform-session";
 
 // Server Component — the shell's home content (spec FR-005). The layout already guarantees a valid
@@ -12,10 +13,8 @@ export default async function PlatformHomePage() {
 
   return (
     <div className="mx-auto max-w-2xl">
-      <div className="banner-success">You&apos;re authenticated as a platform Super Admin.</div>
-
-      <h1 className="mt-6 text-3xl font-bold tracking-tight text-primary">{session.name}</h1>
-      <div className="surface-card mt-4">
+      <PageHeader title={session.name} subtitle="You're authenticated as a platform Super Admin." />
+      <Card className="mt-4">
         <dl className="space-y-3 text-sm">
           <div className="flex justify-between gap-4">
             <dt className="text-slate-500">Email</dt>
@@ -32,7 +31,7 @@ export default async function PlatformHomePage() {
             </dd>
           </div>
         </dl>
-      </div>
+      </Card>
     </div>
   );
 }

@@ -202,6 +202,11 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
       }
       const requestHeaders = new Headers(request.headers);
       requestHeaders.set("x-tenant-subdomain", label);
+      // Desktop Shell Visual Language spec — the topbar's tenant identity badge needs the tenant's
+      // display name; `data.tenantName` is already resolved above, just wasn't forwarded before.
+      if (data.tenantName) {
+        requestHeaders.set("x-tenant-name", data.tenantName);
+      }
       response = NextResponse.rewrite(targetUrl, { request: { headers: requestHeaders } });
       break;
     }

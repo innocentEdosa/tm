@@ -9,6 +9,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { ApiResponse } from "@tm/types";
+import { Badge } from "@tm/ui";
 
 interface Permission {
   id: string;
@@ -134,9 +135,7 @@ export default function AdminPermissionsPage() {
                         <td className="px-4 py-2 text-text">{permission.displayName}</td>
                         <td className="px-4 py-2 text-slate-600">{permission.description}</td>
                         <td className="px-4 py-2">
-                          <span className="inline-flex items-center rounded-full bg-cta/10 px-2 py-0.5 text-xs font-medium text-cta">
-                            {permission.category}
-                          </span>
+                          <Badge variant="accent">{permission.category}</Badge>
                         </td>
                       </tr>
                     ))}
@@ -156,22 +155,15 @@ export default function AdminPermissionsPage() {
                   <div key={template.id} className="rounded-lg border border-border p-4">
                     <div className="flex items-center justify-between gap-2">
                       <h3 className="font-semibold text-primary">{template.name}</h3>
-                      {template.isPlatformOnly && (
-                        <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">
-                          Platform only
-                        </span>
-                      )}
+                      {template.isPlatformOnly && <Badge variant="neutral">Platform only</Badge>}
                     </div>
                     <p className="mt-1 text-sm text-slate-600">{template.description}</p>
                     <div className="mt-3 flex flex-wrap gap-1.5">
                       {template.permissions.length > 0 ? (
                         template.permissions.map((key) => (
-                          <span
-                            key={key}
-                            className="inline-flex items-center rounded-full bg-cta/10 px-2 py-0.5 font-mono text-xs text-cta"
-                          >
+                          <Badge key={key} variant="accent" className="font-mono">
                             {key}
-                          </span>
+                          </Badge>
                         ))
                       ) : (
                         <span className="text-xs text-slate-500">No permissions</span>
