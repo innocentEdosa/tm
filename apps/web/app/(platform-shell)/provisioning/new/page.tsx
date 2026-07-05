@@ -1,12 +1,11 @@
 "use client";
 
-// Follows the existing minimal, nascent conventions (Tailwind v4, @tm/ui palette/tokens) pending a
-// fully locked design system — constitution Principle V "flag a design-system proposal" for this
-// screen; no new palette/font/component library introduced. Guarded by `requireSuperAdminSession`
-// (Super Admin Authentication spec) — authenticates via the real `tm_super_admin_session` cookie,
-// so the submit fetch uses `credentials: "include"` (same pattern as `app/platform/page.tsx`), not
-// the old dev-only header stub. Goes through next.config.ts's rewrite proxy (relative
-// /platform-api/* path) so the cookie stays same-origin from the browser's point of view.
+// Restyled to the locked design system (Role-Based Dashboard Shell spec's design-system/tm/MASTER.md)
+// as part of the Super Admin Platform Dashboard Shell spec — presentation only, all state,
+// validation, and submission logic is unchanged from before this feature (research.md §6, FR-003).
+// Guarded by the shell's layout (`(platform-shell)/layout.tsx`), which already confirms a valid
+// Super Admin session before this renders — the submit fetch still uses `credentials: "include"`
+// since this is a Client Component making its own browser-side request.
 import { useState } from "react";
 import { Button } from "@tm/ui";
 import type { ApiResponse } from "@tm/types";
@@ -203,9 +202,9 @@ export default function ProvisionTenantPage() {
   const aErrors = adminErrors();
 
   return (
-    <main className="mx-auto max-w-3xl px-6 py-12">
-      <h1 className="text-3xl font-bold tracking-tight text-gray-900">Provision a New Tenant</h1>
-      <p className="mt-2 text-sm text-gray-600">
+    <div className="mx-auto max-w-3xl">
+      <h1 className="text-3xl font-bold tracking-tight text-primary">Provision a New Tenant</h1>
+      <p className="mt-2 text-sm text-slate-600">
         Onboard a new company onto TM — sales-assisted setup for internal Super Admins only.
       </p>
 
@@ -219,34 +218,31 @@ export default function ProvisionTenantPage() {
               <div
                 className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-medium ${
                   isActive
-                    ? "bg-blue-600 text-white"
+                    ? "bg-cta text-white"
                     : isDone
-                      ? "bg-blue-100 text-blue-700"
-                      : "bg-gray-100 text-gray-500"
+                      ? "bg-cta/10 text-cta"
+                      : "bg-slate-100 text-slate-500"
                 }`}
                 aria-current={isActive ? "step" : undefined}
               >
                 {n}
               </div>
               <span
-                className={`text-sm font-medium ${isActive ? "text-gray-900" : "text-gray-500"}`}
+                className={`text-sm font-medium ${isActive ? "text-primary" : "text-slate-500"}`}
               >
                 {label}
               </span>
-              {n < STEP_LABELS.length && <div className="h-px flex-1 bg-gray-200" aria-hidden="true" />}
+              {n < STEP_LABELS.length && <div className="h-px flex-1 bg-border" aria-hidden="true" />}
             </li>
           );
         })}
       </ol>
-      <p className="mt-2 text-xs text-gray-500">
+      <p className="mt-2 text-xs text-slate-500">
         Step {step} of {STEP_LABELS.length}
       </p>
 
       {submit.status === "error" && (
-        <div
-          role="alert"
-          className="mt-6 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
-        >
+        <div role="alert" className="banner-error mt-6">
           {submit.message}
         </div>
       )}
@@ -278,8 +274,8 @@ export default function ProvisionTenantPage() {
             value={company.industry}
             onChange={(v) => setCompany((c) => ({ ...c, industry: v }))}
           />
-          <div className="border-t border-gray-200 pt-5">
-            <h2 className="text-sm font-semibold text-gray-900">Primary contact</h2>
+          <div className="border-t border-border pt-5">
+            <h2 className="text-sm font-semibold text-primary">Primary contact</h2>
             <div className="mt-4 space-y-5">
               <Field
                 id="contact-name"
@@ -314,7 +310,7 @@ export default function ProvisionTenantPage() {
 
       {step === 2 && (
         <section className="mt-8">
-          <p className="text-sm text-gray-600">
+          <p className="text-sm text-slate-600">
             Default departments are pre-filled below. Rename, remove, or add to them — changes apply
             once you submit at the end.
           </p>
@@ -327,7 +323,7 @@ export default function ProvisionTenantPage() {
                   type="text"
                   value={name}
                   onChange={(e) => updateDepartment(i, e.target.value)}
-                  className="h-10 flex-1 rounded-md border border-gray-300 px-3 text-sm text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+                  className="field-input h-10 flex-1"
                 />
                 <button
                   type="button"
@@ -341,12 +337,12 @@ export default function ProvisionTenantPage() {
             ))}
           </ul>
           {departments.length === 0 && (
-            <p className="mt-3 text-sm text-gray-500">
+            <p className="mt-3 text-sm text-slate-500">
               No departments will be created. You can add departments later.
             </p>
           )}
           {dError && (
-            <p className="mt-3 text-sm text-red-600" role="alert">
+            <p className="field-error mt-3" role="alert">
               {dError}
             </p>
           )}
@@ -363,7 +359,7 @@ export default function ProvisionTenantPage() {
                   addDepartment();
                 }
               }}
-              className="h-10 flex-1 rounded-md border border-gray-300 px-3 text-sm text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+              className="field-input h-10 flex-1"
             />
             <button type="button" onClick={addDepartment} className="btn btn-secondary btn-sm cursor-pointer">
               Add
@@ -397,8 +393,8 @@ export default function ProvisionTenantPage() {
             />
           </div>
 
-          <div className="rounded-md border border-gray-200 bg-gray-50 p-4">
-            <h2 className="text-sm font-semibold text-gray-900">Review</h2>
+          <div className="rounded-lg border border-border bg-slate-50 p-4">
+            <h2 className="text-sm font-semibold text-primary">Review</h2>
             <dl className="mt-3 space-y-1 text-sm">
               <ReviewRow label="Company" value={company.name || "—"} />
               <ReviewRow label="Subdomain" value={company.subdomain || "—"} />
@@ -431,7 +427,7 @@ export default function ProvisionTenantPage() {
           </Button>
         )}
       </div>
-    </main>
+    </div>
   );
 }
 
@@ -458,7 +454,7 @@ function Field({
 }) {
   return (
     <div>
-      <label htmlFor={id} className="block text-sm font-medium text-gray-900">
+      <label htmlFor={id} className="field-label">
         {label}
         {required && <span aria-hidden="true"> *</span>}
       </label>
@@ -471,16 +467,14 @@ function Field({
         required={required}
         aria-invalid={error ? true : undefined}
         aria-describedby={error ? `${id}-error` : hint ? `${id}-hint` : undefined}
-        className={`mt-1 h-10 w-full rounded-md border px-3 text-sm text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 ${
-          error ? "border-red-400" : "border-gray-300"
-        }`}
+        className="field-input"
       />
       {error ? (
-        <p id={`${id}-error`} className="mt-1 text-sm text-red-600" role="alert">
+        <p id={`${id}-error`} className="field-error" role="alert">
           {error}
         </p>
       ) : hint ? (
-        <p id={`${id}-hint`} className="mt-1 text-xs text-gray-500">
+        <p id={`${id}-hint`} className="field-hint">
           {hint}
         </p>
       ) : null}
@@ -491,19 +485,17 @@ function Field({
 function ReviewRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex justify-between gap-4">
-      <dt className="text-gray-500">{label}</dt>
-      <dd className="text-right text-gray-900">{value}</dd>
+      <dt className="text-slate-500">{label}</dt>
+      <dd className="text-right text-text">{value}</dd>
     </div>
   );
 }
 
 function SuccessSummary({ data }: { data: ProvisionedTenant }) {
   return (
-    <main className="mx-auto max-w-3xl px-6 py-12">
-      <div className="rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
-        Tenant provisioned successfully.
-      </div>
-      <h1 className="mt-6 text-3xl font-bold tracking-tight text-gray-900">{data.tenant.name}</h1>
+    <div className="mx-auto max-w-3xl">
+      <div className="banner-success">Tenant provisioned successfully.</div>
+      <h1 className="mt-6 text-3xl font-bold tracking-tight text-primary">{data.tenant.name}</h1>
       <dl className="mt-4 space-y-1 text-sm">
         <ReviewRow label="Tenant ID" value={data.tenant.id} />
         <ReviewRow label="Subdomain" value={data.tenant.subdomain} />
@@ -512,21 +504,21 @@ function SuccessSummary({ data }: { data: ProvisionedTenant }) {
         <ReviewRow label="Admin role" value={data.admin.roleAssigned} />
       </dl>
 
-      <h2 className="mt-8 text-xl font-semibold text-gray-900">Departments</h2>
+      <h2 className="mt-8 text-xl font-semibold text-primary">Departments</h2>
       {data.departments.length > 0 ? (
         <div className="mt-3 flex flex-wrap gap-1.5">
           {data.departments.map((d) => (
             <span
               key={d.id}
-              className="inline-flex items-center rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700"
+              className="inline-flex items-center rounded-full bg-cta/10 px-2 py-0.5 text-xs font-medium text-cta"
             >
               {d.name}
             </span>
           ))}
         </div>
       ) : (
-        <p className="mt-3 text-sm text-gray-600">No departments were created.</p>
+        <p className="mt-3 text-sm text-slate-600">No departments were created.</p>
       )}
-    </main>
+    </div>
   );
 }

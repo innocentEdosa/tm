@@ -1,14 +1,11 @@
 "use client";
 
-// Follows the existing minimal, nascent conventions (Tailwind v4, @tm/ui palette/tokens) pending a
-// fully locked design system — constitution Principle V, matching every other UI surface. Client
-// component: guarded by `requireSuperAdminSession` (Super Admin Authentication spec), which reads
-// the `tm_super_admin_session` cookie — a Server Component running on apps/web's own server has no
-// access to that browser cookie, so this must fetch from the browser with `credentials: "include"`,
-// same pattern as `app/platform/page.tsx`. Fetches go through next.config.ts's rewrite proxy
-// (relative /platform-api/* path) so the cookie stays same-origin — see next.config.ts. Superseded
-// the old dev-only `x-dev-user-id` header stub entirely — that mechanism is now actively rejected
-// by the guard (research.md §4 of the Super Admin Authentication spec), not just unrelated to it.
+// Restyled to the locked design system (Role-Based Dashboard Shell spec's design-system/tm/MASTER.md)
+// as part of the Super Admin Platform Dashboard Shell spec — presentation only; all fetch/state
+// logic is unchanged from before this feature (research.md §6, FR-004). Kept as a Client Component
+// (unlike the shell's Home page) since this page makes its own ongoing data fetches after the
+// shell's layout has already confirmed a session — the unauthenticated/redirect handling here covers
+// a session expiring *while already on this page*, not the initial load the layout already guards.
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { ApiResponse } from "@tm/types";
@@ -87,23 +84,20 @@ export default function AdminPermissionsPage() {
   }, [state.status, router]);
 
   return (
-    <main className="mx-auto max-w-5xl px-6 py-12">
-      <h1 className="text-3xl font-bold tracking-tight text-gray-900">
+    <div className="mx-auto max-w-5xl">
+      <h1 className="text-3xl font-bold tracking-tight text-primary">
         Permissions &amp; Role Templates
       </h1>
-      <p className="mt-2 text-sm text-gray-600">
+      <p className="mt-2 text-sm text-slate-600">
         Platform-wide permission catalog and default role templates. Read-only.
       </p>
 
       {(state.status === "loading" || state.status === "unauthenticated") && (
-        <p className="mt-8 text-sm text-gray-600">Loading…</p>
+        <p className="mt-8 text-sm text-slate-600">Loading…</p>
       )}
 
       {state.status === "error" && (
-        <div
-          role="alert"
-          className="mt-8 rounded-md border border-gray-300 bg-gray-50 px-4 py-3 text-sm text-gray-900"
-        >
+        <div role="alert" className="banner-error mt-8">
           Couldn&apos;t load permissions or role templates. Try again later.
         </div>
       )}
@@ -111,36 +105,36 @@ export default function AdminPermissionsPage() {
       {state.status === "ready" && (
         <>
           <section className="mt-10">
-            <h2 className="text-xl font-semibold text-gray-900">Permission Catalog</h2>
+            <h2 className="text-xl font-semibold text-primary">Permission Catalog</h2>
             {state.permissions.length > 0 ? (
-              <div className="mt-4 overflow-x-auto rounded-md border border-gray-200">
-                <table className="min-w-full divide-y divide-gray-200 text-sm">
-                  <thead className="bg-gray-50">
+              <div className="mt-4 overflow-x-auto rounded-lg border border-border">
+                <table className="min-w-full divide-y divide-border text-sm">
+                  <thead className="bg-slate-50">
                     <tr>
-                      <th scope="col" className="px-4 py-2 text-left font-medium text-gray-600">
+                      <th scope="col" className="px-4 py-2 text-left font-medium text-slate-600">
                         Key
                       </th>
-                      <th scope="col" className="px-4 py-2 text-left font-medium text-gray-600">
+                      <th scope="col" className="px-4 py-2 text-left font-medium text-slate-600">
                         Display Name
                       </th>
-                      <th scope="col" className="px-4 py-2 text-left font-medium text-gray-600">
+                      <th scope="col" className="px-4 py-2 text-left font-medium text-slate-600">
                         Description
                       </th>
-                      <th scope="col" className="px-4 py-2 text-left font-medium text-gray-600">
+                      <th scope="col" className="px-4 py-2 text-left font-medium text-slate-600">
                         Category
                       </th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-100 bg-white">
+                  <tbody className="divide-y divide-border bg-white">
                     {state.permissions.map((permission) => (
                       <tr key={permission.id}>
-                        <td className="px-4 py-2 font-mono text-xs text-gray-900">
+                        <td className="px-4 py-2 font-mono text-xs text-text">
                           {permission.key}
                         </td>
-                        <td className="px-4 py-2 text-gray-900">{permission.displayName}</td>
-                        <td className="px-4 py-2 text-gray-600">{permission.description}</td>
+                        <td className="px-4 py-2 text-text">{permission.displayName}</td>
+                        <td className="px-4 py-2 text-slate-600">{permission.description}</td>
                         <td className="px-4 py-2">
-                          <span className="inline-flex items-center rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">
+                          <span className="inline-flex items-center rounded-full bg-cta/10 px-2 py-0.5 text-xs font-medium text-cta">
                             {permission.category}
                           </span>
                         </td>
@@ -150,48 +144,48 @@ export default function AdminPermissionsPage() {
                 </table>
               </div>
             ) : (
-              <p className="mt-4 text-sm text-gray-600">No permissions found.</p>
+              <p className="mt-4 text-sm text-slate-600">No permissions found.</p>
             )}
           </section>
 
           <section className="mt-12">
-            <h2 className="text-xl font-semibold text-gray-900">Role Templates</h2>
+            <h2 className="text-xl font-semibold text-primary">Role Templates</h2>
             {state.roleTemplates.length > 0 ? (
               <div className="mt-4 grid gap-4 sm:grid-cols-2">
                 {state.roleTemplates.map((template) => (
-                  <div key={template.id} className="rounded-md border border-gray-200 p-4">
+                  <div key={template.id} className="rounded-lg border border-border p-4">
                     <div className="flex items-center justify-between gap-2">
-                      <h3 className="font-semibold text-gray-900">{template.name}</h3>
+                      <h3 className="font-semibold text-primary">{template.name}</h3>
                       {template.isPlatformOnly && (
-                        <span className="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700">
+                        <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">
                           Platform only
                         </span>
                       )}
                     </div>
-                    <p className="mt-1 text-sm text-gray-600">{template.description}</p>
+                    <p className="mt-1 text-sm text-slate-600">{template.description}</p>
                     <div className="mt-3 flex flex-wrap gap-1.5">
                       {template.permissions.length > 0 ? (
                         template.permissions.map((key) => (
                           <span
                             key={key}
-                            className="inline-flex items-center rounded-full bg-blue-50 px-2 py-0.5 font-mono text-xs text-blue-700"
+                            className="inline-flex items-center rounded-full bg-cta/10 px-2 py-0.5 font-mono text-xs text-cta"
                           >
                             {key}
                           </span>
                         ))
                       ) : (
-                        <span className="text-xs text-gray-500">No permissions</span>
+                        <span className="text-xs text-slate-500">No permissions</span>
                       )}
                     </div>
                   </div>
                 ))}
               </div>
             ) : (
-              <p className="mt-4 text-sm text-gray-600">No role templates found.</p>
+              <p className="mt-4 text-sm text-slate-600">No role templates found.</p>
             )}
           </section>
         </>
       )}
-    </main>
+    </div>
   );
 }
