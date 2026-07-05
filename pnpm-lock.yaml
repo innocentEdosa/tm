@@ -142,6 +142,10 @@ importers:
   packages/types: {}
 
   packages/ui:
+    dependencies:
+      lucide-react:
+        specifier: ^1.23.0
+        version: 1.23.0(react@19.2.7)
     devDependencies:
       '@tm/tsconfig':
         specifier: workspace:*
@@ -149,6 +153,9 @@ importers:
       '@types/react':
         specifier: ^19.0.0
         version: 19.2.17
+      next:
+        specifier: ^15.0.0
+        version: 15.5.19(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       react:
         specifier: ^19.0.0
         version: 19.2.7
