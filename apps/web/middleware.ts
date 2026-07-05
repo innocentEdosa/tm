@@ -184,19 +184,25 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
       if (data.tenantName) {
         requestHeaders.set("x-tenant-name", data.tenantName);
       }
-      response = NextResponse.rewrite(new URL(`/tenant-status/${data.state}`, request.url), {
-        request: { headers: requestHeaders },
-      });
+      const statusUrl = request.nextUrl.clone();
+      statusUrl.pathname = `/tenant-status/${data.state}`;
+      response = NextResponse.rewrite(statusUrl, { request: { headers: requestHeaders } });
       break;
     }
 
     case "valid": {
-      const target = pathname === "/" ? "/tenant" : pathname;
+      // `request.nextUrl.clone()` preserves the original query string (e.g. reset-password's
+      // `?token=...`) — constructing a fresh `new URL(pathname, request.url)` instead silently
+      // drops it, since a path-absolute reference replaces the entire path+query+hash of the base
+      // (confirmed via real-browser testing: `searchParams` resolved to `{}` server-side despite
+      // the browser's address bar clearly showing the token).
+      const targetUrl = request.nextUrl.clone();
+      if (pathname === "/") {
+        targetUrl.pathname = "/tenant";
+      }
       const requestHeaders = new Headers(request.headers);
       requestHeaders.set("x-tenant-subdomain", label);
-      response = NextResponse.rewrite(new URL(target, request.url), {
-        request: { headers: requestHeaders },
-      });
+      response = NextResponse.rewrite(targetUrl, { request: { headers: requestHeaders } });
       break;
     }
 
