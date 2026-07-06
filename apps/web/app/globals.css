@@ -14,8 +14,8 @@
 
   --color-primary: #0f172a;
   --color-secondary: #334155;
-  --color-cta: #0369a1;
-  --color-cta-hover: #075985;
+  --color-cta: #1A56DB;
+  --color-cta-hover: #1E3A8A;
   --color-surface: #f8fafc;
   --color-text: #020617;
   --color-border: #e2e8f0;
@@ -89,6 +89,76 @@
    card pattern: the `Card` component (packages/ui) renders this same class, not a competing one. */
 .surface-card {
   @apply rounded-2xl border border-border bg-white p-8;
+}
+
+/* ─── Modal (packages/ui `Modal`) ─────────────────────────────── */
+
+.modal-overlay {
+  @apply fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4;
+}
+.modal-panel {
+  @apply w-full max-w-md max-h-[85vh] overflow-y-auto p-6;
+}
+.modal-header {
+  @apply mb-4 flex items-center justify-between gap-4;
+}
+.modal-title {
+  @apply font-heading text-lg font-bold text-primary;
+}
+.modal-close-btn {
+  @apply flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-secondary
+         transition-colors duration-200 cursor-pointer hover:bg-slate-50 hover:text-primary
+         focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cta;
+}
+
+/* ─── Drawer (packages/ui `Drawer`) ───────────────────────────── */
+
+@keyframes drawer-overlay-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes drawer-slide-in-right {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+@keyframes drawer-slide-in-left {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+@keyframes drawer-slide-in-top {
+  from { transform: translateY(-100%); }
+  to { transform: translateY(0); }
+}
+@keyframes drawer-slide-in-bottom {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+.drawer-overlay {
+  @apply fixed inset-0 z-50 bg-slate-900/40;
+  animation: drawer-overlay-fade-in 150ms ease-out;
+}
+.drawer-panel {
+  @apply fixed flex flex-col overflow-y-auto bg-white p-6;
+}
+.drawer-panel[data-side="right"] {
+  @apply inset-y-0 right-0 h-full w-full max-w-md border-l border-border;
+  animation: drawer-slide-in-right 220ms ease-out;
+}
+.drawer-panel[data-side="left"] {
+  @apply inset-y-0 left-0 h-full w-full max-w-md border-r border-border;
+  animation: drawer-slide-in-left 220ms ease-out;
+}
+.drawer-panel[data-side="top"] {
+  @apply inset-x-0 top-0 w-full max-h-[85vh] border-b border-border;
+  animation: drawer-slide-in-top 220ms ease-out;
+}
+.drawer-panel[data-side="bottom"] {
+  @apply inset-x-0 bottom-0 w-full max-h-[85vh] border-t border-border;
+  animation: drawer-slide-in-bottom 220ms ease-out;
+}
+.drawer-body {
+  @apply flex-1;
 }
 
 .divider-with-label {
@@ -192,7 +262,7 @@
   @apply text-xs font-medium text-slate-400;
 }
 .shell-nav-tag {
-  @apply rounded-full border border-border px-2 py-0.5 text-xs font-medium text-slate-500;
+  @apply rounded-full border border-border bg-slate-50 px-2 py-0.5 text-xs font-medium text-slate-500;
 }
 
 .shell-nav-group-toggle {

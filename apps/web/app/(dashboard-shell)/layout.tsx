@@ -44,6 +44,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   const canManageTeam = session.permissions.includes("manage_team_members");
   const canManageAuth = session.permissions.includes("manage_authentication_settings");
+  const canManageDepartments = session.permissions.includes("department.manage");
+  const canViewDepartments = canManageDepartments || session.permissions.includes("department.view");
 
   const navSections: NavSection[] = [
     {
@@ -55,7 +57,38 @@ export default async function DashboardLayout({ children }: { children: React.Re
     },
   ];
 
-  if (canManageTeam) {
+  if (canManageTeam || canViewDepartments) {
+    const administrationChildren: NavLinkItem[] = [];
+    if (canManageTeam) {
+      administrationChildren.push({ key: "members", icon: "users", label: "Members", href: "/settings/team" });
+    }
+    if (canViewDepartments) {
+      administrationChildren.push({
+        key: "department",
+        icon: "building2",
+        label: "Department",
+        href: "/settings/department",
+      });
+    }
+    administrationChildren.push(
+      {
+        key: "roles",
+        icon: "shieldCheck",
+        label: "Roles",
+        href: "/settings/roles",
+        disabled: true,
+        tag: "Soon",
+      },
+      {
+        key: "permission",
+        icon: "keyRound",
+        label: "Permission",
+        href: "/settings/permission",
+        disabled: true,
+        tag: "Soon",
+      },
+    );
+
     navSections.push({
       key: "administration",
       entries: [
@@ -63,33 +96,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
           key: "administration",
           icon: "settings",
           label: "Administration",
-          children: [
-            { key: "members", icon: "users", label: "Members", href: "/settings/team" },
-            {
-              key: "department",
-              icon: "building2",
-              label: "Department",
-              href: "/settings/department",
-              disabled: true,
-              tag: "Soon",
-            },
-            {
-              key: "roles",
-              icon: "shieldCheck",
-              label: "Roles",
-              href: "/settings/roles",
-              disabled: true,
-              tag: "Soon",
-            },
-            {
-              key: "permission",
-              icon: "keyRound",
-              label: "Permission",
-              href: "/settings/permission",
-              disabled: true,
-              tag: "Soon",
-            },
-          ],
+          children: administrationChildren,
         },
       ],
     });

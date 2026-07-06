@@ -61,6 +61,9 @@ describe("POST /provisioning/tenants — admin creation & role assignment (US2)"
         // Tenant Authentication Configuration spec (0022_seed_tenant_auth_permissions.sql):
         "manage_authentication_settings",
         "manage_team_members",
+        // Department Management spec (0025_seed_department_permissions.sql):
+        "department.view",
+        "department.manage",
       ].sort(),
     );
 
