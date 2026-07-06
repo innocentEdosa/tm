@@ -1,9 +1,10 @@
 import type { FastifyPluginAsync } from "fastify";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { requireTenantUserSession } from "./require-tenant-user-session";
 import { requirePermission } from "../permissions/require-permission";
 import { users } from "../db/schema/users";
 import { userRoles } from "../db/schema/roles";
+import { departments } from "../db/schema/departments";
 import { generateOneTimePassword, otpExpiryFromNow } from "./otp";
 import { hashPassword } from "../platform-auth/password";
 import { sendOneTimePasswordEmail } from "./mailer";
@@ -20,16 +21,30 @@ function pgErrorCode(err: unknown): string | undefined {
  * account immediately with a one-time password — no pending-invitation record, list, resend, or
  * revoke mechanism. */
 const tenantTeamRoutes: FastifyPluginAsync = async (fastify) => {
-  fastify.post<{ Body: { fullName?: string; email?: string; roleId?: string } }>(
+  fastify.post<{ Body: { fullName?: string; email?: string; roleId?: string; departmentId?: string } }>(
     "/tenant-auth/team",
     { preHandler: [requireTenantUserSession(), requirePermission("manage_team_members")] },
     async (request, reply) => {
-      const { fullName, email, roleId } = request.body ?? {};
+      const { fullName, email, roleId, departmentId } = request.body ?? {};
       if (!fullName || !email || !roleId) {
         return reply.code(400).send({ success: false, message: "fullName, email, and roleId are required" });
       }
 
       const tenantId = request.user!.tenantId;
+
+      // User Story 4 (Department Management spec 009, FR-010) — only an Active department in the
+      // caller's own tenant may be assigned; RLS already scopes this lookup, and the `active` filter
+      // keeps a client from assigning into an archived department via a direct API call.
+      if (departmentId) {
+        const [dept] = await request.tenantDb
+          .select({ id: departments.id })
+          .from(departments)
+          .where(and(eq(departments.id, departmentId), eq(departments.status, "active")));
+        if (!dept) {
+          return reply.code(422).send({ success: false, message: "Department not found or not active" });
+        }
+      }
+
       const oneTimePassword = generateOneTimePassword();
 
       let createdUser: { id: string; email: string };
@@ -43,6 +58,7 @@ const tenantTeamRoutes: FastifyPluginAsync = async (fastify) => {
             passwordHash: await hashPassword(oneTimePassword),
             mustChangePassword: true,
             otpExpiresAt: otpExpiryFromNow(),
+            departmentId: departmentId ?? null,
           })
           .returning({ id: users.id, email: users.email });
       } catch (err) {

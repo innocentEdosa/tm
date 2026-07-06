@@ -10,6 +10,10 @@ export { Badge } from "./badge";
 export type { BadgeProps } from "./badge";
 export { PageHeader } from "./page-header";
 export type { PageHeaderProps } from "./page-header";
+export { Modal } from "./modal";
+export type { ModalProps } from "./modal";
+export { Drawer } from "./drawer";
+export type { DrawerProps, DrawerSide } from "./drawer";
 export { AppShell } from "./app-shell";
 export type {
   AppShellProps,

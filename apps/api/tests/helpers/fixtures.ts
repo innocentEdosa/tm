@@ -1,11 +1,23 @@
 import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { inArray } from "drizzle-orm";
-import { withTenantDb } from "./pg";
+import { withTenantDb, withTenantTransaction } from "./pg";
 import { roles, rolePermissions, userRoles } from "../../src/db/schema/roles";
 import { permissions } from "../../src/db/schema/permissions";
 import { hashSessionToken, generateSessionToken, sessionExpiryFromNow } from "../../src/platform-auth/session";
 import { SUPER_ADMIN_COOKIE_NAME } from "../../src/platform-auth/cookies";
+
+/** Creates a real `tenants` row for `tenantId` — required before inserting `departments` (unlike
+ * `roles`, `departments.tenant_id` has an FK to `tenants.id`). Department Management spec 009. */
+export async function seedTenant(tenantId: string, name = "Test Tenant"): Promise<void> {
+  await withTenantTransaction(tenantId, async (client) => {
+    await client.query(
+      `INSERT INTO tenants (id, name, subdomain, primary_contact_name, primary_contact_email)
+       VALUES ($1, $2, $3, 'Test Contact', $4)`,
+      [tenantId, name, `test-${tenantId}`, `contact-${tenantId}@example.com`],
+    );
+  });
+}
 
 /** Creates a tenant-scoped role with the given permission keys and assigns it to `userId`. */
 export async function seedUserWithRole(

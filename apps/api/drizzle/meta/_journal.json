@@ -169,6 +169,27 @@
       "when": 1783153804591,
       "tag": "0023_backfill_tenant_auth_methods",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1783312243518,
+      "tag": "0024_hard_clint_barton",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1783312243519,
+      "tag": "0025_seed_department_permissions",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1783312243520,
+      "tag": "0026_backfill_department_permissions_by_role_name",
+      "breakpoints": true
     }
   ]
 }
