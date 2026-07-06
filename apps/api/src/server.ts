@@ -15,6 +15,7 @@ import tenantAuthSettingsRoutes from "./tenant-auth/tenant-auth-settings-routes"
 import tenantAuthRoutes from "./tenant-auth/tenant-auth-routes";
 import tenantTeamRoutes from "./tenant-auth/tenant-team-routes";
 import tenantDepartmentRoutes from "./departments/tenant-department-routes";
+import tenantFormRoutes from "./custom-fields/tenant-form-routes";
 
 export interface BuildServerOptions {
   /**
@@ -66,6 +67,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Fas
   await server.register(tenantAuthRoutes);
   await server.register(tenantTeamRoutes);
   await server.register(tenantDepartmentRoutes);
+  await server.register(tenantFormRoutes);
 
   server.get("/health", async () => ({
     status: "ok",

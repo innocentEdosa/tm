@@ -1,6 +1,6 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { AppShell, type NavSection, type NavLinkItem } from "@tm/ui";
+import { AppShell, type NavSection, type NavLinkItem, type NavEntry } from "@tm/ui";
 import { getTenantSession } from "@/lib/tenant-session";
 
 const API_BASE = "/tenant-api/tenant-auth";
@@ -46,6 +46,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const canManageAuth = session.permissions.includes("manage_authentication_settings");
   const canManageDepartments = session.permissions.includes("department.manage");
   const canViewDepartments = canManageDepartments || session.permissions.includes("department.view");
+  const canManageForms = session.permissions.includes("forms.manage.tenant");
 
   const navSections: NavSection[] = [
     {
@@ -102,13 +103,35 @@ export default async function DashboardLayout({ children }: { children: React.Re
     });
   }
 
-  const footerEntries: NavLinkItem[] = [];
-  if (canManageAuth) {
+  // "Settings" (spec FR-011/FR-012, User Story 5) — a system-configuration concern, deliberately
+  // distinct from "Administration" (people/access). Pinned in the footer, above Log out, not part
+  // of the scrollable nav above. Authentication moved here from its own former footer entry; its
+  // route (/settings/authentication) is unchanged, so no redirect is needed (plan.md Summary).
+  const footerEntries: NavEntry[] = [];
+  if (canManageAuth || canManageForms) {
+    const settingsChildren: NavLinkItem[] = [];
+    if (canManageAuth) {
+      settingsChildren.push({
+        key: "auth-settings",
+        icon: "shieldCheck",
+        label: "Authentication",
+        href: "/settings/authentication",
+      });
+    }
+    if (canManageForms) {
+      settingsChildren.push({
+        key: "forms",
+        icon: "fileText",
+        label: "Forms",
+        href: "/settings/forms",
+      });
+    }
+
     footerEntries.push({
-      key: "auth-settings",
-      icon: "shieldCheck",
-      label: "Authentication Settings",
-      href: "/settings/authentication",
+      key: "settings",
+      icon: "slidersHorizontal",
+      label: "Settings",
+      children: settingsChildren,
     });
   }
 

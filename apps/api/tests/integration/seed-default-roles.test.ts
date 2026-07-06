@@ -47,6 +47,8 @@ describe("seedDefaultRolesForTenant", () => {
         // Department Management spec (0025_seed_department_permissions.sql):
         "department.view",
         "department.manage",
+        // Extensible Custom Fields Framework spec (0031_seed_forms_permissions.sql):
+        "forms.manage.tenant",
       ].sort(),
     );
   });
