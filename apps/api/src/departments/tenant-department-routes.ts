@@ -9,6 +9,8 @@ import {
   hasChildren as hasChildDepartments,
   subtreeMemberCount,
 } from "./department-hierarchy";
+import { getFormFields } from "../custom-fields/field-key-uniqueness";
+import { validateCustomFieldValues, writeCustomFieldValues } from "../custom-fields/save-values";
 
 interface PgErrorCause {
   code?: string;
@@ -114,6 +116,7 @@ const tenantDepartmentRoutes: FastifyPluginAsync = async (fastify) => {
     status?: "active" | "archived";
     managerId?: string | null;
     assistantManagerId?: string | null;
+    customFieldValues?: Record<string, unknown>;
   }
 
   /** Shared by POST/PATCH — spec FR-004/FR-005/FR-006/FR-019/FR-020, contracts §POST/§PATCH.
@@ -185,6 +188,18 @@ const tenantDepartmentRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(validation.error.code).send({ success: false, message: validation.error.message });
       }
 
+      // spec FR-015/research.md §5 — validated *before* the department insert, since
+      // tenant-context.ts commits the whole per-request transaction on `onResponse` regardless of
+      // status code: a 422 returned after the insert would still commit it.
+      const customFieldValues = request.body.customFieldValues;
+      const fields = customFieldValues ? await getFormFields(request.tenantDb, "department") : [];
+      if (customFieldValues) {
+        const errors = validateCustomFieldValues(customFieldValues, fields);
+        if (errors.length > 0) {
+          return reply.code(422).send({ success: false, errors });
+        }
+      }
+
       let created: DepartmentRow;
       try {
         [created] = await request.tenantDb
@@ -204,6 +219,17 @@ const tenantDepartmentRoutes: FastifyPluginAsync = async (fastify) => {
           return reply.code(409).send({ success: false, message: "A department with this name already exists" });
         }
         throw err;
+      }
+
+      if (customFieldValues) {
+        await writeCustomFieldValues(
+          request.tenantDb,
+          request.user!.tenantId,
+          "department",
+          created.id,
+          customFieldValues,
+          fields,
+        );
       }
 
       return reply.code(201).send({
@@ -233,6 +259,16 @@ const tenantDepartmentRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(validation.error.code).send({ success: false, message: validation.error.message });
       }
 
+      // spec FR-015/research.md §5 — validated before the update, same reasoning as POST above.
+      const customFieldValues = body.customFieldValues;
+      const fields = customFieldValues ? await getFormFields(request.tenantDb, "department") : [];
+      if (customFieldValues) {
+        const errors = validateCustomFieldValues(customFieldValues, fields);
+        if (errors.length > 0) {
+          return reply.code(422).send({ success: false, errors });
+        }
+      }
+
       let updated: DepartmentRow;
       try {
         [updated] = await request.tenantDb
@@ -253,6 +289,17 @@ const tenantDepartmentRoutes: FastifyPluginAsync = async (fastify) => {
           return reply.code(409).send({ success: false, message: "A department with this name already exists" });
         }
         throw err;
+      }
+
+      if (customFieldValues) {
+        await writeCustomFieldValues(
+          request.tenantDb,
+          request.user!.tenantId,
+          "department",
+          departmentId,
+          customFieldValues,
+          fields,
+        );
       }
 
       const memberCount = await request.tenantDb

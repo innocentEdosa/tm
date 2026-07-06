@@ -50,6 +50,30 @@ export async function withTenantDb<T>(tenantId: string, fn: (db: Db) => Promise<
   return withTenantTransaction(tenantId, async (client) => fn(drizzle(client)));
 }
 
+/**
+ * Runs `fn` inside a single transaction with `app.is_super_admin` set to `'true'` — the same GUC
+ * `apps/api/src/platform-auth/super-admin-context.ts` sets on every real Super Admin request,
+ * through the same `tm_app` pool (Super Admin's session goes through `fastify.pg.pool`, not the
+ * migration/owner role). Used to exercise the `super_admin_full_access` RLS policy on `form_fields`
+ * directly (custom-fields-global-field-locked.test.ts) — this spec has no Super Admin-facing route
+ * to drive this through HTTP, since that authoring screen is out of scope (spec FR-002).
+ */
+export async function withSuperAdminTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
+  const client = await getTestPool().connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT set_config('app.is_super_admin', 'true', true)");
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 /** Seeds a bare tenant-owned role via the app role's own tenant transaction (exercises WITH CHECK). */
 export async function seedTenantRole(
   tenantId: string,

@@ -13,6 +13,8 @@ import {
   Building2,
   KeyRound,
   Settings,
+  SlidersHorizontal,
+  FileText,
 } from "lucide-react";
 
 type IconComponent = React.ComponentType<{ className?: string }>;
@@ -32,6 +34,8 @@ const ICONS = {
   building2: Building2,
   keyRound: KeyRound,
   settings: Settings,
+  slidersHorizontal: SlidersHorizontal,
+  fileText: FileText,
 } satisfies Record<string, IconComponent>;
 
 export interface NavLinkItem {
@@ -68,8 +72,10 @@ export interface AppShellProps {
   workspaceLabel?: string;
   navSections: NavSection[];
   /** Utility nav rows pinned in the footer, above Log out (e.g. Settings) — never part of the
-   * scrollable nav above, so they stay visible regardless of how long that list gets. */
-  footerEntries?: NavLinkItem[];
+   * scrollable nav above, so they stay visible regardless of how long that list gets. Accepts a
+   * `NavGroup` (expandable, e.g. "Settings" with Authentication/Forms children) as well as plain
+   * links, rendered via the same `renderEntry` the main nav sections use. */
+  footerEntries?: NavEntry[];
   identity: { initial: string; primary: string; secondary?: string };
   logoutHref: string;
   afterLogoutHref: string;
@@ -215,7 +221,7 @@ export function AppShell({
         {/* Pinned, not part of the scrollable nav above — footer entries and Log out must stay
            visible even when the sections above overflow and scroll. */}
         <div className="shell-sidebar-footer">
-          {footerEntries?.map((item) => renderLink(item, false))}
+          {footerEntries?.map((entry) => renderEntry(entry))}
 
           <button type="button" className="shell-nav-item" onClick={handleLogout}>
             <LogOut className="shell-nav-item-icon" />

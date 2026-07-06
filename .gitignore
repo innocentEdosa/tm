@@ -54,3 +54,7 @@ next-env.d.ts
 # Local tool state (not shared with the team)
 .claude/settings.local.json
 .vercel
+
+# Python bytecode cache (e.g. from the ui-ux-pro-max skill's scripts)
+__pycache__/
+*.pyc

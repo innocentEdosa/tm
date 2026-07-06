@@ -7,6 +7,25 @@ import { PageHeader, Card, Badge, Modal, Drawer, Button, Input } from "@tm/ui";
 
 const API_BASE = "/tenant-api/tenant";
 
+// spec FR-006/FR-007/FR-015 — Extensible Custom Fields Framework. The framework now returns this
+// form's ENTIRE layout — its own system fields (Name/Parent/Description/Status/Manager/Assistant
+// Manager) interleaved with global/tenant custom fields, in one tenant-reorderable sequence
+// (research.md §4) — this component never decides ordering, it only renders whichever real,
+// hardcoded control matches a system row's `fieldKey`, or the generic custom-field control for
+// everything else, in the order given.
+type CustomFieldType = "text" | "textarea" | "number" | "date" | "select" | "multiselect";
+
+interface CustomFieldDefinition {
+  id: string;
+  fieldKey: string;
+  label: string;
+  fieldType: CustomFieldType;
+  options: string[] | null;
+  isRequired: boolean;
+  scope: "system" | "global" | "tenant";
+  isSystem: boolean;
+}
+
 interface UserRef {
   id: string;
   fullName: string;
@@ -69,6 +88,16 @@ function computeExcludedParentIds(all: DepartmentRow[], editingId: string | null
   }
 
   return excluded;
+}
+
+/** A read-only detail value that's empty reads as a deliberate, described absence ("No manager
+ * assigned") rather than a bare "—" — the same descriptive-fallback treatment "Parent department"
+ * already used, extended here to every other detail field instead of living as a one-off. */
+function FieldValue({ value, placeholder }: { value: React.ReactNode; placeholder: string }) {
+  if (value === null || value === undefined || value === "") {
+    return <p className="text-sm italic text-slate-400">{placeholder}</p>;
+  }
+  return <p className="text-sm text-secondary">{value}</p>;
 }
 
 interface PersonPickerProps {
@@ -287,6 +316,71 @@ export default function DepartmentSettingsClient({ subdomain }: { subdomain: str
 
   const [viewTargetId, setViewTargetId] = useState<string | null>(null);
 
+  // The whole form's layout (system + global + tenant fields, ordered) — fetched once, independent
+  // of which drawer is open, since both the create/edit drawer AND the view drawer need it.
+  const [layoutFields, setLayoutFields] = useState<CustomFieldDefinition[]>([]);
+  const [customFieldValues, setCustomFieldValues] = useState<Record<string, unknown>>({});
+  const [customFieldErrors, setCustomFieldErrors] = useState<Record<string, string>>({});
+  const [viewCustomFieldValues, setViewCustomFieldValues] = useState<Record<string, unknown>>({});
+
+  useEffect(() => {
+    fetch(`${API_BASE}/form-fields?formKey=department&subdomain=${encodeURIComponent(subdomain)}`, {
+      credentials: "include",
+    })
+      .then((res) => res.json())
+      .then((json: { data: CustomFieldDefinition[] }) => setLayoutFields(json.data))
+      .catch(() => setLayoutFields([]));
+  }, [subdomain]);
+
+  useEffect(() => {
+    if (!formOpen || !editingId) {
+      setCustomFieldValues({});
+      return;
+    }
+    fetch(
+      `${API_BASE}/custom-field-values?formKey=department&entityId=${editingId}&subdomain=${encodeURIComponent(subdomain)}`,
+      { credentials: "include" },
+    )
+      .then((res) => res.json())
+      .then((json: { data: Record<string, unknown> }) => setCustomFieldValues(json.data))
+      .catch(() => setCustomFieldValues({}));
+  }, [formOpen, editingId, subdomain]);
+
+  useEffect(() => {
+    if (!viewTargetId) {
+      setViewCustomFieldValues({});
+      return;
+    }
+    fetch(
+      `${API_BASE}/custom-field-values?formKey=department&entityId=${viewTargetId}&subdomain=${encodeURIComponent(subdomain)}`,
+      { credentials: "include" },
+    )
+      .then((res) => res.json())
+      .then((json: { data: Record<string, unknown> }) => setViewCustomFieldValues(json.data))
+      .catch(() => setViewCustomFieldValues({}));
+  }, [viewTargetId, subdomain]);
+
+  const customFields = useMemo(() => layoutFields.filter((f) => !f.isSystem), [layoutFields]);
+
+  function validateCustomFields(): boolean {
+    const errors: Record<string, string> = {};
+    for (const field of customFields) {
+      const value = customFieldValues[field.fieldKey];
+      const isEmpty = value === undefined || value === null || value === "";
+      if (isEmpty) {
+        if (field.isRequired) {
+          errors[field.fieldKey] = `${field.label} is required`;
+        }
+        continue;
+      }
+      if (field.fieldType === "number" && typeof value !== "number") {
+        errors[field.fieldKey] = `${field.label} must be a number`;
+      }
+    }
+    setCustomFieldErrors(errors);
+    return Object.keys(errors).length === 0;
+  }
+
   async function load(searchTerm?: string) {
     const qs = new URLSearchParams({ subdomain });
     if (searchTerm) qs.set("search", searchTerm);
@@ -381,6 +475,9 @@ export default function DepartmentSettingsClient({ subdomain }: { subdomain: str
       setFormError("Manager and Assistant Manager must be different people.");
       return;
     }
+    if (!validateCustomFields()) {
+      return;
+    }
     setSaving(true);
     const body = {
       name: form.name.trim(),
@@ -389,6 +486,7 @@ export default function DepartmentSettingsClient({ subdomain }: { subdomain: str
       ...(editingId ? { status: form.status } : {}),
       managerId: form.manager?.id ?? null,
       assistantManagerId: form.assistantManager?.id ?? null,
+      customFieldValues,
     };
     const url = editingId
       ? `${API_BASE}/departments/${editingId}?subdomain=${encodeURIComponent(subdomain)}`
@@ -405,7 +503,14 @@ export default function DepartmentSettingsClient({ subdomain }: { subdomain: str
       load(search);
       return;
     }
-    const json = (await res.json().catch(() => null)) as { message?: string } | null;
+    const json = (await res.json().catch(() => null)) as
+      | { message?: string; errors?: { fieldKey: string; message: string }[] }
+      | null;
+    if (json?.errors) {
+      setCustomFieldErrors(Object.fromEntries(json.errors.map((e) => [e.fieldKey, e.message])));
+      setFormError("Some custom fields need attention.");
+      return;
+    }
     setFormError(json?.message ?? "Couldn't save this department. Try again.");
   }
 
@@ -440,6 +545,178 @@ export default function DepartmentSettingsClient({ subdomain }: { subdomain: str
     () => computeExcludedParentIds(departments ?? [], editingId),
     [departments, editingId],
   );
+
+  /** Department's own real, hardcoded controls — one per system field the framework's layout
+   * places, matched by `fieldKey` (research.md §4). The framework decides *where* these sit
+   * relative to global/tenant custom fields; this component still owns *how* each one actually
+   * renders, validates, and saves (via `form.*` state, never `customFieldValues`). */
+  function renderSystemField(field: CustomFieldDefinition): React.ReactNode {
+    switch (field.fieldKey) {
+      case "name":
+        return (
+          <Input
+            key={field.id}
+            label="Name"
+            required
+            value={form.name}
+            onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+          />
+        );
+      case "parent_department_id":
+        return (
+          <div key={field.id}>
+            <label className="field-label" htmlFor="parentDepartmentId">
+              Parent department
+            </label>
+            <select
+              id="parentDepartmentId"
+              className="field-input"
+              value={form.parentDepartmentId}
+              onChange={(e) => setForm((f) => ({ ...f, parentDepartmentId: e.target.value }))}
+            >
+              <option value="">— None (top-level) —</option>
+              {(departments ?? [])
+                .filter((d) => !excludedParentIds.has(d.id))
+                .map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name}
+                  </option>
+                ))}
+            </select>
+          </div>
+        );
+      case "description":
+        return (
+          <div key={field.id}>
+            <label className="field-label" htmlFor="description">
+              Description
+            </label>
+            <textarea
+              id="description"
+              className="field-input"
+              rows={3}
+              value={form.description}
+              onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+            />
+          </div>
+        );
+      case "status":
+        if (!editingId) return null;
+        return (
+          <div key={field.id}>
+            <label className="field-label" htmlFor="status">
+              Status
+            </label>
+            <select
+              id="status"
+              className="field-input"
+              value={form.status}
+              onChange={(e) => setForm((f) => ({ ...f, status: e.target.value as "active" | "archived" }))}
+            >
+              <option value="active">Active</option>
+              <option value="archived">Archived</option>
+            </select>
+          </div>
+        );
+      case "manager_id":
+        return (
+          <PersonPicker
+            key={field.id}
+            label="Manager"
+            subdomain={subdomain}
+            value={form.manager}
+            onChange={(u) => setForm((f) => ({ ...f, manager: u }))}
+            excludeUserId={form.assistantManager?.id}
+          />
+        );
+      case "assistant_manager_id":
+        return (
+          <PersonPicker
+            key={field.id}
+            label="Assistant Manager"
+            subdomain={subdomain}
+            value={form.assistantManager}
+            onChange={(u) => setForm((f) => ({ ...f, assistantManager: u }))}
+            excludeUserId={form.manager?.id}
+          />
+        );
+      default:
+        return null;
+    }
+  }
+
+  function renderCustomField(field: CustomFieldDefinition): React.ReactNode {
+    return (
+      <div key={field.id}>
+        <label className="field-label" htmlFor={`custom-${field.fieldKey}`}>
+          {field.label}
+          {field.isRequired ? " *" : ""}
+        </label>
+        {field.fieldType === "textarea" ? (
+          <textarea
+            id={`custom-${field.fieldKey}`}
+            className="field-input"
+            rows={3}
+            value={(customFieldValues[field.fieldKey] as string) ?? ""}
+            onChange={(e) => setCustomFieldValues((v) => ({ ...v, [field.fieldKey]: e.target.value }))}
+          />
+        ) : field.fieldType === "select" ? (
+          <select
+            id={`custom-${field.fieldKey}`}
+            className="field-input"
+            value={(customFieldValues[field.fieldKey] as string) ?? ""}
+            onChange={(e) => setCustomFieldValues((v) => ({ ...v, [field.fieldKey]: e.target.value }))}
+          >
+            <option value="">— Select —</option>
+            {(field.options ?? []).map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        ) : field.fieldType === "multiselect" ? (
+          <select
+            id={`custom-${field.fieldKey}`}
+            className="field-input"
+            multiple
+            value={(customFieldValues[field.fieldKey] as string[]) ?? []}
+            onChange={(e) =>
+              setCustomFieldValues((v) => ({
+                ...v,
+                [field.fieldKey]: Array.from(e.target.selectedOptions, (o) => o.value),
+              }))
+            }
+          >
+            {(field.options ?? []).map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <input
+            id={`custom-${field.fieldKey}`}
+            type={field.fieldType === "number" ? "number" : field.fieldType === "date" ? "date" : "text"}
+            className="field-input"
+            value={(customFieldValues[field.fieldKey] as string | number) ?? ""}
+            onChange={(e) =>
+              setCustomFieldValues((v) => ({
+                ...v,
+                [field.fieldKey]: field.fieldType === "number" ? e.target.valueAsNumber : e.target.value,
+              }))
+            }
+          />
+        )}
+        {customFieldErrors[field.fieldKey] && (
+          <p className="mt-1 text-xs text-red-600">{customFieldErrors[field.fieldKey]}</p>
+        )}
+      </div>
+    );
+  }
+
+  function renderFormField(field: CustomFieldDefinition): React.ReactNode {
+    return field.isSystem ? renderSystemField(field) : renderCustomField(field);
+  }
 
   function renderRows(parentId: string | null, depth: number): React.ReactNode[] {
     const rows = childrenByParent.get(parentId) ?? [];
@@ -557,76 +834,7 @@ export default function DepartmentSettingsClient({ subdomain }: { subdomain: str
       <Drawer open={formOpen} onClose={() => setFormOpen(false)} side="right" title={editingId ? "Edit department" : "Add department"}>
         <form className="space-y-4" onSubmit={handleSubmit}>
           {formError && <div className="banner-error">{formError}</div>}
-          <Input
-            label="Name"
-            required
-            value={form.name}
-            onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-          />
-          <div>
-            <label className="field-label" htmlFor="parentDepartmentId">
-              Parent department
-            </label>
-            <select
-              id="parentDepartmentId"
-              className="field-input"
-              value={form.parentDepartmentId}
-              onChange={(e) => setForm((f) => ({ ...f, parentDepartmentId: e.target.value }))}
-            >
-              <option value="">— None (top-level) —</option>
-              {(departments ?? [])
-                .filter((d) => !excludedParentIds.has(d.id))
-                .map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.name}
-                  </option>
-                ))}
-            </select>
-          </div>
-          <div>
-            <label className="field-label" htmlFor="description">
-              Description
-            </label>
-            <textarea
-              id="description"
-              className="field-input"
-              rows={3}
-              value={form.description}
-              onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-            />
-          </div>
-          {editingId && (
-            <div>
-              <label className="field-label" htmlFor="status">
-                Status
-              </label>
-              <select
-                id="status"
-                className="field-input"
-                value={form.status}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, status: e.target.value as "active" | "archived" }))
-                }
-              >
-                <option value="active">Active</option>
-                <option value="archived">Archived</option>
-              </select>
-            </div>
-          )}
-          <PersonPicker
-            label="Manager"
-            subdomain={subdomain}
-            value={form.manager}
-            onChange={(u) => setForm((f) => ({ ...f, manager: u }))}
-            excludeUserId={form.assistantManager?.id}
-          />
-          <PersonPicker
-            label="Assistant Manager"
-            subdomain={subdomain}
-            value={form.assistantManager}
-            onChange={(u) => setForm((f) => ({ ...f, assistantManager: u }))}
-            excludeUserId={form.manager?.id}
-          />
+          {layoutFields.map((field) => renderFormField(field))}
           <Button type="submit" isLoading={saving} className="w-full">
             {editingId ? "Save changes" : "Create department"}
           </Button>
@@ -645,7 +853,7 @@ export default function DepartmentSettingsClient({ subdomain }: { subdomain: str
 
             <div>
               <p className="field-label">Description</p>
-              <p className="text-sm text-secondary">{viewTarget.description || "—"}</p>
+              <FieldValue value={viewTarget.description} placeholder="No description added" />
             </div>
 
             <div>
@@ -662,13 +870,24 @@ export default function DepartmentSettingsClient({ subdomain }: { subdomain: str
 
             <div>
               <p className="field-label">Manager</p>
-              <p className="text-sm text-secondary">{viewTarget.manager?.fullName ?? "—"}</p>
+              <FieldValue value={viewTarget.manager?.fullName} placeholder="No manager assigned" />
             </div>
 
             <div>
               <p className="field-label">Assistant Manager</p>
-              <p className="text-sm text-secondary">{viewTarget.assistantManager?.fullName ?? "—"}</p>
+              <FieldValue value={viewTarget.assistantManager?.fullName} placeholder="No assistant manager assigned" />
             </div>
+
+            {customFields.map((field) => {
+              const value = viewCustomFieldValues[field.fieldKey];
+              const display = Array.isArray(value) ? value.join(", ") : (value as string | number | undefined);
+              return (
+                <div key={field.id}>
+                  <p className="field-label">{field.label}</p>
+                  <FieldValue value={display} placeholder="Not set" />
+                </div>
+              );
+            })}
 
             {(childrenByParent.get(viewTarget.id) ?? []).length > 0 && (
               <div>

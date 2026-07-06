@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { inArray } from "drizzle-orm";
-import { withTenantDb, withTenantTransaction } from "./pg";
+import { withTenantDb, withTenantTransaction, withSuperAdminTransaction } from "./pg";
 import { roles, rolePermissions, userRoles } from "../../src/db/schema/roles";
 import { permissions } from "../../src/db/schema/permissions";
 import { hashSessionToken, generateSessionToken, sessionExpiryFromNow } from "../../src/platform-auth/session";
@@ -75,6 +75,42 @@ export async function assignRole(tenantId: string, userId: string, roleId: strin
   await withTenantDb(tenantId, async (db) => {
     await db.insert(userRoles).values({ tenantId, userId, roleId });
   });
+}
+
+/**
+ * Inserts a global (`tenant_id IS NULL`) `form_fields` row via a Super Admin RLS context
+ * (data-model.md `super_admin_full_access`). Unlike every other fixture here, a global row is NOT
+ * tenant-isolated — it's visible to every tenant, including every other test's — so callers MUST
+ * delete it via the returned `cleanup()` (e.g. in a `finally` block) once the test is done, or it
+ * permanently pollutes every tenant's merged field list from then on (discovered the hard way:
+ * custom-fields-render-merge-order.test.ts).
+ */
+export async function seedGlobalField(
+  formKey: string,
+  overrides: { fieldKey?: string; label?: string; displayOrder?: number } = {},
+): Promise<{ id: string; cleanup: () => Promise<void> }> {
+  const fieldKey = overrides.fieldKey ?? `global_${randomUUID().slice(0, 8)}`;
+  const label = overrides.label ?? "Global Field";
+  const displayOrder = overrides.displayOrder ?? 0;
+
+  const { rows } = await withSuperAdminTransaction(async (client) =>
+    client.query<{ id: string }>(
+      `INSERT INTO form_fields (form_definition_id, tenant_id, field_key, label, field_type, display_order, created_by)
+       SELECT id, NULL, $2, $3, 'text', $4, 'super_admin' FROM form_definitions WHERE key = $1
+       RETURNING id`,
+      [formKey, fieldKey, label, displayOrder],
+    ),
+  );
+  const id = rows[0].id;
+
+  return {
+    id,
+    cleanup: async () => {
+      await withSuperAdminTransaction(async (client) => {
+        await client.query(`DELETE FROM form_fields WHERE id = $1`, [id]);
+      });
+    },
+  };
 }
 
 /**
