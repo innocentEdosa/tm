@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import { and, eq } from "drizzle-orm";
 import { requireTenantUserSession } from "../tenant-auth/require-tenant-user-session";
-import { requirePermission } from "../permissions/require-permission";
+import { requireAnyPermission } from "../permissions/require-permission";
 import { formDefinitions, formFields, customFieldValues, formFieldOrderOverrides } from "../db/schema/custom-fields";
 import { getFormFields, fieldKeyCollisionExists } from "./field-key-uniqueness";
 import { slugify } from "./field-validation";
@@ -31,10 +31,16 @@ interface PatchFieldBody {
  * `form_fields`'s dual-visibility policy (research.md §1) means a global row is simply unreachable
  * for write here, not explicitly checked for by this code. */
 const tenantFormRoutes: FastifyPluginAsync = async (fastify) => {
-  // GET /tenant/form-definitions — gated forms.manage.tenant (the Settings > Forms list itself).
+  // GET /tenant/form-definitions — gated forms.manage.tenant OR the granular forms.tenant.read
+  // (Granular Permissions addendum) — the Settings > Forms list itself.
   fastify.get(
     "/tenant/form-definitions",
-    { preHandler: [requireTenantUserSession(), requirePermission("forms.manage.tenant")] },
+    {
+      preHandler: [
+        requireTenantUserSession(),
+        requireAnyPermission("forms.manage.tenant", "forms.tenant.read"),
+      ],
+    },
     async (request) => {
       const rows = await request.tenantDb
         .select({ id: formDefinitions.id, key: formDefinitions.key, name: formDefinitions.name, description: formDefinitions.description })
@@ -59,10 +65,15 @@ const tenantFormRoutes: FastifyPluginAsync = async (fastify) => {
     },
   );
 
-  // POST /tenant/form-fields — spec FR-003/FR-005, gated forms.manage.tenant.
+  // POST /tenant/form-fields — spec FR-003/FR-005, gated forms.manage.tenant or forms.tenant.create.
   fastify.post<{ Body: CreateFieldBody }>(
     "/tenant/form-fields",
-    { preHandler: [requireTenantUserSession(), requirePermission("forms.manage.tenant")] },
+    {
+      preHandler: [
+        requireTenantUserSession(),
+        requireAnyPermission("forms.manage.tenant", "forms.tenant.create"),
+      ],
+    },
     async (request, reply) => {
       const { formKey, label, fieldType, options, isRequired } = request.body ?? {};
       if (!formKey || !label || !label.trim() || !fieldType) {
@@ -133,7 +144,12 @@ const tenantFormRoutes: FastifyPluginAsync = async (fastify) => {
   // resolves as not-found here, never a silent no-op (US3, contracts/custom-fields-api.md).
   fastify.patch<{ Params: { fieldId: string }; Body: PatchFieldBody }>(
     "/tenant/form-fields/:fieldId",
-    { preHandler: [requireTenantUserSession(), requirePermission("forms.manage.tenant")] },
+    {
+      preHandler: [
+        requireTenantUserSession(),
+        requireAnyPermission("forms.manage.tenant", "forms.tenant.edit"),
+      ],
+    },
     async (request, reply) => {
       const { fieldId } = request.params;
       const tenantId = request.user!.tenantId;
@@ -188,7 +204,12 @@ const tenantFormRoutes: FastifyPluginAsync = async (fastify) => {
   // label/type/required stays exactly as seeded/set by its owner, only its *position* moves.
   fastify.put<{ Body: { formKey?: string; fieldIds?: string[] } }>(
     "/tenant/form-fields/reorder",
-    { preHandler: [requireTenantUserSession(), requirePermission("forms.manage.tenant")] },
+    {
+      preHandler: [
+        requireTenantUserSession(),
+        requireAnyPermission("forms.manage.tenant", "forms.tenant.edit"),
+      ],
+    },
     async (request, reply) => {
       const { formKey, fieldIds } = request.body ?? {};
       if (!formKey || !fieldIds || fieldIds.length === 0) {
