@@ -49,6 +49,18 @@ describe("seedDefaultRolesForTenant", () => {
         "department.manage",
         // Extensible Custom Fields Framework spec (0031_seed_forms_permissions.sql):
         "forms.manage.tenant",
+        // Granular Permissions addendum (0038_seed_granular_crud_permissions.sql):
+        "department.create",
+        "department.edit",
+        "department.delete",
+        "roles.read",
+        "roles.create",
+        "roles.edit",
+        "roles.delete",
+        "forms.tenant.read",
+        "forms.tenant.create",
+        "forms.tenant.edit",
+        "team.create",
       ].sort(),
     );
   });

@@ -42,11 +42,15 @@ export default async function DashboardLayout({ children }: { children: React.Re
     );
   }
 
-  const canManageTeam = session.permissions.includes("manage_team_members");
+  // Granular Permissions addendum: each nav-visibility check also accepts the new narrow key
+  // introduced alongside its module's legacy "manage" superset — a role holding only the granular
+  // key (never granted the superset) still sees the nav entry it needs.
+  const canManageTeam = session.permissions.includes("manage_team_members") || session.permissions.includes("team.create");
   const canManageAuth = session.permissions.includes("manage_authentication_settings");
   const canManageDepartments = session.permissions.includes("department.manage");
   const canViewDepartments = canManageDepartments || session.permissions.includes("department.view");
-  const canManageForms = session.permissions.includes("forms.manage.tenant");
+  const canManageForms = session.permissions.includes("forms.manage.tenant") || session.permissions.includes("forms.tenant.read");
+  const canManageRoles = session.permissions.includes("manage_roles") || session.permissions.includes("roles.read");
 
   const navSections: NavSection[] = [
     {
@@ -58,7 +62,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
     },
   ];
 
-  if (canManageTeam || canViewDepartments) {
+  if (canManageTeam || canViewDepartments || canManageRoles) {
     const administrationChildren: NavLinkItem[] = [];
     if (canManageTeam) {
       administrationChildren.push({ key: "members", icon: "users", label: "Members", href: "/settings/team" });
@@ -71,24 +75,17 @@ export default async function DashboardLayout({ children }: { children: React.Re
         href: "/settings/department",
       });
     }
-    administrationChildren.push(
-      {
+    // spec FR-015/Assumptions (Roles Management UI) — gated specifically on `manage_roles`, not the
+    // broader condition this array otherwise shares, and no longer disabled. The former standalone
+    // "Permission" entry is removed entirely (FR-016/SC-006); its function now lives inside Roles.
+    if (canManageRoles) {
+      administrationChildren.push({
         key: "roles",
         icon: "shieldCheck",
         label: "Roles",
         href: "/settings/roles",
-        disabled: true,
-        tag: "Soon",
-      },
-      {
-        key: "permission",
-        icon: "keyRound",
-        label: "Permission",
-        href: "/settings/permission",
-        disabled: true,
-        tag: "Soon",
-      },
-    );
+      });
+    }
 
     navSections.push({
       key: "administration",

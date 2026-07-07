@@ -10,6 +10,15 @@ import { buildTestServer } from "../helpers/test-server";
  * grants — 0013_lock_department_catalog_grants.sql-style REVOKEs don't apply here) so it can
  * temporarily remove and restore the global `hr_admin` role_templates row. `fileParallelism: false`
  * (vitest.config.ts) ensures no other test file reads the catalog mid-mutation.
+ *
+ * `roles.source_template_id` references `role_templates.id` with `ON DELETE SET NULL` — so
+ * deleting the hr_admin template below cascades and nulls out `source_template_id` on *every* role
+ * across the entire shared database currently linked to it, not just this test's own tenant
+ * (discovered while building the Roles Management UI spec — this is exactly the signal that
+ * spec's system-role protection relies on). The `finally` block must therefore capture which real
+ * role ids get nulled *before* deleting the template, and explicitly re-link them afterward — simply
+ * re-inserting the template row (even with the same id) does not retroactively restore an
+ * already-nulled foreign key on an unrelated row.
  */
 describe("POST /provisioning/tenants — fails closed when hr_admin template is missing (FR-014)", () => {
   const adminPool = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -32,6 +41,9 @@ describe("POST /provisioning/tenants — fails closed when hr_admin template is 
       "SELECT permission_id FROM role_template_permissions WHERE role_template_id = $1",
       [template.id],
     );
+    const affectedRoleIds = (
+      await adminPool.query<{ id: string }>("SELECT id FROM roles WHERE source_template_id = $1", [template.id])
+    ).rows.map((r) => r.id);
 
     const server = await buildTestServer();
     const { cookieHeader } = await seedSuperAdminSession();
@@ -79,6 +91,14 @@ describe("POST /provisioning/tenants — fails closed when hr_admin template is 
           `INSERT INTO role_template_permissions (role_template_id, permission_id)
            VALUES ($1, $2) ON CONFLICT DO NOTHING`,
           [template.id, mapping.permission_id],
+        );
+      }
+      // Re-link every real role the DELETE's ON DELETE SET NULL cascade nulled out — the template
+      // row above being reinserted with the same id does not do this on its own.
+      if (affectedRoleIds.length > 0) {
+        await adminPool.query(
+          `UPDATE roles SET source_template_id = $1 WHERE id = ANY($2) AND source_template_id IS NULL`,
+          [template.id, affectedRoleIds],
         );
       }
       await server.close();

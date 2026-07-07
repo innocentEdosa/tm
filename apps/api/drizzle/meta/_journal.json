@@ -260,6 +260,20 @@
       "when": 1783342418347,
       "tag": "0036_seed_department_system_fields",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1783369800000,
+      "tag": "0037_backfill_role_source_template_id_by_name",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1783402000000,
+      "tag": "0038_seed_granular_crud_permissions",
+      "breakpoints": true
     }
   ]
 }

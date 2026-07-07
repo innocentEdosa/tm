@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import { eq, inArray, isNotNull, or, sql } from "drizzle-orm";
 import { requireTenantUserSession } from "../tenant-auth/require-tenant-user-session";
-import { requirePermission } from "../permissions/require-permission";
+import { requirePermission, requireAnyPermission } from "../permissions/require-permission";
 import { departments } from "../db/schema/departments";
 import { users } from "../db/schema/users";
 import {
@@ -90,10 +90,17 @@ const tenantDepartmentRoutes: FastifyPluginAsync = async (fastify) => {
   );
 
   // GET /tenant/users?search= — research.md §10. Exists solely to back the Manager/Assistant
-  // Manager pickers; gated by department.manage, not a general user-directory permission.
+  // Manager pickers, needed whenever creating or editing a department — gated by the legacy
+  // superset or either of the two granular keys that actually use it (Granular Permissions
+  // addendum), not a general user-directory permission.
   fastify.get<{ Querystring: { search?: string } }>(
     "/tenant/users",
-    { preHandler: [requireTenantUserSession(), requirePermission("department.manage")] },
+    {
+      preHandler: [
+        requireTenantUserSession(),
+        requireAnyPermission("department.manage", "department.create", "department.edit"),
+      ],
+    },
     async (request, reply) => {
       const search = request.query.search?.trim();
       if (!search) {
@@ -175,7 +182,7 @@ const tenantDepartmentRoutes: FastifyPluginAsync = async (fastify) => {
   // POST /tenant/departments — spec FR-002/FR-004-FR-007/FR-019/FR-020.
   fastify.post<{ Body: DepartmentWriteBody }>(
     "/tenant/departments",
-    { preHandler: [requireTenantUserSession(), requirePermission("department.manage")] },
+    { preHandler: [requireTenantUserSession(), requireAnyPermission("department.manage", "department.create")] },
     async (request, reply) => {
       const { name, parentDepartmentId, description, managerId, assistantManagerId } =
         request.body ?? {};
@@ -242,7 +249,7 @@ const tenantDepartmentRoutes: FastifyPluginAsync = async (fastify) => {
   // PATCH /tenant/departments/:departmentId — spec FR-003/FR-004-FR-007/FR-009/FR-019/FR-020.
   fastify.patch<{ Params: { departmentId: string }; Body: DepartmentWriteBody }>(
     "/tenant/departments/:departmentId",
-    { preHandler: [requireTenantUserSession(), requirePermission("department.manage")] },
+    { preHandler: [requireTenantUserSession(), requireAnyPermission("department.manage", "department.edit")] },
     async (request, reply) => {
       const { departmentId } = request.params;
       const [existing] = await request.tenantDb
@@ -323,7 +330,7 @@ const tenantDepartmentRoutes: FastifyPluginAsync = async (fastify) => {
   // DELETE /tenant/departments/:departmentId — spec FR-008/FR-016/FR-021.
   fastify.delete<{ Params: { departmentId: string } }>(
     "/tenant/departments/:departmentId",
-    { preHandler: [requireTenantUserSession(), requirePermission("department.manage")] },
+    { preHandler: [requireTenantUserSession(), requireAnyPermission("department.manage", "department.delete")] },
     async (request, reply) => {
       const { departmentId } = request.params;
 

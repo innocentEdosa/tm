@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import { and, eq } from "drizzle-orm";
 import { requireTenantUserSession } from "./require-tenant-user-session";
-import { requirePermission } from "../permissions/require-permission";
+import { requireAnyPermission } from "../permissions/require-permission";
 import { users } from "../db/schema/users";
 import { userRoles } from "../db/schema/roles";
 import { departments } from "../db/schema/departments";
@@ -23,7 +23,12 @@ function pgErrorCode(err: unknown): string | undefined {
 const tenantTeamRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post<{ Body: { fullName?: string; email?: string; roleId?: string; departmentId?: string } }>(
     "/tenant-auth/team",
-    { preHandler: [requireTenantUserSession(), requirePermission("manage_team_members")] },
+    {
+      preHandler: [
+        requireTenantUserSession(),
+        requireAnyPermission("manage_team_members", "team.create"),
+      ],
+    },
     async (request, reply) => {
       const { fullName, email, roleId, departmentId } = request.body ?? {};
       if (!fullName || !email || !roleId) {
