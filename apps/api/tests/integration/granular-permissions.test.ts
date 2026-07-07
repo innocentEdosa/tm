@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
 import { buildTestServer } from "../helpers/test-server";
 import { seedTenant, seedUserWithRole, seedRole } from "../helpers/fixtures";
-import { closeTestPool } from "../helpers/pg";
+import { closeTestPool, withTenantDb } from "../helpers/pg";
+import { users } from "../../src/db/schema/users";
 
 /**
  * Granular Permissions addendum (spec 011): each module's new create/read/edit/delete keys are
@@ -99,6 +100,9 @@ describe("granular permissions are additive alongside each module's legacy 'mana
     await seedTenant(tenantId);
     const { roleId } = await seedRole(tenantId, "Employee", []);
     const granted = randomUUID();
+    await withTenantDb(tenantId, async (db) => {
+      await db.insert(users).values({ id: granted, tenantId, fullName: "Granted Caller", email: `granted-${randomUUID()}@example.com` });
+    });
     await seedUserWithRole(tenantId, granted, ["team.create"]);
     const ungranted = randomUUID();
     await seedUserWithRole(tenantId, ungranted, []);

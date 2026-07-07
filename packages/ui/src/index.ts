@@ -12,6 +12,8 @@ export { PageHeader } from "./page-header";
 export type { PageHeaderProps } from "./page-header";
 export { Modal } from "./modal";
 export type { ModalProps } from "./modal";
+export { Pagination } from "./pagination";
+export type { PaginationProps } from "./pagination";
 export { Drawer } from "./drawer";
 export type { DrawerProps, DrawerSide } from "./drawer";
 export { AppShell } from "./app-shell";
