@@ -45,7 +45,13 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // Granular Permissions addendum: each nav-visibility check also accepts the new narrow key
   // introduced alongside its module's legacy "manage" superset — a role holding only the granular
   // key (never granted the superset) still sees the nav entry it needs.
-  const canManageTeam = session.permissions.includes("manage_team_members") || session.permissions.includes("team.create");
+  // Team Member Directory spec (012): a pure viewer (team.view.all/team.view.department, no
+  // create/manage) must still see "Members" — the directory itself is this spec's whole point.
+  const canManageTeam =
+    session.permissions.includes("manage_team_members") ||
+    session.permissions.includes("team.create") ||
+    session.permissions.includes("team.view.all") ||
+    session.permissions.includes("team.view.department");
   const canManageAuth = session.permissions.includes("manage_authentication_settings");
   const canManageDepartments = session.permissions.includes("department.manage");
   const canViewDepartments = canManageDepartments || session.permissions.includes("department.view");

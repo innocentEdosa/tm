@@ -1,13 +1,20 @@
 import type { FastifyPluginAsync } from "fastify";
-import { and, eq } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
+import { and, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { requireTenantUserSession } from "./require-tenant-user-session";
 import { requireAnyPermission } from "../permissions/require-permission";
+import { resolveTeamVisibilityScope } from "./team-visibility";
+import { collectSubtreeIds } from "../departments/department-hierarchy";
 import { users } from "../db/schema/users";
-import { userRoles } from "../db/schema/roles";
+import { userRoles, roles, rolePermissions } from "../db/schema/roles";
 import { departments } from "../db/schema/departments";
+import { permissions } from "../db/schema/permissions";
 import { generateOneTimePassword, otpExpiryFromNow } from "./otp";
 import { hashPassword } from "../platform-auth/password";
 import { sendOneTimePasswordEmail } from "./mailer";
+
+const DEFAULT_PAGE_SIZE = 25;
+const inviter = alias(users, "inviter");
 
 interface PgErrorCause {
   code?: string;
@@ -21,6 +28,90 @@ function pgErrorCode(err: unknown): string | undefined {
  * account immediately with a one-time password — no pending-invitation record, list, resend, or
  * revoke mechanism. */
 const tenantTeamRoutes: FastifyPluginAsync = async (fastify) => {
+  // GET /tenant/team — spec 012 (Team Member Directory), FR-001/FR-002/FR-003/FR-008/FR-009/FR-012.
+  // Visibility is enforced entirely server-side via team-visibility.ts, never a client-side filter of
+  // an already-fetched list (spec's own constraint).
+  fastify.get<{ Querystring: { search?: string; departmentId?: string; page?: string; pageSize?: string } }>(
+    "/tenant/team",
+    {
+      preHandler: [
+        requireTenantUserSession(),
+        requireAnyPermission("team.view.all", "team.view.department"),
+      ],
+    },
+    async (request) => {
+      const tenantId = request.user!.tenantId;
+      const page = Math.max(1, parseInt(request.query.page ?? "1", 10) || 1);
+      const pageSize = Math.max(1, parseInt(request.query.pageSize ?? "", 10) || DEFAULT_PAGE_SIZE);
+
+      const [viewAllGrant] = await request.tenantDb
+        .select({ id: permissions.id })
+        .from(userRoles)
+        .innerJoin(rolePermissions, eq(rolePermissions.roleId, userRoles.roleId))
+        .innerJoin(permissions, eq(permissions.id, rolePermissions.permissionId))
+        .where(and(eq(userRoles.userId, request.user!.id), eq(permissions.key, "team.view.all")));
+
+      const scope = await resolveTeamVisibilityScope(request.tenantDb, request.user!.id, !!viewAllGrant);
+
+      if (scope.kind === "no_department_assigned") {
+        return { success: true, data: [], meta: { page, pageSize, total: 0, reason: "no_department_assigned" } };
+      }
+
+      let effectiveDepartmentIds: string[] | null = scope.kind === "department" ? scope.departmentIds : null;
+      if (scope.kind === "all" && request.query.departmentId) {
+        effectiveDepartmentIds = await collectSubtreeIds(request.tenantDb, request.query.departmentId);
+      }
+
+      const conditions = [eq(users.tenantId, tenantId)];
+      if (effectiveDepartmentIds) {
+        conditions.push(inArray(users.departmentId, effectiveDepartmentIds));
+      }
+      if (request.query.search) {
+        const term = `%${request.query.search}%`;
+        conditions.push(or(ilike(users.fullName, term), ilike(users.email, term))!);
+      }
+
+      const [{ count: total }] = await request.tenantDb
+        .select({ count: sql<number>`count(*)::int` })
+        .from(users)
+        .where(and(...conditions));
+
+      const rows = await request.tenantDb
+        .select({
+          id: users.id,
+          fullName: users.fullName,
+          email: users.email,
+          mustChangePassword: users.mustChangePassword,
+          departmentName: departments.name,
+          roleName: roles.name,
+          invitedByName: inviter.fullName,
+          invitedAt: users.createdAt,
+        })
+        .from(users)
+        .leftJoin(departments, eq(departments.id, users.departmentId))
+        .innerJoin(userRoles, eq(userRoles.userId, users.id))
+        .innerJoin(roles, eq(roles.id, userRoles.roleId))
+        .leftJoin(inviter, eq(inviter.id, users.invitedBy))
+        .where(and(...conditions))
+        .orderBy(users.fullName)
+        .limit(pageSize)
+        .offset((page - 1) * pageSize);
+
+      const data = rows.map((row) => ({
+        id: row.id,
+        fullName: row.fullName,
+        email: row.email,
+        roleName: row.roleName,
+        departmentName: row.departmentName,
+        accountStatus: row.mustChangePassword ? "invited" : "active",
+        invitedByName: row.invitedByName,
+        invitedAt: row.invitedAt,
+      }));
+
+      return { success: true, data, meta: { page, pageSize, total, reason: null } };
+    },
+  );
+
   fastify.post<{ Body: { fullName?: string; email?: string; roleId?: string; departmentId?: string } }>(
     "/tenant-auth/team",
     {
@@ -64,6 +155,7 @@ const tenantTeamRoutes: FastifyPluginAsync = async (fastify) => {
             mustChangePassword: true,
             otpExpiresAt: otpExpiryFromNow(),
             departmentId: departmentId ?? null,
+            invitedBy: request.user!.id,
           })
           .returning({ id: users.id, email: users.email });
       } catch (err) {

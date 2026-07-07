@@ -10,7 +10,9 @@ import { departments } from "./departments";
  * for "is this an OTP" (data-model.md, research.md §6). `departmentId` (Department Management spec,
  * 009) is this user's single "home" department — mutually referencing with `departments.ts`
  * (`managerId`/`assistantManagerId` point back here), safe under Drizzle's lazy `.references()`
- * callback (research.md §9).
+ * callback (research.md §9). `invitedBy` (Team Member Directory spec, 012) self-references this same
+ * table (the creating user), `onDelete: "set null"` — deleting the inviter must not cascade-delete
+ * or block deleting the people they invited (data-model.md "New: users.invited_by").
  */
 export const users = pgTable(
   "users",
@@ -29,6 +31,7 @@ export const users = pgTable(
     departmentId: uuid("department_id").references((): AnyPgColumn => departments.id, {
       onDelete: "restrict",
     }),
+    invitedBy: uuid("invited_by").references((): AnyPgColumn => users.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

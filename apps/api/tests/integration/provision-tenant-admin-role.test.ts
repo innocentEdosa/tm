@@ -78,6 +78,8 @@ describe("POST /provisioning/tenants — admin creation & role assignment (US2)"
         "forms.tenant.create",
         "forms.tenant.edit",
         "team.create",
+        // Team Member Directory spec (0040_seed_team_view_permissions.sql):
+        "team.view.all",
       ].sort(),
     );
 
