@@ -63,6 +63,8 @@ describe("seedDefaultRolesForTenant", () => {
         "team.create",
         // Team Member Directory spec (0040_seed_team_view_permissions.sql):
         "team.view.all",
+        // Add/Edit Team Member spec (0042_seed_team_edit_permission.sql):
+        "team.edit",
       ].sort(),
     );
   });

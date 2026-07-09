@@ -57,10 +57,17 @@ const tenantUserContextPlugin: FastifyPluginAsync = async (fastify) => {
         return;
       }
 
-      const userResult = await client.query<{ must_change_password: boolean }>(
-        "SELECT must_change_password FROM users WHERE id = $1",
+      const userResult = await client.query<{ must_change_password: boolean; archived_at: Date | null }>(
+        "SELECT must_change_password, archived_at FROM users WHERE id = $1",
         [session.user_id],
       );
+
+      // Spec 013 (archive capability) — an already-established session must stop working the moment
+      // the account is archived, not just be blocked from a *new* login; leaving `request.user`
+      // unset here makes every `requireTenantUserSession()`-guarded route treat them as logged out.
+      if (userResult.rows[0]?.archived_at) {
+        return;
+      }
 
       request.user = { id: session.user_id, tenantId: resolved.tenantId };
       request.mustChangePassword = userResult.rows[0]?.must_change_password ?? false;

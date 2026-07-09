@@ -27,6 +27,7 @@ interface AuthenticatedUserRow {
   must_change_password: boolean;
   failed_login_count: number;
   locked_until: Date | null;
+  archived_at: Date | null;
 }
 
 /** contracts/tenant-auth-api.md. `subdomain` is always a query param, never a body field
@@ -57,7 +58,7 @@ const tenantAuthRoutes: FastifyPluginAsync = async (fastify) => {
         await client.query("SELECT set_config('app.tenant_id', $1, true)", [tenantId]);
 
         const result = await client.query<AuthenticatedUserRow>(
-          `SELECT id, email, password_hash, must_change_password, failed_login_count, locked_until
+          `SELECT id, email, password_hash, must_change_password, failed_login_count, locked_until, archived_at
            FROM users WHERE tenant_id = $1 AND email = $2`,
           [tenantId, email],
         );
@@ -69,6 +70,13 @@ const tenantAuthRoutes: FastifyPluginAsync = async (fastify) => {
           await verifyPassword(password, DUMMY_PASSWORD_HASH);
           await client.query("COMMIT");
           return reply.code(401).send(GENERIC_INVALID_CREDENTIALS);
+        }
+
+        // Spec 013 (archive capability) — an archived account cannot log in at all, mirroring the
+        // locked_until check's own pattern (rejected before password verification).
+        if (account.archived_at) {
+          await client.query("COMMIT");
+          return reply.code(401).send({ success: false, message: "This account has been archived." });
         }
 
         if (account.locked_until && account.locked_until > new Date()) {

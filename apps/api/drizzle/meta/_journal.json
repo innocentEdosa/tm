@@ -295,6 +295,27 @@
       "when": 1783500000002,
       "tag": "0041_seed_member_form_definition",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1783500000003,
+      "tag": "0042_seed_team_edit_permission",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1783500000004,
+      "tag": "0043_seed_member_system_fields",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1783500000005,
+      "tag": "0044_add_users_archived_at",
+      "breakpoints": true
     }
   ]
 }

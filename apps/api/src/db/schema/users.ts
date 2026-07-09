@@ -32,6 +32,12 @@ export const users = pgTable(
       onDelete: "restrict",
     }),
     invitedBy: uuid("invited_by").references((): AnyPgColumn => users.id, { onDelete: "set null" }),
+    /** Add/Edit Team Member spec (013), archive capability — NULL means active. A "full soft-delete":
+     * archiving blocks login (checked at login-time and on every request via tenant-user-context.ts)
+     * and hides the member from the default directory list, but preserves every historical reference
+     * (invited_by, department manager/assistant_manager, custom field values). Reversible — clearing
+     * this column restores login access. */
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

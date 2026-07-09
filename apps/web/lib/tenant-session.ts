@@ -9,6 +9,7 @@ export type TenantSession =
   | {
       authenticated: true;
       mustChangePassword: false;
+      id: string;
       email: string;
       roleName: string | null;
       permissions: string[];
@@ -38,6 +39,7 @@ export async function getTenantSession(subdomain: string): Promise<TenantSession
 
   const body = (await res.json()) as {
     data: {
+      id: string;
       email: string;
       mustChangePassword: boolean;
       roleName: string | null;
@@ -51,6 +53,7 @@ export async function getTenantSession(subdomain: string): Promise<TenantSession
   return {
     authenticated: true,
     mustChangePassword: false,
+    id: body.data.id,
     email: body.data.email,
     roleName: body.data.roleName,
     permissions: body.data.permissions,
