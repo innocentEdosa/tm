@@ -57,6 +57,13 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const canViewDepartments = canManageDepartments || session.permissions.includes("department.view");
   const canManageForms = session.permissions.includes("forms.manage.tenant") || session.permissions.includes("forms.tenant.read");
   const canManageRoles = session.permissions.includes("manage_roles") || session.permissions.includes("roles.read");
+  // Training Needs Analysis spec (014) — a pure viewer (tna.view.all/tna.view.department, no manage
+  // grant) must still see this entry, same reasoning as Team's view-only visibility above.
+  const canAccessTna =
+    session.permissions.includes("tna.view.all") ||
+    session.permissions.includes("tna.view.department") ||
+    session.permissions.includes("tna.manage.all") ||
+    session.permissions.includes("tna.manage.department");
 
   const navSections: NavSection[] = [
     {
@@ -67,6 +74,31 @@ export default async function DashboardLayout({ children }: { children: React.Re
       ],
     },
   ];
+
+  // "Learning" (Training Needs Analysis spec, 014) — a new top-level section, peer to
+  // "Administration" and "Settings" (plan.md Summary), holding today's one link. The existing
+  // disabled "Courses" placeholder above is deliberately left where it is (research.md §8) — folding
+  // it into this section is a plausible future consolidation, not part of this spec.
+  if (canAccessTna) {
+    navSections.push({
+      key: "learning",
+      entries: [
+        {
+          key: "learning",
+          icon: "graduationCap",
+          label: "Learning",
+          children: [
+            {
+              key: "tna",
+              icon: "clipboardList",
+              label: "Training Needs Analysis",
+              href: "/learning/tna",
+            },
+          ],
+        },
+      ],
+    });
+  }
 
   if (canManageTeam || canViewDepartments || canManageRoles) {
     const administrationChildren: NavLinkItem[] = [];

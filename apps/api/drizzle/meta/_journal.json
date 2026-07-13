@@ -316,6 +316,48 @@
       "when": 1783500000005,
       "tag": "0044_add_users_archived_at",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1783776121576,
+      "tag": "0045_training_needs_table",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1783776121577,
+      "tag": "0046_rls_training_needs",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1783776121578,
+      "tag": "0047_lock_training_needs_grants",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1783776121579,
+      "tag": "0048_seed_tna_form_definition",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1783776121580,
+      "tag": "0049_seed_tna_system_fields",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1783776121581,
+      "tag": "0050_seed_tna_permissions",
+      "breakpoints": true
     }
   ]
 }

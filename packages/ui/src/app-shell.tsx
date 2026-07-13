@@ -15,6 +15,8 @@ import {
   Settings,
   SlidersHorizontal,
   FileText,
+  GraduationCap,
+  ClipboardList,
 } from "lucide-react";
 
 type IconComponent = React.ComponentType<{ className?: string }>;
@@ -36,6 +38,8 @@ const ICONS = {
   settings: Settings,
   slidersHorizontal: SlidersHorizontal,
   fileText: FileText,
+  graduationCap: GraduationCap,
+  clipboardList: ClipboardList,
 } satisfies Record<string, IconComponent>;
 
 export interface NavLinkItem {
@@ -82,11 +86,20 @@ export interface AppShellProps {
   children: React.ReactNode;
 }
 
+/** A link is active on its own exact route, or on any sub-route beneath it (e.g. `/learning/tna/new`
+ * and `/learning/tna/[id]` both count as "on" `/learning/tna`) — so a create/edit sub-page still
+ * highlights the list page's own nav entry instead of going dark. No existing nav href is a prefix
+ * of another distinct route, so widening from exact-match to this doesn't risk a false positive
+ * elsewhere. */
+function isActiveHref(pathname: string, href: string): boolean {
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
+
 function entryIsActive(entry: NavEntry, pathname: string): boolean {
   if (isGroup(entry)) {
-    return entry.children.some((child) => !child.disabled && child.href === pathname);
+    return entry.children.some((child) => !child.disabled && isActiveHref(pathname, child.href));
   }
-  return !entry.disabled && entry.href === pathname;
+  return !entry.disabled && isActiveHref(pathname, entry.href);
 }
 
 /**
@@ -135,7 +148,7 @@ export function AppShell({
 
   function renderLink(item: NavLinkItem, indented: boolean) {
     const Icon = ICONS[item.icon];
-    const active = !item.disabled && pathname === item.href;
+    const active = !item.disabled && isActiveHref(pathname, item.href);
     const className = indented ? "shell-nav-item shell-nav-item-indented" : "shell-nav-item";
 
     if (item.disabled) {
@@ -171,7 +184,7 @@ export function AppShell({
     const open = openGroups.has(entry.key);
     // Closed groups still show their one active child (if any) — peeking through beneath a toggle
     // row that itself stays unhighlighted, rather than disappearing entirely until expanded.
-    const activeChild = entry.children.find((child) => !child.disabled && child.href === pathname);
+    const activeChild = entry.children.find((child) => !child.disabled && isActiveHref(pathname, child.href));
     const visibleChildren = open ? entry.children : activeChild ? [activeChild] : [];
     return (
       <div key={entry.key} className="shell-nav-group">

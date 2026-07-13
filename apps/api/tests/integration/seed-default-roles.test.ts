@@ -65,6 +65,9 @@ describe("seedDefaultRolesForTenant", () => {
         "team.view.all",
         // Add/Edit Team Member spec (0042_seed_team_edit_permission.sql):
         "team.edit",
+        // Training Needs Analysis spec (0050_seed_tna_permissions.sql):
+        "tna.view.all",
+        "tna.manage.all",
       ].sort(),
     );
   });

@@ -67,12 +67,26 @@ function PreviewInput({
         </select>
       );
     case "multiselect":
-      return (
-        <select className="field-input" disabled multiple size={Math.max(2, Math.min(4, (options ?? []).length || 2))}>
+      // A native `<select multiple disabled>` renders as a flat, unstyled list in every browser —
+      // disabled state strips the selection highlighting that would normally distinguish options,
+      // so it reads as a broken textarea rather than a form control. This preview never has a real
+      // value to show anyway (it's the field *definition*, not a submitted answer), so the
+      // configured options are shown as a chip list instead, matching the "Global" tag's styling.
+      return (options ?? []).length > 0 ? (
+        <div className="flex flex-wrap gap-1.5 rounded-lg border border-border bg-slate-50 px-3 py-2.5">
           {(options ?? []).map((o) => (
-            <option key={o}>{o}</option>
+            <span
+              key={o}
+              className="rounded-md border border-border bg-white px-2 py-0.5 text-xs text-slate-600"
+            >
+              {o}
+            </span>
           ))}
-        </select>
+        </div>
+      ) : (
+        <p className="rounded-lg border border-dashed border-border px-3 py-2.5 text-sm italic text-slate-400">
+          No options configured yet.
+        </p>
       );
     case "number":
       return <input className="field-input" type="number" disabled placeholder="0" />;
@@ -427,15 +441,28 @@ export default function FormsSettingsClient({ subdomain }: { subdomain: string }
                   <div
                     key={field.id}
                     draggable
-                    onDragStart={() => setDragId(field.id)}
-                    onDragOver={(e) => e.preventDefault()}
-                    onDrop={() => {
-                      if (dragId && dragId !== field.id) {
-                        handleReorder(dragId, index);
+                    onDragStart={(e) => {
+                      // Some browsers refuse to complete a native HTML5 drag (silently no-op on
+                      // drop) unless dragstart actually populates dataTransfer — a plain state
+                      // update alone isn't enough to make the browser treat this as a valid drag.
+                      e.dataTransfer.effectAllowed = "move";
+                      e.dataTransfer.setData("text/plain", field.id);
+                      setDragId(field.id);
+                    }}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = "move";
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      const draggedId = dragId ?? e.dataTransfer.getData("text/plain");
+                      if (draggedId && draggedId !== field.id) {
+                        handleReorder(draggedId, index);
                       }
                       setDragId(null);
                     }}
-                    className="flex items-start gap-3"
+                    onDragEnd={() => setDragId(null)}
+                    className={`flex items-start gap-3 rounded-lg ${dragId === field.id ? "opacity-40" : ""}`}
                   >
                     <GripVertical className="mt-8 h-4 w-4 shrink-0 cursor-grab text-slate-400" />
                     <div className="flex-1">
