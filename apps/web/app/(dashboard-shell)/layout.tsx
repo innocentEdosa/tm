@@ -58,12 +58,15 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const canManageForms = session.permissions.includes("forms.manage.tenant") || session.permissions.includes("forms.tenant.read");
   const canManageRoles = session.permissions.includes("manage_roles") || session.permissions.includes("roles.read");
   // Training Needs Analysis spec (014) — a pure viewer (tna.view.all/tna.view.department, no manage
-  // grant) must still see this entry, same reasoning as Team's view-only visibility above.
+  // grant) must still see this entry, same reasoning as Team's view-only visibility above. A pure
+  // approver (tna.approve, no view/manage grant — the approval-workflow follow-up) needs the same
+  // treatment: they can open any entry directly by id, so they need a way to reach the list too.
   const canAccessTna =
     session.permissions.includes("tna.view.all") ||
     session.permissions.includes("tna.view.department") ||
     session.permissions.includes("tna.manage.all") ||
-    session.permissions.includes("tna.manage.department");
+    session.permissions.includes("tna.manage.department") ||
+    session.permissions.includes("tna.approve");
 
   const navSections: NavSection[] = [
     {

@@ -18,7 +18,8 @@ export default async function ViewTrainingNeedPage({
   const canManageDepartment = permissions.includes("tna.manage.department");
   const canViewAll = permissions.includes("tna.view.all");
   const canViewDepartment = permissions.includes("tna.view.department");
-  if (!canManageAll && !canManageDepartment && !canViewAll && !canViewDepartment) {
+  const canApprove = permissions.includes("tna.approve");
+  if (!canManageAll && !canManageDepartment && !canViewAll && !canViewDepartment && !canApprove) {
     redirect("/learning/tna");
   }
 
@@ -27,6 +28,7 @@ export default async function ViewTrainingNeedPage({
       subdomain={subdomain}
       trainingNeedId={id}
       canManage={canManageAll || canManageDepartment}
+      canApprove={canApprove}
     />
   );
 }

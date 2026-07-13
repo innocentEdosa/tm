@@ -5,11 +5,11 @@ import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { MoreHorizontal, Plus } from "lucide-react";
 import { PageHeader, Card, Badge, Modal, Button, Pagination } from "@tm/ui";
+import { STATUS_LABEL, STATUS_BADGE_VARIANT, type TrainingNeedStatus } from "./status";
 
 const API_BASE = "/tenant-api/tenant";
 
 type Priority = "low" | "medium" | "high";
-type Status = "draft" | "submitted";
 
 const PRIORITY_LABEL: Record<Priority, string> = { low: "Low", medium: "Medium", high: "High" };
 const PRIORITY_BADGE: Record<Priority, "neutral" | "warning" | "accent"> = {
@@ -24,9 +24,13 @@ interface TrainingNeedRow {
   departmentName: string | null;
   title: string;
   priority: Priority;
-  status: Status;
+  status: TrainingNeedStatus;
   createdByUserId: string | null;
+  createdByName: string | null;
   submittedAt: string | null;
+  approvedByUserId: string | null;
+  approvedByName: string | null;
+  approvedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -160,6 +164,7 @@ export default function TrainingNeedsClient({
   // Manager's own list is small and unpaginated, no filter bar needed (research.md Scale/Scope).
   const [departmentFilter, setDepartmentFilter] = useState("");
   const [priorityFilter, setPriorityFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 25;
 
@@ -187,6 +192,7 @@ export default function TrainingNeedsClient({
       params.set("pageSize", String(PAGE_SIZE));
       if (departmentFilter) params.set("department", departmentFilter);
       if (priorityFilter) params.set("priority", priorityFilter);
+      if (statusFilter) params.set("status", statusFilter);
     }
     fetch(`${API_BASE}/training-needs?${params.toString()}`, { credentials: "include" })
       .then((res) => {
@@ -210,11 +216,11 @@ export default function TrainingNeedsClient({
   useEffect(() => {
     loadRows();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [subdomain, canViewAll, departmentFilter, priorityFilter, page]);
+  }, [subdomain, canViewAll, departmentFilter, priorityFilter, statusFilter, page]);
 
   useEffect(() => {
     setPage(1);
-  }, [departmentFilter, priorityFilter]);
+  }, [departmentFilter, priorityFilter, statusFilter]);
 
   async function handleDeleteConfirm() {
     if (!deleteTarget) return;
@@ -233,7 +239,7 @@ export default function TrainingNeedsClient({
   }
 
   const descriptionLine = canViewAll
-    ? "Every submitted training need across your organization."
+    ? "Every submitted and approved training need across your organization."
     : "Training needs for your department.";
 
   return (
@@ -276,6 +282,16 @@ export default function TrainingNeedsClient({
             <option value="medium">Medium</option>
             <option value="high">High</option>
           </select>
+          <select
+            className="field-input max-w-xs"
+            aria-label="Filter by status"
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+          >
+            <option value="">All statuses</option>
+            <option value="submitted">Submitted</option>
+            <option value="approved">Approved</option>
+          </select>
         </div>
       )}
 
@@ -317,9 +333,7 @@ export default function TrainingNeedsClient({
                     <Badge variant={PRIORITY_BADGE[row.priority]}>{PRIORITY_LABEL[row.priority]}</Badge>
                   </td>
                   <td className="px-4 py-3 text-sm">
-                    <Badge variant={row.status === "submitted" ? "success" : "neutral"}>
-                      {row.status === "submitted" ? "Submitted" : "Draft"}
-                    </Badge>
+                    <Badge variant={STATUS_BADGE_VARIANT[row.status]}>{STATUS_LABEL[row.status]}</Badge>
                   </td>
                   {canManage && (
                     <td className="px-4 py-3 text-right text-sm" onClick={(e) => e.stopPropagation()}>

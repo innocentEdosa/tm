@@ -30,6 +30,13 @@ export const trainingNeeds = pgTable(
       onDelete: "set null",
     }),
     submittedAt: timestamp("submitted_at", { withTimezone: true }),
+    /** Approval step (follow-up to spec 014's own flagged Assumption — no approval workflow was in
+     * v1 scope). A dedicated `tna.approve` permission, not `tna.manage.*` — approving is a
+     * governance action a tenant may grant to a role independently of edit/delete rights. */
+    approvedByUserId: uuid("approved_by_user_id").references((): AnyPgColumn => users.id, {
+      onDelete: "set null",
+    }),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -37,6 +44,6 @@ export const trainingNeeds = pgTable(
     index("training_needs_tenant_id_department_id_idx").on(table.tenantId, table.departmentId),
     index("training_needs_tenant_id_status_idx").on(table.tenantId, table.status),
     check("training_needs_priority_check", sql`${table.priority} in ('low', 'medium', 'high')`),
-    check("training_needs_status_check", sql`${table.status} in ('draft', 'submitted')`),
+    check("training_needs_status_check", sql`${table.status} in ('draft', 'submitted', 'approved')`),
   ],
 );

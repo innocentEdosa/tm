@@ -4,11 +4,11 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { PageHeader, Card, Badge, Button, Input } from "@tm/ui";
+import { STATUS_LABEL, STATUS_BADGE_VARIANT, type TrainingNeedStatus } from "./status";
 
 const API_BASE = "/tenant-api/tenant";
 
 type Priority = "low" | "medium" | "high";
-type Status = "draft" | "submitted";
 
 type CustomFieldType = "text" | "textarea" | "number" | "date" | "select" | "multiselect";
 
@@ -33,7 +33,7 @@ interface TrainingNeedRow {
   departmentName: string | null;
   title: string;
   priority: Priority;
-  status: Status;
+  status: TrainingNeedStatus;
 }
 
 interface FormState {
@@ -63,7 +63,7 @@ export default function TrainingNeedForm({
   const isEditing = !!trainingNeedId;
 
   const [loading, setLoading] = useState(isEditing);
-  const [status, setStatus] = useState<Status>("draft");
+  const [status, setStatus] = useState<TrainingNeedStatus>("draft");
   const [departmentName, setDepartmentName] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [departments, setDepartments] = useState<DepartmentOption[]>([]);
@@ -399,11 +399,7 @@ export default function TrainingNeedForm({
                   : "Create a training need for your department."
             }
           />
-          {isEditing && (
-            <Badge variant={status === "submitted" ? "success" : "neutral"}>
-              {status === "submitted" ? "Submitted" : "Draft"}
-            </Badge>
-          )}
+          {isEditing && <Badge variant={STATUS_BADGE_VARIANT[status]}>{STATUS_LABEL[status]}</Badge>}
         </div>
         <Button
           variant="secondary"
@@ -419,11 +415,7 @@ export default function TrainingNeedForm({
         <div className="space-y-4">{layoutFields.filter(fieldWillRender).map((field) => renderField(field))}</div>
 
         <div className="mt-8 flex justify-end gap-2 border-t border-border pt-6">
-          {status === "submitted" ? (
-            <Button isLoading={saving} onClick={() => handleSave()}>
-              Save changes
-            </Button>
-          ) : (
+          {status === "draft" ? (
             <>
               <Button variant="secondary" isLoading={saving} onClick={() => handleSave()}>
                 Save as draft
@@ -432,6 +424,13 @@ export default function TrainingNeedForm({
                 Submit
               </Button>
             </>
+          ) : (
+            // Submitted or Approved — editing never re-offers Submit (spec FR-006's "editing after
+            // submission doesn't reset status" extends the same way to Approved: content can still
+            // be corrected, but only the dedicated Approve action on the view page changes status).
+            <Button isLoading={saving} onClick={() => handleSave()}>
+              Save changes
+            </Button>
           )}
         </div>
       </Card>
