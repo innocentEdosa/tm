@@ -364,3 +364,28 @@
 .banner-error {
   @apply rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800;
 }
+
+/* ─── Tenant login split-screen (Split-Screen Tenant Login Layout spec) ──
+   Brand panel (left, desktop only) + form column (right). Reuses only the locked design-system
+   tokens already declared above — no new colors introduced. */
+
+.login-split {
+  @apply flex min-h-screen;
+}
+
+.login-brand-panel {
+  @apply relative hidden w-[55%] shrink-0 flex-col justify-between overflow-hidden bg-primary
+         px-14 py-12 text-white lg:flex;
+}
+
+.login-brand-panel-glow {
+  @apply pointer-events-none absolute rounded-full bg-cta/30 blur-3xl;
+}
+
+.login-brand-shape {
+  @apply pointer-events-none absolute rounded-3xl border border-white/10 bg-white/5;
+}
+
+.login-form-column {
+  @apply flex flex-1 items-center justify-center px-6 py-12;
+}
