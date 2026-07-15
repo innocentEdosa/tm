@@ -235,7 +235,7 @@ const tenantAuthRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(200).send(GENERIC_OK);
       }
 
-      const resolved = await resolveTenantBySubdomain(fastify.pg.pool, subdomain);
+      const resolved = await resolveTenantBySubdomain(fastify.pg.pool, subdomain);      
       if (resolved.state !== "valid" || !resolved.tenantId) {
         return reply.code(200).send(GENERIC_OK);
       }
