@@ -7,6 +7,7 @@
 // Super Admin session before this renders — the submit fetch still uses `credentials: "include"`
 // since this is a Client Component making its own browser-side request.
 import { useState } from "react";
+import Link from "next/link";
 import { Button, Badge } from "@tm/ui";
 import type { ApiResponse } from "@tm/types";
 
@@ -494,7 +495,12 @@ function ReviewRow({ label, value }: { label: string; value: string }) {
 function SuccessSummary({ data }: { data: ProvisionedTenant }) {
   return (
     <div className="mx-auto max-w-3xl">
-      <div className="banner-success">Tenant provisioned successfully.</div>
+      <div className="banner-success flex items-center justify-between gap-4">
+        <span>Tenant provisioned successfully.</span>
+        <Link href="/tenants" className="btn btn-outline btn-sm shrink-0">
+          Back to Tenants
+        </Link>
+      </div>
       <h1 className="mt-6 text-3xl font-bold tracking-tight text-primary">{data.tenant.name}</h1>
       <dl className="mt-4 space-y-1 text-sm">
         <ReviewRow label="Tenant ID" value={data.tenant.id} />

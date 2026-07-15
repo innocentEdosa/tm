@@ -62,6 +62,14 @@ export async function withSuperAdminTransaction<T>(fn: (client: PoolClient) => P
   const client = await getTestPool().connect();
   try {
     await client.query("BEGIN");
+    // Mirrors the same defensive pin `platform-auth/super-admin-context.ts` applies (Tenant
+    // Management spec, research.md §8) — this pool is shared with `withTenantTransaction`, so a
+    // recycled connection may have `app.tenant_id` "registered" from an ended `SET LOCAL`, which
+    // would otherwise throw casting `''` to `uuid` inside `tenant_isolation`'s own clause and poison
+    // any query here against a table carrying both that policy and `super_admin_full_access`.
+    await client.query(
+      "SELECT set_config('app.tenant_id', '00000000-0000-0000-0000-000000000000', true)",
+    );
     await client.query("SELECT set_config('app.is_super_admin', 'true', true)");
     const result = await fn(client);
     await client.query("COMMIT");

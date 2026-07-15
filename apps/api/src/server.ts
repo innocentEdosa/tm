@@ -7,6 +7,7 @@ import adminRoutes from "./permissions/admin-routes";
 import demoRoutes from "./permissions/demo-routes";
 import tenantRoleRoutes from "./permissions/tenant-role-routes";
 import provisioningRoutes from "./provisioning/provisioning-routes";
+import tenantManagementRoutes from "./tenant-management/tenant-management-routes";
 import superAdminContext from "./platform-auth/super-admin-context";
 import platformAuthRoutes from "./platform-auth/platform-auth-routes";
 import tenantRoutingRoutes from "./tenant-routing/tenant-routing-routes";
@@ -62,6 +63,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Fas
   await server.register(demoRoutes);
   await server.register(tenantRoleRoutes);
   await server.register(provisioningRoutes);
+  await server.register(tenantManagementRoutes);
   await server.register(platformAuthRoutes);
   await server.register(tenantRoutingRoutes);
   await server.register(tenantAuthSettingsRoutes);

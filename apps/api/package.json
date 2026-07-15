@@ -12,7 +12,8 @@
     "test": "vitest run",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "DEBUG=* drizzle-kit migrate",
-    "seed:super-admin": "tsx --env-file=.env scripts/seed-super-admin.ts"
+    "seed:super-admin": "tsx --env-file=.env scripts/seed-super-admin.ts",
+    "purge:deleted-tenants": "tsx --env-file=.env scripts/purge-deleted-tenants.ts"
   },
   "dependencies": {
     "@fastify/cors": "^11.2.0",

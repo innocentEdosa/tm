@@ -372,6 +372,34 @@
       "when": 1783904118401,
       "tag": "0052_seed_tna_approve_permission",
       "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1784114211048,
+      "tag": "0053_unusual_nitro",
+      "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1784114211049,
+      "tag": "0054_super_admin_full_access_tenants",
+      "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1784114211050,
+      "tag": "0055_super_admin_full_access_user_sessions",
+      "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1784114211051,
+      "tag": "0056_lock_tenant_action_log_grants",
+      "breakpoints": true
     }
   ]
 }

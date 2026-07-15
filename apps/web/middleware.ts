@@ -2,8 +2,10 @@ import { NextResponse, type NextRequest } from "next/server";
 
 // contracts/nextjs-middleware-routing.md (spec 004). Root-domain-only paths — every existing
 // non-tenant top-level route in apps/web/app/ today (spec FR-003, research.md §7). Matched as exact
-// leading path segments, never a naive substring/prefix match.
-const ROOT_ONLY_PATH_PREFIXES = ["/platform", "/admin", "/provisioning"];
+// leading path segments, never a naive substring/prefix match. `/tenants` (Tenant Management spec)
+// covers `/tenants/new` too via the prefix match below — a Super-Admin-only console must never
+// resolve on a tenant subdomain, same as `/platform`/`/admin`.
+const ROOT_ONLY_PATH_PREFIXES = ["/platform", "/admin", "/tenants"];
 
 // Tenant Authentication Configuration spec (2026-07-04 follow-up) — every non-excluded request to
 // a tenant subdomain otherwise called /tenant-routing/resolve on apps/api, uncached, per request

@@ -57,6 +57,18 @@ const tenantUserContextPlugin: FastifyPluginAsync = async (fastify) => {
         return;
       }
 
+      // Tenant Management spec (015), User Stories 3 & 5 — an already-established session must stop
+      // working the moment its own tenant is archived or put into pending-deletion, not just be
+      // blocked from a *new* login, exactly mirroring the users.archived_at check just below for the
+      // per-user case (research.md §3 there).
+      const tenantResult = await client.query<{
+        archived_at: Date | null;
+        deletion_requested_at: Date | null;
+      }>("SELECT archived_at, deletion_requested_at FROM tenants WHERE id = $1", [resolved.tenantId]);
+      if (tenantResult.rows[0]?.archived_at || tenantResult.rows[0]?.deletion_requested_at) {
+        return;
+      }
+
       const userResult = await client.query<{ must_change_password: boolean; archived_at: Date | null }>(
         "SELECT must_change_password, archived_at FROM users WHERE id = $1",
         [session.user_id],

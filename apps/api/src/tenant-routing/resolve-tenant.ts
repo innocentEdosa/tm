@@ -50,8 +50,14 @@ export async function resolveTenantBySubdomain(
     // tenant, so only tenant_subdomain_lookup's clause (set next) can grant access here.
     await client.query("SELECT set_config('app.tenant_id', '00000000-0000-0000-0000-000000000000', true)");
     await client.query("SELECT set_config('app.subdomain_lookup', 'true', true)");
-    const result = await client.query<{ id: string; name: string; status: string }>(
-      "SELECT id, name, status FROM tenants WHERE lower(subdomain) = $1",
+    const result = await client.query<{
+      id: string;
+      name: string;
+      status: string;
+      archived_at: Date | null;
+      deletion_requested_at: Date | null;
+    }>(
+      "SELECT id, name, status, archived_at, deletion_requested_at FROM tenants WHERE lower(subdomain) = $1",
       [label],
     );
 
@@ -59,6 +65,16 @@ export async function resolveTenantBySubdomain(
     if (!tenant) {
       await client.query("COMMIT");
       return { state: "not_found" };
+    }
+
+    // Tenant Management spec, User Stories 3 & 5 — archived and pending-deletion are orthogonal to
+    // `status` (data-model.md `tenants`), so they aren't reachable through the switch below at all;
+    // treated as `suspended` here rather than adding new routing states, since "recognized tenant,
+    // not currently usable" is exactly what a suspended tenant already communicates to
+    // `apps/web/middleware.ts`'s consumers of this result (FR-007, FR-015).
+    if (tenant.archived_at || tenant.deletion_requested_at) {
+      await client.query("COMMIT");
+      return { state: "suspended", tenantId: tenant.id, tenantName: tenant.name };
     }
 
     switch (tenant.status) {
