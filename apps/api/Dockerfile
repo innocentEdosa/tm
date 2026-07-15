@@ -8,7 +8,7 @@ FROM base AS builder
 WORKDIR /app
 COPY . .
 
-RUN --mount=type=cache,id=s/18f60b48-38ce-4b14-9d80-88e73d727ffa-pnpm,target=/pnpm/store pnpm install --frozen-lockfile
+RUN --mount=type=cache,id=s/b7d62d37-3298-43b2-a345-3b953ed05994-pnpm,target=/pnpm/store pnpm install --frozen-lockfile
 RUN pnpm --filter=api build
 
 # ── Bundle only prod deps via pnpm deploy ───────────────────────────

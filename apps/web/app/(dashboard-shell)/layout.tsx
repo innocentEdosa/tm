@@ -72,7 +72,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
     {
       key: "menu",
       entries: [
-        { key: "home", icon: "home", label: "Home", href: "/dashboard" },
+        { key: "home", icon: "home", label: "Dashboard", href: "/dashboard" },
         { key: "courses", icon: "bookOpen", label: "Courses", href: "/courses", disabled: true, tag: "Soon" },
       ],
     },
@@ -175,9 +175,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   return (
     <AppShell
-      appMarkLabel="TM"
-      appName="TM"
-      workspaceLabel={tenantName}
+      appMarkLabel={tenantName.charAt(0).toUpperCase() || "T"}
+      appName={tenantName}
       navSections={navSections}
       footerEntries={footerEntries}
       identity={{ initial: session.email.charAt(0).toUpperCase(), primary: session.email, secondary: session.roleName ?? undefined }}
