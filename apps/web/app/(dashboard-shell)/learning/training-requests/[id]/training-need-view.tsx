@@ -57,7 +57,7 @@ function ViewField({ label, value, placeholder }: { label: string; value: React.
 }
 
 /**
- * Read-only detail page at `/learning/tna/[id]` — a dedicated page, not a Drawer (per direct
+ * Read-only detail page at `/learning/training-requests/[id]` — a dedicated page, not a Drawer (per direct
  * product feedback, matching the create/edit form's own move off Drawer). The entry's own title,
  * status, and priority surface as the page header; every tenant custom field renders below, in
  * `display_order`, exactly as configured in Settings > Forms.
@@ -89,13 +89,13 @@ export default function TrainingNeedView({
       .then((res) => (res.ok ? res.json() : null))
       .then((json: { data: TrainingNeedDetail } | null) => {
         if (!json) {
-          setError("This training need couldn't be found.");
+          setError("This training request couldn't be found.");
           return;
         }
         setEntry(json.data);
         setError(null);
       })
-      .catch(() => setError("Couldn't load this training need. Try again."))
+      .catch(() => setError("Couldn't load this training request. Try again."))
       .finally(() => setLoading(false));
   }
 
@@ -133,7 +133,7 @@ export default function TrainingNeedView({
       return;
     }
     const json = (await res.json().catch(() => null)) as { message?: string } | null;
-    setApproveError(json?.message ?? "Couldn't approve this training need. Try again.");
+    setApproveError(json?.message ?? "Couldn't approve this training request. Try again.");
   }
 
   return (
@@ -141,16 +141,16 @@ export default function TrainingNeedView({
       <button
         type="button"
         className="mb-4 flex cursor-pointer items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-primary"
-        onClick={() => router.push("/learning/tna")}
+        onClick={() => router.push("/learning/training-requests")}
       >
         <ArrowLeft className="h-4 w-4" />
-        Training Needs Analysis
+        Training Requests
       </button>
 
       {loading ? (
         <div className="p-8 text-center text-sm text-slate-500">Loading…</div>
       ) : error || !entry ? (
-        <div className="banner-error">{error ?? "This training need couldn't be found."}</div>
+        <div className="banner-error">{error ?? "This training request couldn't be found."}</div>
       ) : (
         <>
           <div className="flex items-start justify-between gap-3">
@@ -161,7 +161,7 @@ export default function TrainingNeedView({
             </div>
             <div className="flex shrink-0 gap-2">
               {canManage && (
-                <Button variant="secondary" onClick={() => router.push(`/learning/tna/${trainingNeedId}/edit`)}>
+                <Button variant="secondary" onClick={() => router.push(`/learning/training-requests/${trainingNeedId}/edit`)}>
                   Edit
                 </Button>
               )}

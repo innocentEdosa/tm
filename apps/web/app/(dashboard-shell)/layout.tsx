@@ -57,16 +57,17 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const canViewDepartments = canManageDepartments || session.permissions.includes("department.view");
   const canManageForms = session.permissions.includes("forms.manage.tenant") || session.permissions.includes("forms.tenant.read");
   const canManageRoles = session.permissions.includes("manage_roles") || session.permissions.includes("roles.read");
-  // Training Needs Analysis spec (014) — a pure viewer (tna.view.all/tna.view.department, no manage
-  // grant) must still see this entry, same reasoning as Team's view-only visibility above. A pure
-  // approver (tna.approve, no view/manage grant — the approval-workflow follow-up) needs the same
-  // treatment: they can open any entry directly by id, so they need a way to reach the list too.
+  // Training Request spec (014, renamed by spec 020) — a pure viewer (training_request.view.all/
+  // training_request.view.department, no manage grant) must still see this entry, same reasoning as
+  // Team's view-only visibility above. A pure approver (training_request.approve, no view/manage
+  // grant — the approval-workflow follow-up) needs the same treatment: they can open any entry
+  // directly by id, so they need a way to reach the list too.
   const canAccessTna =
-    session.permissions.includes("tna.view.all") ||
-    session.permissions.includes("tna.view.department") ||
-    session.permissions.includes("tna.manage.all") ||
-    session.permissions.includes("tna.manage.department") ||
-    session.permissions.includes("tna.approve");
+    session.permissions.includes("training_request.view.all") ||
+    session.permissions.includes("training_request.view.department") ||
+    session.permissions.includes("training_request.manage.all") ||
+    session.permissions.includes("training_request.manage.department") ||
+    session.permissions.includes("training_request.approve");
 
   const navSections: NavSection[] = [
     {
@@ -78,7 +79,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
     },
   ];
 
-  // "Learning" (Training Needs Analysis spec, 014) — a new top-level section, peer to
+  // "Learning" (Training Request spec, 014, renamed by spec 020) — a new top-level section, peer to
   // "Administration" and "Settings" (plan.md Summary), holding today's one link. The existing
   // disabled "Courses" placeholder above is deliberately left where it is (research.md §8) — folding
   // it into this section is a plausible future consolidation, not part of this spec.
@@ -94,8 +95,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
             {
               key: "tna",
               icon: "clipboardList",
-              label: "Training Needs Analysis",
-              href: "/learning/tna",
+              label: "Training Requests",
+              href: "/learning/training-requests",
             },
           ],
         },

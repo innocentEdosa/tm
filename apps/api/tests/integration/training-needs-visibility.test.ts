@@ -12,7 +12,7 @@ describe("training needs: org-wide vs department-scoped visibility (spec 014 US2
     await closeTestPool();
   });
 
-  it("tna.view.all sees only Submitted entries across every department — Drafts stay private", async () => {
+  it("training_request.view.all sees only Submitted entries across every department — Drafts stay private", async () => {
     const tenantId = randomUUID();
     await seedTenant(tenantId);
 
@@ -25,7 +25,7 @@ describe("training needs: org-wide vs department-scoped visibility (spec 014 US2
         .returning({ id: users.id });
       return { deptAId: deptA.id, deptBId: deptB.id, hrAdminId: hrAdmin.id };
     });
-    await seedUserWithRole(tenantId, hrAdminId, ["tna.view.all", "tna.manage.all"]);
+    await seedUserWithRole(tenantId, hrAdminId, ["training_request.view.all", "training_request.manage.all"]);
 
     const { submittedAId, draftBId } = await withTenantDb(tenantId, async (db) => {
       const [submittedA] = await db
@@ -50,11 +50,11 @@ describe("training needs: org-wide vs department-scoped visibility (spec 014 US2
       expect(ids).not.toContain(draftBId);
       expect(list.json().pagination).toBeDefined();
 
-      // tna.manage.all can view/edit the Draft directly by id (manage scope, not view scope) —
+      // training_request.manage.all can view/edit the Draft directly by id (manage scope, not view scope) —
       // confirms the org-wide LIST hiding a Draft is a view-scope rule, not a blanket "HR can never
       // touch a Draft" rule. GET-by-id must succeed even though the LIST above correctly omitted it
       // — otherwise a manage.all caller could PATCH a Draft blind but never load it in the UI first
-      // (regression: this 404'd before the GET detail route also checked tna.manage.all).
+      // (regression: this 404'd before the GET detail route also checked training_request.manage.all).
       const getDraft = await server.inject({ method: "GET", url: `/tenant/training-needs/${draftBId}`, headers });
       expect(getDraft.statusCode).toBe(200);
       expect(getDraft.json().data.status).toBe("draft");
@@ -68,7 +68,7 @@ describe("training needs: org-wide vs department-scoped visibility (spec 014 US2
       expect(editDraft.statusCode).toBe(200);
       expect(editDraft.json().data.status).toBe("draft");
 
-      // tna.manage.all can delete any entry regardless of status or department.
+      // training_request.manage.all can delete any entry regardless of status or department.
       const deleteSubmitted = await server.inject({
         method: "DELETE",
         url: `/tenant/training-needs/${submittedAId}`,
@@ -80,7 +80,7 @@ describe("training needs: org-wide vs department-scoped visibility (spec 014 US2
     }
   });
 
-  it("a tna.view.department holder sees only their own department's subtree, even via a crafted department filter", async () => {
+  it("a training_request.view.department holder sees only their own department's subtree, even via a crafted department filter", async () => {
     const tenantId = randomUUID();
     await seedTenant(tenantId);
 
@@ -97,7 +97,7 @@ describe("training needs: org-wide vs department-scoped visibility (spec 014 US2
         .returning({ id: users.id });
       return { parentId: parent.id, childId: child.id, unrelatedId: unrelated.id, viewerId: viewer.id };
     });
-    await seedUserWithRole(tenantId, viewerId, ["tna.view.department", "tna.manage.department"]);
+    await seedUserWithRole(tenantId, viewerId, ["training_request.view.department", "training_request.manage.department"]);
 
     const { parentEntryId, childEntryId, unrelatedEntryId } = await withTenantDb(tenantId, async (db) => {
       const [parentEntry] = await db

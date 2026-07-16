@@ -7,12 +7,12 @@ import { departments } from "../../src/db/schema/departments";
 import { users } from "../../src/db/schema/users";
 import { trainingNeeds } from "../../src/db/schema/training-needs";
 
-describe("training needs: approval workflow (tna.approve, separate from tna.manage.*)", () => {
+describe("training needs: approval workflow (training_request.approve, separate from training_request.manage.*)", () => {
   afterAll(async () => {
     await closeTestPool();
   });
 
-  it("a pure tna.approve holder (no view/manage) can find and approve a submitted entry, and creator/approver names resolve", async () => {
+  it("a pure training_request.approve holder (no view/manage) can find and approve a submitted entry, and creator/approver names resolve", async () => {
     const tenantId = randomUUID();
     await seedTenant(tenantId);
 
@@ -28,9 +28,9 @@ describe("training needs: approval workflow (tna.approve, separate from tna.mana
         .returning({ id: users.id });
       return { deptId: dept.id, managerId: manager.id, approverId: approverUser.id };
     });
-    // Deliberately only tna.approve — no view.all/view.department/manage.all/manage.department —
+    // Deliberately only training_request.approve — no view.all/view.department/manage.all/manage.department —
     // proves the permission is genuinely usable on its own, not just additive to manage.all.
-    await seedUserWithRole(tenantId, approverId, ["tna.approve"]);
+    await seedUserWithRole(tenantId, approverId, ["training_request.approve"]);
 
     const { trainingNeedId } = await withTenantDb(tenantId, async (db) => {
       const [entry] = await db
@@ -92,7 +92,7 @@ describe("training needs: approval workflow (tna.approve, separate from tna.mana
     }
   });
 
-  it("rejects approving a Draft (409), and rejects a caller without tna.approve (403)", async () => {
+  it("rejects approving a Draft (409), and rejects a caller without training_request.approve (403)", async () => {
     const tenantId = randomUUID();
     await seedTenant(tenantId);
 
@@ -108,8 +108,8 @@ describe("training needs: approval workflow (tna.approve, separate from tna.mana
         .returning({ id: users.id });
       return { deptId: dept.id, approverId: approverUser.id, managerId: manager.id };
     });
-    await seedUserWithRole(tenantId, approverId, ["tna.approve"]);
-    await seedUserWithRole(tenantId, managerId, ["tna.view.department", "tna.manage.department"]);
+    await seedUserWithRole(tenantId, approverId, ["training_request.approve"]);
+    await seedUserWithRole(tenantId, managerId, ["training_request.view.department", "training_request.manage.department"]);
 
     const { draftId } = await withTenantDb(tenantId, async (db) => {
       const [entry] = await db
@@ -128,7 +128,7 @@ describe("training needs: approval workflow (tna.approve, separate from tna.mana
       });
       expect(approveDraft.statusCode).toBe(409);
 
-      // The manager holds tna.manage.department (can edit/submit) but not tna.approve — approving
+      // The manager holds training_request.manage.department (can edit/submit) but not training_request.approve — approving
       // is a distinct, deliberately separate permission (spec follow-up).
       const managerTriesApprove = await server.inject({
         method: "POST",

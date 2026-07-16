@@ -30,7 +30,7 @@ const approver = alias(users, "tna_approver");
 
 /** Whether `callerUserId` holds `permissionKey` — same query shape as `requirePermission`
  * (`permissions/require-permission.ts`), used here for in-handler branching (e.g. "does this caller
- * additionally hold tna.manage.all") rather than as a route-blocking preHandler. */
+ * additionally hold training_request.manage.all") rather than as a route-blocking preHandler. */
 async function hasPermission(tenantDb: Db, callerUserId: string, permissionKey: string): Promise<boolean> {
   const [row] = await tenantDb
     .select({ id: permissions.id })
@@ -101,24 +101,24 @@ const tenantTrainingNeedsRoutes: FastifyPluginAsync = async (fastify) => {
       preHandler: [
         requireTenantUserSession(),
         requireAnyPermission(
-          "tna.view.all",
-          "tna.view.department",
-          "tna.manage.all",
-          "tna.manage.department",
-          "tna.approve",
+          "training_request.view.all",
+          "training_request.view.department",
+          "training_request.manage.all",
+          "training_request.manage.department",
+          "training_request.approve",
         ),
       ],
     },
     async (request) => {
       const tenantId = request.user!.tenantId;
-      // A permission that lets you act on any entry (manage.all) or approve any entry (tna.approve)
+      // A permission that lets you act on any entry (manage.all) or approve any entry (training_request.approve)
       // must also let you find it — otherwise there'd be no way to discover what's awaiting
       // approval without already knowing its id (research.md §9's own "manage implies view" logic,
       // extended here to the list endpoint, not just GET-by-id).
       const viewAll =
-        (await hasPermission(request.tenantDb, request.user!.id, "tna.view.all")) ||
-        (await hasPermission(request.tenantDb, request.user!.id, "tna.manage.all")) ||
-        (await hasPermission(request.tenantDb, request.user!.id, "tna.approve"));
+        (await hasPermission(request.tenantDb, request.user!.id, "training_request.view.all")) ||
+        (await hasPermission(request.tenantDb, request.user!.id, "training_request.manage.all")) ||
+        (await hasPermission(request.tenantDb, request.user!.id, "training_request.approve"));
       const scope = await resolveTrainingNeedVisibilityScope(request.tenantDb, request.user!.id, viewAll);
 
       if (scope.kind === "no_department_assigned") {
@@ -130,7 +130,7 @@ const tenantTrainingNeedsRoutes: FastifyPluginAsync = async (fastify) => {
       if (scope.kind === "department") {
         conditions.push(inArray(trainingNeeds.departmentId, scope.departmentIds));
       } else {
-        // Org-wide (tna.view.all): everything except Drafts — Drafts stay private to their
+        // Org-wide (training_request.view.all): everything except Drafts — Drafts stay private to their
         // authoring department, never shown here regardless of department filter (research.md
         // §2); Submitted and Approved both remain visible once submitted.
         conditions.push(ne(trainingNeeds.status, "draft"));
@@ -177,10 +177,10 @@ const tenantTrainingNeedsRoutes: FastifyPluginAsync = async (fastify) => {
   // GET /tenant/training-needs/:trainingNeedId — contracts §GET (detail). 404, not 403, when the
   // row is out of the caller's scope (research.md §9) — never confirms a row exists elsewhere.
   // Unlike the list endpoint (which deliberately hides Drafts from org-wide browsing, Clarification
-  // Q3), a `tna.manage.all` holder can always open a specific record directly by id, Draft or not —
+  // Q3), a `training_request.manage.all` holder can always open a specific record directly by id, Draft or not —
   // mirrors PATCH/DELETE's own `isWithinScope` treatment (no status filter at all for manage.all),
   // not `isVisible`'s stricter view-scope rule — they can already PATCH/DELETE it regardless of
-  // status, so gating the GET behind the same submitted-only rule as `tna.view.all` made it
+  // status, so gating the GET behind the same submitted-only rule as `training_request.view.all` made it
   // impossible to load the very data a manage.all caller is about to edit (e.g. immediately after
   // creating a Draft on another department's behalf).
   fastify.get<{ Params: { trainingNeedId: string } }>(
@@ -189,11 +189,11 @@ const tenantTrainingNeedsRoutes: FastifyPluginAsync = async (fastify) => {
       preHandler: [
         requireTenantUserSession(),
         requireAnyPermission(
-          "tna.view.all",
-          "tna.view.department",
-          "tna.manage.all",
-          "tna.manage.department",
-          "tna.approve",
+          "training_request.view.all",
+          "training_request.view.department",
+          "training_request.manage.all",
+          "training_request.manage.department",
+          "training_request.approve",
         ),
       ],
     },
@@ -211,16 +211,16 @@ const tenantTrainingNeedsRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(404).send({ success: false, message: "Not found" });
       }
 
-      // tna.approve is org-wide, unscoped, same as tna.manage.all (research.md §3's own precedent)
+      // training_request.approve is org-wide, unscoped, same as training_request.manage.all (research.md §3's own precedent)
       // — a pure approver needs to be able to open any entry to act on it, not just their own
-      // department's, and not filtered by status the way tna.view.all's own scope is.
-      const manageAll = await hasPermission(request.tenantDb, request.user!.id, "tna.manage.all");
-      const canApprove = await hasPermission(request.tenantDb, request.user!.id, "tna.approve");
+      // department's, and not filtered by status the way training_request.view.all's own scope is.
+      const manageAll = await hasPermission(request.tenantDb, request.user!.id, "training_request.manage.all");
+      const canApprove = await hasPermission(request.tenantDb, request.user!.id, "training_request.approve");
       if (manageAll || canApprove) {
         return { success: true, data: row };
       }
 
-      const viewAll = await hasPermission(request.tenantDb, request.user!.id, "tna.view.all");
+      const viewAll = await hasPermission(request.tenantDb, request.user!.id, "training_request.view.all");
       const scope = await resolveTrainingNeedVisibilityScope(request.tenantDb, request.user!.id, viewAll);
       if (!isVisible(row, scope)) {
         return reply.code(404).send({ success: false, message: "Not found" });
@@ -236,7 +236,7 @@ const tenantTrainingNeedsRoutes: FastifyPluginAsync = async (fastify) => {
     {
       preHandler: [
         requireTenantUserSession(),
-        requireAnyPermission("tna.manage.all", "tna.manage.department"),
+        requireAnyPermission("training_request.manage.all", "training_request.manage.department"),
       ],
     },
     async (request, reply) => {
@@ -248,7 +248,7 @@ const tenantTrainingNeedsRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(400).send({ success: false, message: "priority must be one of low, medium, high" });
       }
 
-      const manageAll = await hasPermission(request.tenantDb, request.user!.id, "tna.manage.all");
+      const manageAll = await hasPermission(request.tenantDb, request.user!.id, "training_request.manage.all");
 
       let targetDepartmentId: string;
       if (manageAll) {
@@ -260,7 +260,7 @@ const tenantTrainingNeedsRoutes: FastifyPluginAsync = async (fastify) => {
         }
         targetDepartmentId = departmentId;
       } else {
-        // tna.manage.department-only: department is auto-scoped to the caller's own, never
+        // training_request.manage.department-only: department is auto-scoped to the caller's own, never
         // client-editable (spec FR-002) — a mismatched departmentId is rejected, not silently
         // overridden, so a caller can't assume a submission landed where they asked.
         const [caller] = await request.tenantDb
@@ -327,7 +327,7 @@ const tenantTrainingNeedsRoutes: FastifyPluginAsync = async (fastify) => {
     {
       preHandler: [
         requireTenantUserSession(),
-        requireAnyPermission("tna.manage.all", "tna.manage.department"),
+        requireAnyPermission("training_request.manage.all", "training_request.manage.department"),
       ],
     },
     async (request, reply) => {
@@ -340,7 +340,7 @@ const tenantTrainingNeedsRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(404).send({ success: false, message: "Not found" });
       }
 
-      const manageAll = await hasPermission(request.tenantDb, request.user!.id, "tna.manage.all");
+      const manageAll = await hasPermission(request.tenantDb, request.user!.id, "training_request.manage.all");
       const manageScope = await resolveTrainingNeedVisibilityScope(request.tenantDb, request.user!.id, manageAll);
       if (!isWithinScope(existing.departmentId, manageScope)) {
         return reply.code(404).send({ success: false, message: "Not found" });
@@ -399,14 +399,14 @@ const tenantTrainingNeedsRoutes: FastifyPluginAsync = async (fastify) => {
   );
 
   // POST /tenant/training-needs/:trainingNeedId/approve — approval workflow follow-up
-  // (0051/0052 migrations). Gated by the dedicated `tna.approve` permission, deliberately separate
-  // from `tna.manage.*` — a tenant can grant approval authority without also granting edit/delete
+  // (0051/0052 migrations). Gated by the dedicated `training_request.approve` permission, deliberately separate
+  // from `training_request.manage.*` — a tenant can grant approval authority without also granting edit/delete
   // rights. Org-wide only, no department-scoped variant or additional visibility-scope check beyond
-  // holding the permission itself, mirroring `tna.manage.all`'s own unscoped treatment.
+  // holding the permission itself, mirroring `training_request.manage.all`'s own unscoped treatment.
   fastify.post<{ Params: { trainingNeedId: string } }>(
     "/tenant/training-needs/:trainingNeedId/approve",
     {
-      preHandler: [requireTenantUserSession(), requireAnyPermission("tna.approve")],
+      preHandler: [requireTenantUserSession(), requireAnyPermission("training_request.approve")],
     },
     async (request, reply) => {
       const { trainingNeedId } = request.params;
@@ -454,7 +454,7 @@ const tenantTrainingNeedsRoutes: FastifyPluginAsync = async (fastify) => {
     {
       preHandler: [
         requireTenantUserSession(),
-        requireAnyPermission("tna.manage.all", "tna.manage.department"),
+        requireAnyPermission("training_request.manage.all", "training_request.manage.department"),
       ],
     },
     async (request, reply) => {
@@ -467,9 +467,9 @@ const tenantTrainingNeedsRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(404).send({ success: false, message: "Not found" });
       }
 
-      const manageAll = await hasPermission(request.tenantDb, request.user!.id, "tna.manage.all");
+      const manageAll = await hasPermission(request.tenantDb, request.user!.id, "training_request.manage.all");
       if (manageAll) {
-        // tna.manage.all: any row, any status, any department (research.md §3).
+        // training_request.manage.all: any row, any status, any department (research.md §3).
         await request.tenantDb.delete(trainingNeeds).where(eq(trainingNeeds.id, trainingNeedId));
         return reply.code(204).send();
       }
