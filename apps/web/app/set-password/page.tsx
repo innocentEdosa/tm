@@ -6,11 +6,12 @@ import SetPasswordForm from "./set-password-form";
 export default async function SetPasswordPage() {
   const headerList = await headers();
   const subdomain = headerList.get("x-tenant-subdomain") ?? "";
+  const tenantName = headerList.get("x-tenant-name") ?? subdomain;
 
   const session = await getTenantSession(subdomain);
   if (!session.authenticated) {
     redirect("/tenant");
   }
 
-  return <SetPasswordForm subdomain={subdomain} />;
+  return <SetPasswordForm subdomain={subdomain} tenantName={tenantName} />;
 }

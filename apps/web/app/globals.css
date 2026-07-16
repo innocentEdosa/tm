@@ -365,9 +365,10 @@
   @apply rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800;
 }
 
-/* ─── Tenant login split-screen (Split-Screen Tenant Login Layout spec) ──
-   Brand panel (left, desktop only) + form column (right). Reuses only the locked design-system
-   tokens already declared above — no new colors introduced. */
+/* ─── Auth split-screen (Split-Screen Tenant Login Layout spec; Split-Screen Change Password
+   Layout spec) ── Shared by two pages: tenant login (brand panel left, form right) and
+   change-password (form left, decorative panel right — order set via JSX, not these classes).
+   Reuses only the locked design-system tokens already declared above — no new colors introduced. */
 
 .login-split {
   @apply flex min-h-screen;
