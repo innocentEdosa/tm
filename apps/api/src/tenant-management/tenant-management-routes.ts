@@ -22,13 +22,17 @@ import { SubdomainTakenError, ReservedSubdomainError } from "../provisioning/pro
  * has not been implemented yet.
  */
 const tenantManagementRoutes: FastifyPluginAsync = async (fastify) => {
-  fastify.get<{ Querystring: { page?: string; pageSize?: string } }>(
+  fastify.get<{ Querystring: { page?: string; pageSize?: string; search?: string } }>(
     "/tenants",
     { preHandler: [requireSuperAdminSession] },
     async (request) => {
       const page = request.query.page ? parseInt(request.query.page, 10) : undefined;
       const pageSize = request.query.pageSize ? parseInt(request.query.pageSize, 10) : undefined;
-      const result = await listTenants(request.superAdminDb!, { page, pageSize });
+      const result = await listTenants(request.superAdminDb!, {
+        page,
+        pageSize,
+        search: request.query.search,
+      });
       return { success: true, data: result };
     },
   );

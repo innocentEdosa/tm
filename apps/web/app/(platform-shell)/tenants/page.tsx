@@ -16,10 +16,11 @@ import { Badge, Button, Drawer, Input, Modal, Pagination } from "@tm/ui";
 const API_BASE = "/platform-api";
 const PAGE_SIZE = 25;
 // Matches team-settings-client.tsx's own row-actions-menu convention (Team Member Directory spec) —
-// a portal-positioned dropdown rather than a row of buttons, since a tenant row can show up to four
-// actions at once and this shell's table has no room to spare.
+// a portal-positioned dropdown rather than a row of buttons, since a tenant row can show up to five
+// actions at once (Super Admin Tenant Console spec added "Manage") and this shell's table has no
+// room to spare.
 const ROW_ACTIONS_MENU_WIDTH = 160;
-const ROW_ACTIONS_MENU_HEIGHT = 168;
+const ROW_ACTIONS_MENU_HEIGHT = 210;
 
 interface TenantRow {
   id: string;
@@ -73,6 +74,11 @@ function statusBadgeVariant(status: string): "success" | "accent" | "neutral" | 
 export default function TenantsPage() {
   const router = useRouter();
   const [page, setPage] = useState(1);
+  // Super Admin Tenant Console spec — server-side search, matching team-settings-client.tsx's own
+  // debounce convention (300ms), since the Tenants list grows past a glance-able size once dozens
+  // of tenants exist.
+  const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [reloadToken, setReloadToken] = useState(0);
   const [editingTenant, setEditingTenant] = useState<TenantRow | null>(null);
@@ -88,6 +94,18 @@ export default function TenantsPage() {
   const [deleteSubmitting, setDeleteSubmitting] = useState(false);
 
   const reload = useCallback(() => setReloadToken((t) => t + 1), []);
+
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    searchDebounceRef.current = setTimeout(() => {
+      setPage(1);
+      setDebouncedSearch(search);
+    }, 300);
+    return () => {
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    };
+  }, [search]);
 
   function openDeleteConfirm(tenant: TenantRow) {
     setConfirmDelete(tenant);
@@ -202,7 +220,10 @@ export default function TenantsPage() {
     let cancelled = false;
     setState((prev) => (prev.status === "ready" ? prev : { status: "loading" }));
 
-    fetch(`${API_BASE}/tenants?page=${page}&pageSize=${PAGE_SIZE}`, {
+    const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE) });
+    if (debouncedSearch) params.set("search", debouncedSearch);
+
+    fetch(`${API_BASE}/tenants?${params}`, {
       credentials: "include",
       cache: "no-store",
     })
@@ -226,7 +247,7 @@ export default function TenantsPage() {
     return () => {
       cancelled = true;
     };
-  }, [page, reloadToken]);
+  }, [page, debouncedSearch, reloadToken]);
 
   useEffect(() => {
     if (state.status === "unauthenticated") {
@@ -248,6 +269,13 @@ export default function TenantsPage() {
         </Link>
       </div>
 
+      <Input
+        className="mt-6"
+        placeholder="Search by company name, subdomain, or contact email…"
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+      />
+
       {(state.status === "loading" || state.status === "unauthenticated") && (
         <p className="mt-8 text-sm text-slate-600">Loading…</p>
       )}
@@ -267,7 +295,9 @@ export default function TenantsPage() {
       {state.status === "ready" && (
         <>
           {state.data.tenants.length === 0 ? (
-            <p className="mt-8 text-sm text-slate-600">No tenants yet.</p>
+            <p className="mt-8 text-sm text-slate-600">
+              {debouncedSearch ? "No tenants match your search." : "No tenants yet."}
+            </p>
           ) : (
             <div className="mt-6 overflow-x-auto rounded-lg border border-border">
               <table className="min-w-full divide-y divide-border text-sm">
@@ -316,6 +346,7 @@ export default function TenantsPage() {
                         <TenantRowActionsMenu
                           tenant={tenant}
                           disabled={actioningId === tenant.id}
+                          onManage={() => router.push(`/tenants/${tenant.id}`)}
                           onEdit={() => openEdit(tenant)}
                           onArchive={() => setConfirmArchive(tenant)}
                           onReactivate={() => runAction(tenant.id, "reactivate")}
@@ -502,6 +533,7 @@ export default function TenantsPage() {
 function TenantRowActionsMenu({
   tenant,
   disabled,
+  onManage,
   onEdit,
   onArchive,
   onReactivate,
@@ -511,6 +543,7 @@ function TenantRowActionsMenu({
 }: {
   tenant: TenantRow;
   disabled: boolean;
+  onManage: () => void;
   onEdit: () => void;
   onArchive: () => void;
   onReactivate: () => void;
@@ -579,6 +612,13 @@ function TenantRowActionsMenu({
             style={{ top: position.top, left: position.left, width: ROW_ACTIONS_MENU_WIDTH }}
             className="fixed z-50 rounded-lg border border-border bg-white py-1 shadow-card-md"
           >
+            <button
+              type="button"
+              className="block w-full cursor-pointer px-3 py-2 text-left text-sm text-secondary hover:bg-slate-50 hover:text-primary"
+              onClick={() => runAndClose(onManage)}
+            >
+              Manage
+            </button>
             <button
               type="button"
               className="block w-full cursor-pointer px-3 py-2 text-left text-sm text-secondary hover:bg-slate-50 hover:text-primary"

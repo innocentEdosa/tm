@@ -21,6 +21,7 @@ Backs User Story 1 (FR-001).
 |---|---|
 | `page` | Optional, default `1`. |
 | `pageSize` | Optional, default `25` (matches the existing `Pagination`/`team-settings-client.tsx` convention). |
+| `search` | Optional (added for the Super Admin Tenant Console spec). Case-insensitive substring match against `name`, `subdomain`, or `primaryContactEmail`, server-side. |
 
 ### Response `200`
 

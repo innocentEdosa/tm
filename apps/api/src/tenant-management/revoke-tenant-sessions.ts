@@ -11,3 +11,23 @@ export async function revokeTenantSessions(db: Db, tenantId: string): Promise<vo
     .set({ revokedAt: new Date() })
     .where(and(eq(userSessions.tenantId, tenantId), isNull(userSessions.revokedAt)));
 }
+
+/** Super Admin Tenant Console spec, research.md §5 — same shape as `revokeTenantSessions`, scoped to
+ * one member instead of an entire tenant. Both `tenantId` and `memberId` are filtered (not `memberId`
+ * alone) so a `memberId` that does not actually belong to the tenant named in the route never revokes
+ * a session it shouldn't. `db` must be `request.superAdminDb`. */
+export async function revokeUserSessions(
+  db: Db,
+  params: { tenantId: string; memberId: string },
+): Promise<void> {
+  await db
+    .update(userSessions)
+    .set({ revokedAt: new Date() })
+    .where(
+      and(
+        eq(userSessions.tenantId, params.tenantId),
+        eq(userSessions.userId, params.memberId),
+        isNull(userSessions.revokedAt),
+      ),
+    );
+}
