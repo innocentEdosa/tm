@@ -59,6 +59,7 @@ describe("ZeptoMailSender (contracts/zeptomail-api.md, data-model.md)", () => {
         to: "jordan.lee@acme.example",
         subject: "Set up your TM account",
         text: "Welcome to TM.",
+        html: "<p>Welcome to TM.</p>",
       });
 
       expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -81,6 +82,7 @@ describe("ZeptoMailSender (contracts/zeptomail-api.md, data-model.md)", () => {
         ],
         subject: "Set up your TM account",
         textbody: "Welcome to TM.",
+        htmlbody: "<p>Welcome to TM.</p>",
       });
     });
 
@@ -89,7 +91,7 @@ describe("ZeptoMailSender (contracts/zeptomail-api.md, data-model.md)", () => {
       const fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
       vi.stubGlobal("fetch", fetchMock);
 
-      await new ZeptoMailSender().send({ to: "a@example.com", subject: "s", text: "t" });
+      await new ZeptoMailSender().send({ to: "a@example.com", subject: "s", text: "t", html: "<p>t</p>" });
 
       const [, init] = fetchMock.mock.calls[0];
       expect(JSON.parse(init.body).from.name).toBe("Acme Support");
@@ -100,7 +102,7 @@ describe("ZeptoMailSender (contracts/zeptomail-api.md, data-model.md)", () => {
       const fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
       vi.stubGlobal("fetch", fetchMock);
 
-      await new ZeptoMailSender().send({ to: "a@example.com", subject: "s", text: "t" });
+      await new ZeptoMailSender().send({ to: "a@example.com", subject: "s", text: "t", html: "<p>t</p>" });
 
       expect(fetchMock.mock.calls[0][0]).toBe("https://api.zeptomail.eu/v1.1/email");
     });
@@ -117,7 +119,7 @@ describe("ZeptoMailSender (contracts/zeptomail-api.md, data-model.md)", () => {
       );
 
       await expect(
-        new ZeptoMailSender().send({ to: "a@example.com", subject: "s", text: "t" }),
+        new ZeptoMailSender().send({ to: "a@example.com", subject: "s", text: "t", html: "<p>t</p>" }),
       ).rejects.toThrow(/Invalid API token/);
     });
 
@@ -125,7 +127,7 @@ describe("ZeptoMailSender (contracts/zeptomail-api.md, data-model.md)", () => {
       vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network unreachable")));
 
       await expect(
-        new ZeptoMailSender().send({ to: "a@example.com", subject: "s", text: "t" }),
+        new ZeptoMailSender().send({ to: "a@example.com", subject: "s", text: "t", html: "<p>t</p>" }),
       ).rejects.toThrow(/network unreachable/);
     });
 
@@ -133,7 +135,7 @@ describe("ZeptoMailSender (contracts/zeptomail-api.md, data-model.md)", () => {
       const fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
       vi.stubGlobal("fetch", fetchMock);
 
-      await new ZeptoMailSender().send({ to: "a@example.com", subject: "s", text: "t" });
+      await new ZeptoMailSender().send({ to: "a@example.com", subject: "s", text: "t", html: "<p>t</p>" });
 
       expect(fetchMock.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
     });

@@ -1,7 +1,18 @@
 import type { MailMessage, MailSender } from "../mail/mail-sender";
 import { ZeptoMailSender } from "../mail/zeptomail-sender";
+import {
+  buildTenantCreationEmail,
+  buildMemberInviteEmail,
+  buildPasswordResetEmail,
+} from "../mail/email-templates";
 
 const SEND_TIMEOUT_MS = 3000;
+/** Matches OTP_VALIDITY_MS in ./otp.ts (72 hours) — restated here as the copy value the templates
+ * display, kept in sync by research.md §9's cross-check rather than importing the raw millisecond
+ * constant into a hours-denominated field. */
+const OTP_VALIDITY_HOURS = 72;
+/** Matches RESET_TOKEN_VALIDITY_MS in ./tenant-auth-routes.ts (1 hour) — research.md §8. */
+const RESET_LINK_VALIDITY_HOURS = 1;
 
 let activeSender: MailSender = new ZeptoMailSender();
 
@@ -47,18 +58,34 @@ async function sendMail(message: MailMessage): Promise<void> {
   }
 }
 
-export async function sendOneTimePasswordEmail(to: string, otp: string): Promise<void> {
-  await sendMail({
-    to,
-    subject: "Set up your TM account",
-    text: `Welcome to TM. Your one-time password is: ${otp}\n\nLog in with this password — you'll be asked to set your own right away. This one-time password expires in 72 hours.`,
+/** Sent once, right after a new tenant is provisioned, to that tenant's admin (spec 019 User Story
+ * 1) — distinct copy from sendMemberInviteEmail below even though both render through the same
+ * template shell (research.md §5). */
+export async function sendTenantCreationEmail(to: string, otp: string, tenantName: string): Promise<void> {
+  const { subject, text, html } = buildTenantCreationEmail({
+    loginEmail: to,
+    tenantName,
+    oneTimePassword: otp,
+    otpValidityHours: OTP_VALIDITY_HOURS,
   });
+  await sendMail({ to, subject, text, html });
+}
+
+/** Sent when an existing tenant admin invites a new team member (spec 019 User Story 2). */
+export async function sendMemberInviteEmail(to: string, otp: string, tenantName: string): Promise<void> {
+  const { subject, text, html } = buildMemberInviteEmail({
+    loginEmail: to,
+    tenantName,
+    oneTimePassword: otp,
+    otpValidityHours: OTP_VALIDITY_HOURS,
+  });
+  await sendMail({ to, subject, text, html });
 }
 
 export async function sendPasswordResetEmail(to: string, resetLink: string): Promise<void> {
-  await sendMail({
-    to,
-    subject: "Reset your TM password",
-    text: `Reset your password using this link: ${resetLink}\n\nThis link expires in 1 hour and can only be used once.`,
+  const { subject, text, html } = buildPasswordResetEmail({
+    resetLink,
+    linkValidityHours: RESET_LINK_VALIDITY_HOURS,
   });
+  await sendMail({ to, subject, text, html });
 }

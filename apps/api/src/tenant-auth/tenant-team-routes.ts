@@ -12,9 +12,10 @@ import { users } from "../db/schema/users";
 import { userRoles, roles, rolePermissions } from "../db/schema/roles";
 import { departments } from "../db/schema/departments";
 import { permissions } from "../db/schema/permissions";
+import { tenants } from "../db/schema/tenants";
 import { generateOneTimePassword, otpExpiryFromNow } from "./otp";
 import { hashPassword } from "../platform-auth/password";
-import { sendOneTimePasswordEmail } from "./mailer";
+import { sendMemberInviteEmail } from "./mailer";
 
 const DEFAULT_PAGE_SIZE = 25;
 const inviter = alias(users, "inviter");
@@ -209,9 +210,16 @@ const tenantTeamRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       try {
-        await sendOneTimePasswordEmail(createdUser.email, oneTimePassword);
+        // research.md §6 — RLS-scoped read (tenant_isolation policy, 0009_rls_tenants.sql) through
+        // the same request.tenantDb every other read in this file already uses; `tenants.name` isn't
+        // otherwise available at this call site the way it already is in provision-tenant.ts.
+        const [tenant] = await request.tenantDb
+          .select({ name: tenants.name })
+          .from(tenants)
+          .where(eq(tenants.id, tenantId));
+        await sendMemberInviteEmail(createdUser.email, oneTimePassword, tenant.name);
       } catch (err) {
-        request.log.error(err, "Failed to send team-member one-time-password email");
+        request.log.error(err, "Failed to send team-member invite email");
       }
 
       return reply.code(201).send({ success: true, data: { id: createdUser.id, email: createdUser.email } });

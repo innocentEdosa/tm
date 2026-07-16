@@ -36,6 +36,7 @@ export class ZeptoMailSender implements MailSender {
         to: [{ email_address: { address: message.to, name: message.to } }],
         subject: message.subject,
         textbody: message.text,
+        htmlbody: message.html,
       }),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });

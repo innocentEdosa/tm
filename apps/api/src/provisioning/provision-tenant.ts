@@ -14,7 +14,7 @@ import { isReservedSubdomain } from "../tenant-routing/reserved-subdomains";
 import { tenantAuthMethods } from "../db/schema/tenant-auth-methods";
 import { generateOneTimePassword, otpExpiryFromNow } from "../tenant-auth/otp";
 import { hashPassword } from "../platform-auth/password";
-import { sendOneTimePasswordEmail } from "../tenant-auth/mailer";
+import { sendTenantCreationEmail } from "../tenant-auth/mailer";
 
 export class SubdomainTakenError extends Error {}
 export class ReservedSubdomainError extends Error {}
@@ -169,7 +169,11 @@ export async function provisionTenant(
     // Sent only after COMMIT succeeds, and never allowed to throw (it catches and logs internally,
     // research.md/spec Edge Cases) — a slow/unreachable SMTP server can never fail or roll back an
     // otherwise-successful provisioning attempt.
-    await sendProvisioningOneTimePasswordEmail({ email: createdAdmin.email, otp: oneTimePassword });
+    await sendProvisioningOneTimePasswordEmail({
+      email: createdAdmin.email,
+      otp: oneTimePassword,
+      tenantName: createdTenant.name,
+    });
 
     return {
       tenant: createdTenant,
@@ -190,9 +194,13 @@ export async function provisionTenant(
 }
 
 /** Never throws — catches and logs internally (see call site's comment above). */
-async function sendProvisioningOneTimePasswordEmail(target: { email: string; otp: string }): Promise<void> {
+async function sendProvisioningOneTimePasswordEmail(target: {
+  email: string;
+  otp: string;
+  tenantName: string;
+}): Promise<void> {
   try {
-    await sendOneTimePasswordEmail(target.email, target.otp);
+    await sendTenantCreationEmail(target.email, target.otp, target.tenantName);
   } catch (err) {
     console.error(`Failed to send provisioning one-time-password email to ${target.email}:`, err);
   }
