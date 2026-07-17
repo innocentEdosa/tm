@@ -109,7 +109,7 @@ that every previously-permitted action (view/manage/approve) still works.
 
 - [X] T008 [US2] Create `apps/api/tests/integration/training-request-permission-migration.test.ts`.
       **Implementation note**: the test DB is migrated once, ahead of the whole suite, so by the
-      time any test runs migration 0057 has already applied — there is no live "seed old tna.*
+      time any test runs migration 0064 has already applied — there is no live "seed old tna.*
       grants, then run the migration" moment to capture. Instead the test asserts (a) the
       migration's declared end state (the 5 `training_request.*` keys exist, none of the 5 old
       `tna.*` keys remain) and (b) the underlying grant-preservation mechanism generically, via a
@@ -119,10 +119,13 @@ that every previously-permitted action (view/manage/approve) still works.
 
 ### Implementation for User Story 2
 
-- [X] T009 [US2] Create migration `apps/api/drizzle/0057_rename_tna_permissions_to_training_request.sql`
-      (verify `0057` is still the next available index in
-      `apps/api/drizzle/meta/_journal.json` before creating — it was the next free slot as of this
-      plan) containing five `UPDATE "permissions" SET "key" = '<new>', "display_name" = ...,
+- [X] T009 [US2] Create migration `apps/api/drizzle/0064_rename_tna_permissions_to_training_request.sql`
+      (verify the next available index in `apps/api/drizzle/meta/_journal.json` before creating —
+      it was `0057` as of this plan, but master had since landed 7 more migrations
+      (`0057_member_action_log_table` through `0063_super_admin_full_access_users`) by the time
+      this was actually applied, causing a numbering collision that was caught and fixed by
+      renumbering to `0064` — see the note on T024) containing five
+      `UPDATE "permissions" SET "key" = '<new>', "display_name" = ...,
       "description" = ... WHERE "key" = '<old>'` statements for `tna.view.all`, `tna.view.department`,
       `tna.manage.all`, `tna.manage.department`, `tna.approve` → their `training_request.*`
       equivalents (contracts/permission-keys.md has the full mapping) — no `DELETE`/`INSERT`, per
@@ -167,17 +170,23 @@ that every previously-permitted action (view/manage/approve) still works.
 - [X] T023 [P] [US2] Update the 1 `tna.*` literal occurrence in
       `apps/api/tests/integration/custom-fields-tna-integration.test.ts` to `training_request.*`
 - [X] T024 [US2] Run `quickstart.md` §1 ("Permission continuity") end-to-end against a real seeded
-      tenant role and confirm zero grant regressions. **Validated via**: a fresh, isolated Postgres
-      container (not the shared local dev DB — see note below) migrated from scratch through 0057;
+      tenant role and confirm zero grant regressions. **Validated via (first pass)**: a fresh,
+      isolated Postgres container migrated from scratch through what was then numbered `0057`;
       confirmed the 5 `training_request.*` keys exist and all 5 old `tna.*` keys are gone; ran the
       full `pnpm --filter api test` suite against it — 221/222 passing (the 1 failure,
-      `zeptomail-sender.test.ts`, is pre-existing and unrelated to this feature — confirmed via
-      `git diff`/`git status`, untouched by any task here). **Environment note**: the project's
-      long-running local dev Postgres (`tm-postgres-1`, docker-compose) was found to already have 7
-      migrations applied beyond what this branch's `drizzle/` folder defines (ids 58-64, unrelated
-      history, likely from other work on a different branch) — running `db:migrate` against it was
-      a safe no-op (drizzle-kit detected no new migration to apply given the mismatch) and it was
-      left untouched rather than forced; a throwaway container was used instead for real validation
+      `zeptomail-sender.test.ts`, was pre-existing and unrelated — later fixed separately, outside
+      this feature). **Root-cause found and fixed (second pass, after user report)**: the project's
+      long-running local dev Postgres (`tm-postgres-1`, docker-compose) had 7 migrations applied
+      that this branch's `drizzle/` folder didn't yet have — not drift, but real work: `master` had
+      landed `0057_member_action_log_table` through `0063_super_admin_full_access_users` (Super
+      Admin member-creation feature) while this branch was in flight, colliding with this feature's
+      own `0057`-numbered migration. `db:migrate` against `tm-postgres-1` was silently a no-op
+      because of that collision, so the rename was never actually applied there — which is exactly
+      why the user reported the nav item missing and role-creation permissions still showing old
+      names. Fixed by renumbering the migration to `0064` (see T009) and re-running
+      `db:migrate` against `tm-postgres-1` directly, confirmed successful: all 5 keys renamed, and
+      every existing grant preserved (516 `HR/L&D Admin` + 344 `Manager` grants across every tenant
+      in that database, verified by row count before/after)
 
 **Checkpoint**: User Story 2 is fully functional and independently deployable — every existing
 tenant's access is verified unchanged under the new permission-key names.

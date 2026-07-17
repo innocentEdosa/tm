@@ -116,7 +116,7 @@ specs/020-training-request-rename/
 ```text
 apps/api/
 ├── drizzle/
-│   └── 0057_rename_tna_permissions_to_training_request.sql   # UPDATE permissions SET key = ... (5 rows), in place
+│   └── 0064_rename_tna_permissions_to_training_request.sql   # UPDATE permissions SET key = ... (5 rows), in place
 ├── src/
 │   ├── training-needs/
 │   │   ├── tenant-training-needs-routes.ts       # edited: ~15 string-literal permission-key occurrences renamed

@@ -4,15 +4,15 @@ import { afterAll, describe, expect, it } from "vitest";
 import { getTestPool, closeTestPool } from "../helpers/pg";
 
 /**
- * Training Request Rename (spec 020) — verifies migration 0057's grant-preservation guarantee
- * (spec FR-005/SC-002, research.md §5). By the time this suite runs, migration 0057 has already
+ * Training Request Rename (spec 020) — verifies migration 0064's grant-preservation guarantee
+ * (spec FR-005/SC-002, research.md §5). By the time this suite runs, migration 0064 has already
  * been applied once to this shared test database, so there is no "before" state left to replay
  * directly — instead this asserts (a) the migration's declared end state, and (b) the underlying
  * mechanism (renaming `permissions.key` in place never touches `role_permissions`) generically,
  * inside a transaction that is always rolled back so it leaves no permanent trace on the shared
  * `permissions` table other integration tests depend on.
  */
-describe("Training Request permission rename (spec 020, migration 0057)", () => {
+describe("Training Request permission rename (spec 020, migration 0064)", () => {
   afterAll(async () => {
     await closeTestPool();
   });
@@ -58,7 +58,7 @@ describe("Training Request permission rename (spec 020, migration 0057)", () => 
    * `DATABASE_URL` (the migration/owner role, same pattern as `seedSuperAdminSession` in
    * `fixtures.ts`), which also bypasses RLS, so no `app.tenant_id` needs to be set.
    */
-  it("preserves every existing role_permissions grant across a permissions.key rename — the exact mechanism migration 0057 relies on", async () => {
+  it("preserves every existing role_permissions grant across a permissions.key rename — the exact mechanism migration 0064 relies on", async () => {
     const tenantId = randomUUID();
     const pool = new Pool({ connectionString: process.env.DATABASE_URL });
     const client = await pool.connect();

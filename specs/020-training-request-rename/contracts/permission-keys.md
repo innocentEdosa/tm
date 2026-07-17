@@ -37,5 +37,5 @@ other code in this monorepo and the tenant Roles Management UI (Spec 011).
   `requireAnyPermission`/`hasPermission` call sites (~15 literal occurrences of the old keys).
 - `apps/web/app/(dashboard-shell)/layout.tsx` — `session.permissions.includes(...)` nav-gating
   checks (`canAccessTna` and its five `.includes()` calls).
-- `apps/api/drizzle/0057_rename_tna_permissions_to_training_request.sql` — the migration that
+- `apps/api/drizzle/0064_rename_tna_permissions_to_training_request.sql` — the migration that
   performs the actual `key` rename (source of truth for old→new mapping).

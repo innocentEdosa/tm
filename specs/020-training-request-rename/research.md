@@ -71,7 +71,7 @@ handles in one rule.
 
 ## 5. Permission-migration mechanism and deployment ordering
 
-**Decision**: One new Drizzle migration (`apps/api/drizzle/0057_rename_tna_permissions_to_training_request.sql`)
+**Decision**: One new Drizzle migration (`apps/api/drizzle/0064_rename_tna_permissions_to_training_request.sql`)
 containing five `UPDATE permissions SET key = '<new>' WHERE key = '<old>'` statements — no
 `DELETE`/`INSERT`, no changes to `role_permissions` or `role_template_permissions`. Deployed in the
 same release as the code change that checks for the new key strings (both are part of this one

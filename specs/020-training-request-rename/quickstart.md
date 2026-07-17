@@ -1,7 +1,7 @@
 # Quickstart: Validating the Training Request Rename
 
 Prerequisites: local Postgres running with the existing dev database migrated up through this
-feature's new migration (`0057_rename_tna_permissions_to_training_request.sql`), `apps/api` and
+feature's new migration (`0064_rename_tna_permissions_to_training_request.sql`), `apps/api` and
 `apps/web` running locally (`pnpm dev` from repo root, or per-app `pnpm dev`), and at least one
 tenant seeded with a role that held one or more of the old `tna.*` permissions before you apply the
 migration (use an existing dev tenant that already exercises Feature 014, or seed one via the
@@ -13,7 +13,7 @@ existing `hr_admin`/`manager` role templates per `0050_seed_tna_permissions.sql`
    `HR/L&D Admin`-sourced role and `Manager`-sourced role (via the Roles Management UI,
    `/settings/roles`, or a direct query: `SELECT p.key FROM role_permissions rp JOIN permissions p
    ON p.id = rp.permission_id WHERE rp.role_id = '<role-id>'`).
-2. Run `pnpm --filter api db:migrate` to apply `0057_rename_tna_permissions_to_training_request.sql`.
+2. Run `pnpm --filter api db:migrate` to apply `0064_rename_tna_permissions_to_training_request.sql`.
 3. Re-check the same role's effective permissions. **Expected**: the same number of permission rows,
    now showing `training_request.*` keys instead of `tna.*` — same role, same count, only the label
    changed. No `role_permissions` or `role_template_permissions` row was deleted or inserted (spot
