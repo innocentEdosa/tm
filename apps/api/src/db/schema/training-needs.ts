@@ -31,8 +31,9 @@ export const trainingNeeds = pgTable(
     }),
     submittedAt: timestamp("submitted_at", { withTimezone: true }),
     /** Approval step (follow-up to spec 014's own flagged Assumption — no approval workflow was in
-     * v1 scope). A dedicated `tna.approve` permission, not `tna.manage.*` — approving is a
-     * governance action a tenant may grant to a role independently of edit/delete rights. */
+     * v1 scope). A dedicated `training_request.approve` permission, not `training_request.manage.*`
+     * — approving is a governance action a tenant may grant to a role independently of edit/delete
+     * rights. */
     approvedByUserId: uuid("approved_by_user_id").references((): AnyPgColumn => users.id, {
       onDelete: "set null",
     }),

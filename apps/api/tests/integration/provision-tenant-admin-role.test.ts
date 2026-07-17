@@ -83,10 +83,10 @@ describe("POST /provisioning/tenants — admin creation & role assignment (US2)"
         // Add/Edit Team Member spec (0042_seed_team_edit_permission.sql):
         "team.edit",
         // Training Needs Analysis spec (0050_seed_tna_permissions.sql):
-        "tna.view.all",
-        "tna.manage.all",
+        "training_request.view.all",
+        "training_request.manage.all",
         // Training Needs Analysis approval follow-up (0052_seed_tna_approve_permission.sql):
-        "tna.approve",
+        "training_request.approve",
       ].sort(),
     );
 

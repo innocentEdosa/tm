@@ -1,7 +1,7 @@
 import { PageHeader } from "@tm/ui";
 
 // Shared "more to come" empty state (spec FR-003) — identical for every role. Real per-role
-// dashboard content (team roster, Training Needs Analysis, approvals, etc.) is deferred to a later
+// dashboard content (team roster, Training Requests, approvals, etc.) is deferred to a later
 // spec (spec.md Clarifications, 2026-07-04); this is deliberately not fabricated data of any kind.
 export default function DashboardHomePage() {
   return (

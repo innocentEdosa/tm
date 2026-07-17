@@ -14,10 +14,10 @@ export default async function EditTrainingNeedPage({
   const session = await getTenantSession(subdomain);
   const permissions = session.authenticated && !session.mustChangePassword ? session.permissions : [];
 
-  const canManageAll = permissions.includes("tna.manage.all");
-  const canManageDepartment = permissions.includes("tna.manage.department");
+  const canManageAll = permissions.includes("training_request.manage.all");
+  const canManageDepartment = permissions.includes("training_request.manage.department");
   if (!canManageAll && !canManageDepartment) {
-    redirect("/learning/tna");
+    redirect("/learning/training-requests");
   }
 
   return <TrainingNeedForm subdomain={subdomain} trainingNeedId={id} canManageAll={canManageAll} />;

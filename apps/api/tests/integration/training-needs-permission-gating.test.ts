@@ -11,7 +11,7 @@ describe("training needs: Manager create/draft/submit/edit/delete lifecycle (spe
     await closeTestPool();
   });
 
-  it("returns 403 for a user with no tna.* permission", async () => {
+  it("returns 403 for a user with no training_request.* permission", async () => {
     const tenantId = randomUUID();
     await seedTenant(tenantId);
     const userId = randomUUID();
@@ -35,7 +35,7 @@ describe("training needs: Manager create/draft/submit/edit/delete lifecycle (spe
     }
   });
 
-  it("a tna.manage.department Manager creates, saves as draft, submits, edits after submission, then deletes only a draft", async () => {
+  it("a training_request.manage.department Manager creates, saves as draft, submits, edits after submission, then deletes only a draft", async () => {
     const tenantId = randomUUID();
     await seedTenant(tenantId);
 
@@ -55,7 +55,7 @@ describe("training needs: Manager create/draft/submit/edit/delete lifecycle (spe
         .returning({ id: users.id });
       return { departmentId: dept.id, managerId: manager.id };
     });
-    await seedUserWithRole(tenantId, managerId, ["tna.view.department", "tna.manage.department"]);
+    await seedUserWithRole(tenantId, managerId, ["training_request.view.department", "training_request.manage.department"]);
 
     const server = await buildTestServer();
     try {
@@ -117,7 +117,7 @@ describe("training needs: Manager create/draft/submit/edit/delete lifecycle (spe
       expect(editAfterSubmit.json().data.status).toBe("submitted");
       expect(editAfterSubmit.json().data.priority).toBe("high");
 
-      // A Manager cannot delete a Submitted entry (Clarification Q1) — only tna.manage.all can.
+      // A Manager cannot delete a Submitted entry (Clarification Q1) — only training_request.manage.all can.
       const deleteSubmitted = await server.inject({
         method: "DELETE",
         url: `/tenant/training-needs/${created.id}`,
@@ -162,7 +162,7 @@ describe("training needs: Manager create/draft/submit/edit/delete lifecycle (spe
         .returning({ id: users.id });
       return { managerId: manager.id };
     });
-    await seedUserWithRole(tenantId, managerId, ["tna.view.department", "tna.manage.department"]);
+    await seedUserWithRole(tenantId, managerId, ["training_request.view.department", "training_request.manage.department"]);
 
     const server = await buildTestServer();
     try {

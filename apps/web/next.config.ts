@@ -22,6 +22,14 @@ const nextConfig: NextConfig = {
       { source: "/tenant-api/:path*", destination: `${API_ORIGIN}/:path*` },
     ];
   },
+  // Training Request Rename (spec 020) — the feature moved from /learning/tna to
+  // /learning/training-requests; this keeps any bookmarked or shared link to the old path working
+  // (spec FR-006).
+  async redirects() {
+    return [
+      { source: "/learning/tna/:path*", destination: "/learning/training-requests/:path*", permanent: false },
+    ];
+  },
 };
 
 export default nextConfig;

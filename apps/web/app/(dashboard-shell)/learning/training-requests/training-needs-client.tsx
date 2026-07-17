@@ -160,7 +160,7 @@ export default function TrainingNeedsClient({
   const [meta, setMeta] = useState<ListMeta | null>(null);
   const [listError, setListError] = useState<string | null>(null);
 
-  // Filters — org-wide (tna.view.all) only (spec US2/contracts §GET list); a department-scoped
+  // Filters — org-wide (training_request.view.all) only (spec US2/contracts §GET list); a department-scoped
   // Manager's own list is small and unpaginated, no filter bar needed (research.md Scale/Scope).
   const [departmentFilter, setDepartmentFilter] = useState("");
   const [priorityFilter, setPriorityFilter] = useState("");
@@ -168,7 +168,7 @@ export default function TrainingNeedsClient({
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 25;
 
-  // Only fetched for tna.view.all (org-wide filter bar) — a plain department-scoped Manager may not
+  // Only fetched for training_request.view.all (org-wide filter bar) — a plain department-scoped Manager may not
   // hold department.view, so this fetch is skipped entirely for them.
   const [departments, setDepartments] = useState<DepartmentOption[]>([]);
 
@@ -197,7 +197,7 @@ export default function TrainingNeedsClient({
     fetch(`${API_BASE}/training-needs?${params.toString()}`, { credentials: "include" })
       .then((res) => {
         if (res.status === 403) {
-          setListError("You don't have access to view training needs.");
+          setListError("You don't have access to view training requests.");
           setRows([]);
           setMeta(null);
           return null;
@@ -210,7 +210,7 @@ export default function TrainingNeedsClient({
         setMeta(json.pagination ?? null);
         setListError(null);
       })
-      .catch(() => setListError("Couldn't load training needs. Try again."));
+      .catch(() => setListError("Couldn't load training requests. Try again."));
   }
 
   useEffect(() => {
@@ -235,21 +235,21 @@ export default function TrainingNeedsClient({
       return;
     }
     const json = (await res.json().catch(() => null)) as { message?: string } | null;
-    setDeleteError(json?.message ?? "Couldn't delete this training need.");
+    setDeleteError(json?.message ?? "Couldn't delete this training request.");
   }
 
   const descriptionLine = canViewAll
-    ? "Every submitted and approved training need across your organization."
-    : "Training needs for your department.";
+    ? "Every submitted and approved training request across your organization."
+    : "Training requests for your department.";
 
   return (
     <main className="px-8 py-8">
       <div className="flex items-start justify-between">
-        <PageHeader title="Training Needs Analysis" subtitle={descriptionLine} />
+        <PageHeader title="Training Requests" subtitle={descriptionLine} />
         {canManage && (
-          <Button onClick={() => router.push("/learning/tna/new")}>
+          <Button onClick={() => router.push("/learning/training-requests/new")}>
             <Plus className="h-4 w-4" />
-            New training need
+            New training request
           </Button>
         )}
       </div>
@@ -301,8 +301,8 @@ export default function TrainingNeedsClient({
         ) : rows.length === 0 ? (
           <div className="p-8 text-center text-sm text-slate-500">
             {canViewAll
-              ? "No submitted training needs match your filters yet."
-              : "No training needs yet — create your first one to get started."}
+              ? "No submitted training requests match your filters yet."
+              : "No training requests yet — create your first one to get started."}
           </div>
         ) : (
           <table className="min-w-full divide-y divide-border text-sm">
@@ -322,7 +322,7 @@ export default function TrainingNeedsClient({
                   className="cursor-pointer border-t border-border hover:bg-slate-50"
                   onClick={(event) => {
                     if ((event.target as HTMLElement).closest("[data-row-actions]")) return;
-                    router.push(`/learning/tna/${row.id}`);
+                    router.push(`/learning/training-requests/${row.id}`);
                   }}
                 >
                   <td className="px-4 py-3 text-sm text-primary">{row.title}</td>
@@ -340,7 +340,7 @@ export default function TrainingNeedsClient({
                       <div className="flex justify-end">
                         <RowActionsMenu
                           canDelete={canManageAll || row.status === "draft"}
-                          onEdit={() => router.push(`/learning/tna/${row.id}/edit`)}
+                          onEdit={() => router.push(`/learning/training-requests/${row.id}/edit`)}
                           onDelete={() => {
                             setDeleteError(null);
                             setDeleteTarget(row);
@@ -370,7 +370,7 @@ export default function TrainingNeedsClient({
       >
         <div className="space-y-4">
           {deleteError && <div className="banner-error">{deleteError}</div>}
-          <p className="text-sm text-secondary">This can&apos;t be undone. Are you sure you want to delete this training need?</p>
+          <p className="text-sm text-secondary">This can&apos;t be undone. Are you sure you want to delete this training request?</p>
           <div className="flex gap-2">
             <Button
               variant="secondary"

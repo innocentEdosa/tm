@@ -45,7 +45,7 @@ interface FormState {
 const EMPTY_FORM: FormState = { title: "", priority: "medium", departmentId: "" };
 
 /**
- * Shared by `/learning/tna/new` (create) and `/learning/tna/[id]` (edit) — a dedicated full page
+ * Shared by `/learning/training-requests/new` (create) and `/learning/training-requests/[id]` (edit) — a dedicated full page
  * per direct product feedback, not a Drawer overlay (unlike Department/Team/Roles' own forms).
  * Every field stacks single-column, full width, in whatever order `layoutFields` reports (per
  * direct product feedback — superseded an earlier two-column paired layout).
@@ -102,14 +102,14 @@ export default function TrainingNeedForm({
       .then((res) => (res.ok ? res.json() : null))
       .then((json: { data: TrainingNeedRow } | null) => {
         if (!json) {
-          setFormError("This training need couldn't be found.");
+          setFormError("This training request couldn't be found.");
           return;
         }
         setForm({ title: json.data.title, priority: json.data.priority, departmentId: json.data.departmentId });
         setStatus(json.data.status);
         setDepartmentName(json.data.departmentName);
       })
-      .catch(() => setFormError("Couldn't load this training need. Try again."))
+      .catch(() => setFormError("Couldn't load this training request. Try again."))
       .finally(() => setLoading(false));
 
     fetch(
@@ -180,7 +180,7 @@ export default function TrainingNeedForm({
       // saved/created immediately, matching the new dedicated view page.
       const json = (await res.json().catch(() => null)) as { data?: { id: string } } | null;
       const savedId = trainingNeedId ?? json?.data?.id;
-      router.push(savedId ? `/learning/tna/${savedId}` : "/learning/tna");
+      router.push(savedId ? `/learning/training-requests/${savedId}` : "/learning/training-requests");
       return;
     }
     const json = (await res.json().catch(() => null)) as
@@ -191,13 +191,13 @@ export default function TrainingNeedForm({
       setFormError("Some fields need attention.");
       return;
     }
-    setFormError(json?.message ?? "Couldn't save this training need. Try again.");
+    setFormError(json?.message ?? "Couldn't save this training request. Try again.");
   }
 
   /** Whether a field actually renders a control at all — `status` never does (driven by the
-   * Save-as-draft/Submit actions instead), and `department_id` only does for a `tna.manage.all`
-   * caller creating a new entry. Filtered out before row-pairing so a hidden field never "uses up"
-   * a pairing slot next to a real one. */
+   * Save-as-draft/Submit actions instead), and `department_id` only does for a
+   * `training_request.manage.all` caller creating a new entry. Filtered out before row-pairing so
+   * a hidden field never "uses up" a pairing slot next to a real one. */
   function fieldWillRender(field: CustomFieldDefinition): boolean {
     if (!field.isSystem) return true;
     if (field.fieldKey === "status") return false;
@@ -246,7 +246,7 @@ export default function TrainingNeedForm({
           </div>
         );
       case "department_id":
-        // Only a picker for tna.manage.all creating a new entry (spec FR-002) — never editable
+        // Only a picker for training_request.manage.all creating a new entry (spec FR-002) — never editable
         // once created, shown instead as the header subtitle in edit mode (not inline here).
         if (!canManageAll || isEditing) return null;
         return (
@@ -381,29 +381,29 @@ export default function TrainingNeedForm({
       <button
         type="button"
         className="mb-4 flex cursor-pointer items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-primary"
-        onClick={() => router.push("/learning/tna")}
+        onClick={() => router.push("/learning/training-requests")}
       >
         <ArrowLeft className="h-4 w-4" />
-        Training Needs Analysis
+        Training Requests
       </button>
 
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-3">
           <PageHeader
-            title={isEditing ? "Edit training need" : "New training need"}
+            title={isEditing ? "Edit training request" : "New training request"}
             subtitle={
               isEditing
                 ? (departmentName ?? undefined)
                 : canManageAll
-                  ? "Create a training need for any department."
-                  : "Create a training need for your department."
+                  ? "Create a training request for any department."
+                  : "Create a training request for your department."
             }
           />
           {isEditing && <Badge variant={STATUS_BADGE_VARIANT[status]}>{STATUS_LABEL[status]}</Badge>}
         </div>
         <Button
           variant="secondary"
-          onClick={() => router.push(isEditing ? `/learning/tna/${trainingNeedId}` : "/learning/tna")}
+          onClick={() => router.push(isEditing ? `/learning/training-requests/${trainingNeedId}` : "/learning/training-requests")}
         >
           Cancel
         </Button>

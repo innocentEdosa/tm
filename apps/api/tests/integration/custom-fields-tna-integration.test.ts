@@ -69,7 +69,7 @@ describe("custom fields: Training Needs Analysis end-to-end (spec 014 US3)", () 
         .returning({ id: users.id });
       return { managerId: manager.id };
     });
-    await seedUserWithRole(tenantId, managerId, ["tna.view.department", "tna.manage.department", "forms.manage.tenant"]);
+    await seedUserWithRole(tenantId, managerId, ["training_request.view.department", "training_request.manage.department", "forms.manage.tenant"]);
 
     const server = await buildTestServer();
     try {
