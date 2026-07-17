@@ -29,7 +29,7 @@ export class ZeptoMailSender implements MailSender {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `${process.env.MAIL_API_TOKEN}`,
+        Authorization: `zoho-enczapikey ${process.env.MAIL_API_TOKEN}`,
       },
       body: JSON.stringify({
         from: { address: process.env.MAIL_FROM_EMAIL, name: fromName },
