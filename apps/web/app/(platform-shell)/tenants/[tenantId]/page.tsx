@@ -162,6 +162,17 @@ export default function TenantConsolePage() {
   const [resetResult, setResetResult] = useState<{ member: MemberRow; password: string } | null>(null);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
 
+  // Super Admin Add Member spec (021)
+  const [addMemberOpen, setAddMemberOpen] = useState(false);
+  const [addMemberForm, setAddMemberForm] = useState({
+    fullName: "",
+    email: "",
+    roleId: "",
+    departmentId: "",
+  });
+  const [addMemberError, setAddMemberError] = useState<string | null>(null);
+  const [addMemberSubmitting, setAddMemberSubmitting] = useState(false);
+
   useEffect(() => {
     let cancelled = false;
     fetch(`${API_BASE}/tenants/${tenantId}`, { credentials: "include", cache: "no-store" })
@@ -194,19 +205,27 @@ export default function TenantConsolePage() {
     if (tenant === "unauthenticated") router.replace("/platform/login");
   }, [tenant, router]);
 
-  useEffect(() => {
-    if (tab !== "departments" || departments !== null) return;
+  const loadDepartments = useCallback(() => {
     fetch(`${API_BASE}/tenants/${tenantId}/departments`, { credentials: "include", cache: "no-store" })
       .then((res) => res.json())
       .then((json: ApiResponse<DepartmentRow[]>) => setDepartments(json.data ?? []));
-  }, [tab, tenantId, departments]);
+  }, [tenantId]);
 
-  useEffect(() => {
-    if (tab !== "roles" || roles !== null) return;
+  const loadRoles = useCallback(() => {
     fetch(`${API_BASE}/tenants/${tenantId}/roles`, { credentials: "include", cache: "no-store" })
       .then((res) => res.json())
       .then((json: ApiResponse<RoleRow[]>) => setRoles(json.data ?? []));
-  }, [tab, tenantId, roles]);
+  }, [tenantId]);
+
+  useEffect(() => {
+    if (tab !== "departments" || departments !== null) return;
+    loadDepartments();
+  }, [tab, departments, loadDepartments]);
+
+  useEffect(() => {
+    if (tab !== "roles" || roles !== null) return;
+    loadRoles();
+  }, [tab, roles, loadRoles]);
 
   const loadMembers = useCallback(() => {
     const query = new URLSearchParams({
@@ -253,6 +272,46 @@ export default function TenantConsolePage() {
       setResetError("Couldn't reach the server. Try again.");
     } finally {
       setResetSubmitting(false);
+    }
+  }
+
+  function openAddMember() {
+    setAddMemberForm({ fullName: "", email: "", roleId: "", departmentId: "" });
+    setAddMemberError(null);
+    setAddMemberOpen(true);
+    // The Add Member form needs the tenant's roles/departments regardless of which tab is
+    // currently active — fetch them here too if the Roles/Departments tabs haven't been visited
+    // yet (spec 021 research.md §5).
+    if (roles === null) loadRoles();
+    if (departments === null) loadDepartments();
+  }
+
+  async function submitAddMember() {
+    setAddMemberSubmitting(true);
+    setAddMemberError(null);
+    try {
+      const res = await fetch(`${API_BASE}/tenants/${tenantId}/members`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          fullName: addMemberForm.fullName.trim(),
+          email: addMemberForm.email.trim(),
+          roleId: addMemberForm.roleId,
+          departmentId: addMemberForm.departmentId || undefined,
+        }),
+      });
+      const json = (await res.json()) as ApiResponse<{ id: string; email: string }>;
+      if (!res.ok || !json.success) {
+        setAddMemberError(json.message ?? "Couldn't add this member. Try again.");
+        return;
+      }
+      setAddMemberOpen(false);
+      loadMembers();
+    } catch {
+      setAddMemberError("Couldn't reach the server. Try again.");
+    } finally {
+      setAddMemberSubmitting(false);
     }
   }
 
@@ -419,14 +478,20 @@ export default function TenantConsolePage() {
 
       {tab === "members" && (
         <div className="mt-6">
-          <Input
-            placeholder="Search members…"
-            value={memberSearch}
-            onChange={(e) => {
-              setMemberSearch(e.target.value);
-              setMemberPage(1);
-            }}
-          />
+          <div className="flex items-start justify-between gap-4">
+            <Input
+              className="flex-1"
+              placeholder="Search members…"
+              value={memberSearch}
+              onChange={(e) => {
+                setMemberSearch(e.target.value);
+                setMemberPage(1);
+              }}
+            />
+            <Button type="button" onClick={openAddMember}>
+              Add Member
+            </Button>
+          </div>
 
           {resetError && (
             <div role="alert" className="banner-error mt-4">
@@ -568,6 +633,102 @@ export default function TenantConsolePage() {
             </div>
           </div>
         )}
+      </Modal>
+
+      <Modal open={addMemberOpen} onClose={() => setAddMemberOpen(false)} title="Add Member">
+        <div className="space-y-4">
+          {addMemberError && (
+            <div role="alert" className="banner-error">
+              {addMemberError}
+            </div>
+          )}
+          <div>
+            <label className="field-label" htmlFor="add-member-full-name">
+              Full name
+            </label>
+            <Input
+              id="add-member-full-name"
+              value={addMemberForm.fullName}
+              onChange={(e) => setAddMemberForm((f) => ({ ...f, fullName: e.target.value }))}
+            />
+          </div>
+          <div>
+            <label className="field-label" htmlFor="add-member-email">
+              Email
+            </label>
+            <Input
+              id="add-member-email"
+              type="email"
+              value={addMemberForm.email}
+              onChange={(e) => setAddMemberForm((f) => ({ ...f, email: e.target.value }))}
+            />
+          </div>
+          <div>
+            <label className="field-label" htmlFor="add-member-role">
+              Role
+            </label>
+            {roles !== null && roles.length === 0 ? (
+              <p className="mt-1 text-sm text-slate-600">This tenant has no roles yet.</p>
+            ) : (
+              <select
+                id="add-member-role"
+                className="field-input"
+                value={addMemberForm.roleId}
+                onChange={(e) => setAddMemberForm((f) => ({ ...f, roleId: e.target.value }))}
+              >
+                <option value="">{roles === null ? "Loading…" : "— Select a role —"}</option>
+                {(roles ?? []).map((role) => (
+                  <option key={role.id} value={role.id}>
+                    {role.name}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+          <div>
+            <label className="field-label" htmlFor="add-member-department">
+              Department (optional)
+            </label>
+            <select
+              id="add-member-department"
+              className="field-input"
+              value={addMemberForm.departmentId}
+              onChange={(e) => setAddMemberForm((f) => ({ ...f, departmentId: e.target.value }))}
+            >
+              <option value="">— None —</option>
+              {(departments ?? [])
+                .filter((d) => d.status === "active")
+                .map((dept) => (
+                  <option key={dept.id} value={dept.id}>
+                    {dept.name}
+                  </option>
+                ))}
+            </select>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setAddMemberOpen(false)}
+              disabled={addMemberSubmitting}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={submitAddMember}
+              isLoading={addMemberSubmitting}
+              disabled={
+                !addMemberForm.fullName.trim() ||
+                !addMemberForm.email.trim() ||
+                !addMemberForm.roleId ||
+                roles?.length === 0
+              }
+            >
+              Add Member
+            </Button>
+          </div>
+        </div>
       </Modal>
     </div>
   );

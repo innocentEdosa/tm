@@ -5,7 +5,14 @@ import { getTenantDepartments } from "./get-tenant-departments";
 import { getTenantRoles } from "./get-tenant-roles";
 import { getTenantMembers } from "./get-tenant-members";
 import { resetMemberPassword } from "./reset-member-password";
-import { TenantNotFoundError, MemberNotFoundError } from "./errors";
+import { addTenantMember, type AddTenantMemberInput } from "./add-tenant-member";
+import {
+  TenantNotFoundError,
+  MemberNotFoundError,
+  RoleNotFoundError,
+  DepartmentNotActiveError,
+  EmailConflictError,
+} from "./errors";
 
 /**
  * contracts/super-admin-tenant-console-api.md — platform-connection-context routes (no `tenant_id`
@@ -85,6 +92,41 @@ const superAdminTenantConsoleRoutes: FastifyPluginAsync = async (fastify) => {
       } catch (err) {
         if (err instanceof TenantNotFoundError) {
           return reply.code(404).send({ success: false, message: "Tenant not found" });
+        }
+        throw err;
+      }
+    },
+  );
+
+  fastify.post<{ Params: { id: string }; Body: AddTenantMemberInput }>(
+    "/tenants/:id/members",
+    { preHandler: [requireSuperAdminSession] },
+    async (request, reply) => {
+      const body = request.body ?? ({} as AddTenantMemberInput);
+      if (!body.fullName || !body.email || !body.roleId) {
+        return reply
+          .code(400)
+          .send({ success: false, message: "fullName, email, and roleId are required" });
+      }
+      try {
+        const result = await addTenantMember(request.superAdminDb!, {
+          tenantId: request.params.id,
+          superAdminId: request.superAdmin!.id,
+          input: body,
+        });
+        return reply.code(201).send({ success: true, data: result });
+      } catch (err) {
+        if (err instanceof TenantNotFoundError) {
+          return reply.code(404).send({ success: false, message: "Tenant not found" });
+        }
+        if (err instanceof RoleNotFoundError) {
+          return reply.code(422).send({ success: false, message: "Role not found" });
+        }
+        if (err instanceof DepartmentNotActiveError) {
+          return reply.code(422).send({ success: false, message: "Department not found or not active" });
+        }
+        if (err instanceof EmailConflictError) {
+          return reply.code(409).send({ success: false, message: "Email already in use at this tenant" });
         }
         throw err;
       }
