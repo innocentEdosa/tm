@@ -4,6 +4,7 @@ import { inArray } from "drizzle-orm";
 import { withTenantDb, withTenantTransaction, withSuperAdminTransaction } from "./pg";
 import { roles, rolePermissions, userRoles } from "../../src/db/schema/roles";
 import { permissions } from "../../src/db/schema/permissions";
+import { users } from "../../src/db/schema/users";
 import { hashSessionToken, generateSessionToken, sessionExpiryFromNow } from "../../src/platform-auth/session";
 import { SUPER_ADMIN_COOKIE_NAME } from "../../src/platform-auth/cookies";
 
@@ -16,6 +17,26 @@ export async function seedTenant(tenantId: string, name = "Test Tenant"): Promis
        VALUES ($1, $2, $3, 'Test Contact', $4)`,
       [tenantId, name, `test-${tenantId}`, `contact-${tenantId}@example.com`],
     );
+  });
+}
+
+/** Creates a real `users` row with the given `userId` — needed by any route/fixture combination
+ * that writes a FK referencing `users.id` (e.g. `created_by_user_id`), since `seedUserWithRole`
+ * below only creates a `roles`/`user_roles` row, not a real `users` row (mirrors the inline
+ * `db.insert(users).values(...)` pattern already used ad hoc across several test files, e.g.
+ * granular-permissions.test.ts). */
+export async function seedUser(
+  tenantId: string,
+  userId: string,
+  overrides: { fullName?: string; email?: string } = {},
+): Promise<void> {
+  await withTenantDb(tenantId, async (db) => {
+    await db.insert(users).values({
+      id: userId,
+      tenantId,
+      fullName: overrides.fullName ?? "Test User",
+      email: overrides.email ?? `test-user-${userId}@example.com`,
+    });
   });
 }
 

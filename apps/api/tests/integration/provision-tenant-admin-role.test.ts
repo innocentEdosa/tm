@@ -87,6 +87,9 @@ describe("POST /provisioning/tenants — admin creation & role assignment (US2)"
         "training_request.manage.all",
         // Training Needs Analysis approval follow-up (0052_seed_tna_approve_permission.sql):
         "training_request.approve",
+        // Course Creation spec (0073_seed_course_permissions.sql):
+        "course.view",
+        "course.manage",
       ].sort(),
     );
 
