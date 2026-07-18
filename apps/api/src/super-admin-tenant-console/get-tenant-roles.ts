@@ -1,4 +1,4 @@
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, ne } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { roles, rolePermissions } from "../db/schema/roles";
 import { permissions } from "../db/schema/permissions";
@@ -58,4 +58,31 @@ export async function getTenantRoles(db: Db, params: { tenantId: string }): Prom
     isSystem: role.sourceTemplateId !== null,
     memberCount: memberCounts.get(role.id) ?? 0,
   }));
+}
+
+export interface PermissionCatalogEntry {
+  key: string;
+  displayName: string;
+  description: string;
+  category: string;
+}
+
+/**
+ * Super Admin Edit Tenant Configuration spec (022), research.md §4 — backs the console's Roles tab
+ * permission-key picker. Reuses the exact same tenant-facing filter
+ * `GET /tenant/permission-catalog` already applies (`category != 'platform'`); not tenant-scoped
+ * by `:id` beyond routing convention, since `permissions` carries no `tenant_id` and no RLS at all —
+ * every tenant sees the identical catalog.
+ */
+export async function getPermissionCatalog(db: Db): Promise<PermissionCatalogEntry[]> {
+  const rows = await db
+    .select({
+      key: permissions.key,
+      displayName: permissions.displayName,
+      description: permissions.description,
+      category: permissions.category,
+    })
+    .from(permissions)
+    .where(ne(permissions.category, "platform"));
+  return rows;
 }

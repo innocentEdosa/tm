@@ -28,8 +28,9 @@ function pgErrorCode(err: unknown): string | undefined {
 /** research.md §1 — `tenant-auth/team-write-validation.ts`'s `roleExists` relies on
  * `request.tenantDb`'s ambient RLS scoping (no `tenant_id` filter of its own); `request.superAdminDb`
  * has no such scoping, so this explicitly-filtered equivalent is required to avoid a role belonging
- * to a different tenant validating successfully. */
-async function roleExistsForTenant(db: Db, tenantId: string, roleId: string): Promise<boolean> {
+ * to a different tenant validating successfully. Exported — Super Admin Edit Tenant Configuration
+ * spec (022) reuses this unchanged rather than duplicating it (that spec's own research.md §1). */
+export async function roleExistsForTenant(db: Db, tenantId: string, roleId: string): Promise<boolean> {
   const [row] = await db
     .select({ id: roles.id })
     .from(roles)
@@ -38,8 +39,9 @@ async function roleExistsForTenant(db: Db, tenantId: string, roleId: string): Pr
 }
 
 /** research.md §1 — same reasoning as `roleExistsForTenant` above, mirroring
- * `departmentIsActive`'s existing check plus an explicit `tenant_id` filter. */
-async function departmentIsActiveForTenant(
+ * `departmentIsActive`'s existing check plus an explicit `tenant_id` filter. Exported — see
+ * `roleExistsForTenant`'s own comment above. */
+export async function departmentIsActiveForTenant(
   db: Db,
   tenantId: string,
   departmentId: string,
