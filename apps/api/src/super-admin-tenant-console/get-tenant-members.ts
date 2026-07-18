@@ -10,9 +10,12 @@ export interface TenantMemberRow {
   id: string;
   fullName: string;
   email: string;
+  roleId: string;
   roleName: string;
+  departmentId: string | null;
   departmentName: string | null;
   accountStatus: "invited" | "active";
+  archived: boolean;
 }
 
 export interface TenantMembersResult {
@@ -59,7 +62,10 @@ export async function getTenantMembers(
       fullName: users.fullName,
       email: users.email,
       mustChangePassword: users.mustChangePassword,
+      archivedAt: users.archivedAt,
+      departmentId: departments.id,
       departmentName: departments.name,
+      roleId: roles.id,
       roleName: roles.name,
     })
     .from(users)
@@ -75,9 +81,12 @@ export async function getTenantMembers(
     id: row.id,
     fullName: row.fullName,
     email: row.email,
+    roleId: row.roleId,
     roleName: row.roleName,
+    departmentId: row.departmentId,
     departmentName: row.departmentName,
     accountStatus: row.mustChangePassword ? "invited" : "active",
+    archived: row.archivedAt !== null,
   }));
 
   return { data, meta: { page, pageSize, total } };

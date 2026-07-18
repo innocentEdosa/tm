@@ -455,6 +455,27 @@
       "when": 1784215627577,
       "tag": "0064_rename_tna_permissions_to_training_request",
       "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "7",
+      "when": 1784310920353,
+      "tag": "0065_tenant_config_action_log_table",
+      "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1784310920354,
+      "tag": "0066_lock_tenant_config_action_log_grants",
+      "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1784310920355,
+      "tag": "0067_super_admin_full_access_custom_field_values",
+      "breakpoints": true
     }
   ]
 }
