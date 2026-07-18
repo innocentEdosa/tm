@@ -525,6 +525,34 @@
       "when": 1784380487109,
       "tag": "0074_backfill_course_categories_existing_tenants",
       "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1784389683415,
+      "tag": "0075_course_content_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1784389792271,
+      "tag": "0076_rls_course_modules",
+      "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1784389793055,
+      "tag": "0077_rls_content_items",
+      "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1784389793901,
+      "tag": "0078_lock_course_content_grants",
+      "breakpoints": true
     }
   ]
 }

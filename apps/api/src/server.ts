@@ -20,6 +20,7 @@ import tenantDepartmentRoutes from "./departments/tenant-department-routes";
 import tenantFormRoutes from "./custom-fields/tenant-form-routes";
 import tenantTrainingNeedsRoutes from "./training-needs/tenant-training-needs-routes";
 import tenantCourseRoutes from "./courses/tenant-course-routes";
+import tenantCourseContentRoutes from "./course-content/tenant-course-content-routes";
 
 export interface BuildServerOptions {
   /**
@@ -76,6 +77,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Fas
   await server.register(tenantFormRoutes);
   await server.register(tenantTrainingNeedsRoutes);
   await server.register(tenantCourseRoutes);
+  await server.register(tenantCourseContentRoutes);
 
   server.get("/health", async () => ({
     status: "ok",
