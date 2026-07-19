@@ -16,6 +16,8 @@
     "purge:deleted-tenants": "tsx --env-file=.env scripts/purge-deleted-tenants.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1090.0",
+    "@aws-sdk/s3-request-presigner": "^3.1090.0",
     "@fastify/cors": "^11.2.0",
     "@fastify/postgres": "^6.0.0",
     "drizzle-orm": "^0.45.2",
