@@ -574,6 +574,27 @@
       "when": 1784406495501,
       "tag": "0081_lock_file_attachments_grants",
       "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1784461143985,
+      "tag": "0082_learner_content_progress_table",
+      "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "7",
+      "when": 1784461200950,
+      "tag": "0083_rls_learner_content_progress",
+      "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "7",
+      "when": 1784461641394,
+      "tag": "0084_lock_learner_content_progress_grants",
+      "breakpoints": true
     }
   ]
 }
