@@ -65,6 +65,8 @@ describe("attachment upload + confirm (spec US1, FR-001/FR-002/FR-004/FR-005/FR-
       headObject: async () => ({ exists: false }),
       createPresignedDownloadUrl: async () => "unused",
       deleteObject: async () => {},
+      putObject: async () => {},
+      getObjectStream: async () => null,
     });
 
     const server = await buildTestServer();

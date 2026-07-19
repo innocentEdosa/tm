@@ -35,3 +35,11 @@ export function createPresignedDownloadUrl(key: string): Promise<string> {
 export function deleteObject(key: string): Promise<void> {
   return activeClient.deleteObject(key);
 }
+
+export function putObject(key: string, body: Buffer, contentType: string): Promise<void> {
+  return activeClient.putObject(key, body, contentType);
+}
+
+export function getObjectStream(key: string): Promise<{ stream: NodeJS.ReadableStream; contentType?: string } | null> {
+  return activeClient.getObjectStream(key);
+}

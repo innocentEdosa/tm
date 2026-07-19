@@ -1,0 +1,1 @@
+ALTER TABLE "learner_content_progress" ADD COLUMN "scorm_raw_lesson_status" text;

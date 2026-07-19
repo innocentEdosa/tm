@@ -595,6 +595,55 @@
       "when": 1784461641394,
       "tag": "0084_lock_learner_content_progress_grants",
       "breakpoints": true
+    },
+    {
+      "idx": 85,
+      "version": "7",
+      "when": 1784470532674,
+      "tag": "0085_scorm_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 86,
+      "version": "7",
+      "when": 1784470745263,
+      "tag": "0086_rls_scorm_packages",
+      "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "7",
+      "when": 1784470745813,
+      "tag": "0087_rls_scorm_package_items",
+      "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "7",
+      "when": 1784470746354,
+      "tag": "0088_rls_scorm_cmi_objectives",
+      "breakpoints": true
+    },
+    {
+      "idx": 89,
+      "version": "7",
+      "when": 1784470746885,
+      "tag": "0089_rls_scorm_cmi_interactions",
+      "breakpoints": true
+    },
+    {
+      "idx": 90,
+      "version": "7",
+      "when": 1784471014871,
+      "tag": "0090_lock_scorm_grants",
+      "breakpoints": true
+    },
+    {
+      "idx": 91,
+      "version": "7",
+      "when": 1784473728721,
+      "tag": "0091_add_learner_content_progress_scorm_raw_status",
+      "breakpoints": true
     }
   ]
 }

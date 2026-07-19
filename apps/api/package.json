@@ -20,7 +20,9 @@
     "@aws-sdk/s3-request-presigner": "^3.1090.0",
     "@fastify/cors": "^11.2.0",
     "@fastify/postgres": "^6.0.0",
+    "adm-zip": "^0.6.0",
     "drizzle-orm": "^0.45.2",
+    "fast-xml-parser": "^5.10.1",
     "fastify": "^5.0.0",
     "fastify-plugin": "5.1.0",
     "pg": "8.22.0"
@@ -29,6 +31,7 @@
     "@tm/eslint-config": "workspace:*",
     "@tm/tsconfig": "workspace:*",
     "@tm/types": "workspace:*",
+    "@types/adm-zip": "^0.5.8",
     "@types/node": "^20.0.0",
     "@types/pg": "^8.20.0",
     "drizzle-kit": "^0.31.10",

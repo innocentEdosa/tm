@@ -28,6 +28,13 @@ export const learnerContentProgress = pgTable(
     suspendData: text("suspend_data"),
     sessionTimeSeconds: integer("session_time_seconds").notNull().default(0),
     totalTimeSeconds: integer("total_time_seconds").notNull().default(0),
+    /** SCORM Runtime spec (027) addition — the exact `cmi.core.lesson_status` value a SCO set
+     * (`passed`/`completed`/`failed`/`incomplete`/`browsed`/`not attempted`), which this table's own
+     * 4-value `status` CHECK can't losslessly represent (`passed` and `completed` would otherwise both
+     * collapse to `"completed"`). `status` above still holds the derived 4-value mapping for spec 026's
+     * own manager-review/rollup logic; this column is what a resumed SCO actually reads back. Nullable
+     * and unused by every non-SCORM content type. */
+    scormRawLessonStatus: text("scorm_raw_lesson_status"),
     enteredAt: timestamp("entered_at", { withTimezone: true }).notNull().defaultNow(),
     exitedAt: timestamp("exited_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

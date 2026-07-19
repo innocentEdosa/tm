@@ -63,4 +63,21 @@ export class R2StorageClient implements StorageClient {
   async deleteObject(key: string): Promise<void> {
     await this.client().send(new DeleteObjectCommand({ Bucket: this.bucket(), Key: key }));
   }
+
+  async putObject(key: string, body: Buffer, contentType: string): Promise<void> {
+    await this.client().send(new PutObjectCommand({ Bucket: this.bucket(), Key: key, Body: body, ContentType: contentType }));
+  }
+
+  async getObjectStream(key: string): Promise<{ stream: NodeJS.ReadableStream; contentType?: string } | null> {
+    try {
+      const result = await this.client().send(new GetObjectCommand({ Bucket: this.bucket(), Key: key }));
+      return { stream: result.Body as NodeJS.ReadableStream, contentType: result.ContentType };
+    } catch (err) {
+      const name = (err as { name?: string })?.name;
+      if (name === "NotFound" || name === "NoSuchKey") {
+        return null;
+      }
+      throw err;
+    }
+  }
 }

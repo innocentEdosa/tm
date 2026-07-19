@@ -16,4 +16,11 @@ export interface StorageClient {
   /** Returns a presigned URL the client GETs the file's bytes from directly. */
   createPresignedDownloadUrl(key: string): Promise<string>;
   deleteObject(key: string): Promise<void>;
+  /** Server-side direct write — unlike every method above, the API server itself is the caller, not a
+   * client via a presigned URL. Used by the SCORM Runtime spec to upload extracted package files
+   * (research.md §3, spec 027). */
+  putObject(key: string, body: Buffer, contentType: string): Promise<void>;
+  /** Server-side direct read, streamed — backs the SCORM package file-proxy route (research.md §3/§7,
+   * spec 027). Returns `null` if the object doesn't exist. */
+  getObjectStream(key: string): Promise<{ stream: NodeJS.ReadableStream; contentType?: string } | null>;
 }

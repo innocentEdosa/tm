@@ -1,3 +1,4 @@
+import { Readable } from "node:stream";
 import type { StorageClient } from "../../../src/storage/storage-client";
 
 /**
@@ -9,9 +10,11 @@ import type { StorageClient } from "../../../src/storage/storage-client";
 export class RecordingStorageClient implements StorageClient {
   readonly uploadedKeys: { key: string; contentType: string; sizeBytes: number }[] = [];
   readonly deletedKeys: string[] = [];
-  /** Keys the fixture treats as "actually uploaded" once `simulateUpload` is called — lets a test
-   * control whether a subsequent `headObject`/confirm call finds a real object or not. */
-  private readonly objects = new Map<string, number>();
+  /** One unified backing store for every key this fixture treats as "actually present" — populated
+   * either by `simulateUpload` (mimicking a client's direct presigned-URL PUT) or by `putObject`
+   * (server-side direct writes, spec 027's SCORM package-file storage). `body` is optional because
+   * specs 023-026's own tests only ever needed size, not real bytes, for `headObject` verification. */
+  private readonly objects = new Map<string, { sizeBytes: number; body?: Buffer; contentType?: string }>();
 
   isConfigured(): boolean {
     return true;
@@ -23,16 +26,19 @@ export class RecordingStorageClient implements StorageClient {
   }
 
   /** Test helper — simulates the client having actually PUT the file's bytes to the given key, so a
-   * subsequent `headObject` call reports it as present with the given size. */
-  simulateUpload(key: string, sizeBytes: number): void {
-    this.objects.set(key, sizeBytes);
+   * subsequent `headObject` call reports it as present with the given size. Pass `body` when the test
+   * also needs `getObjectStream` to later read the bytes back (e.g. spec 027's raw-package import
+   * flow) — omit it for the simpler size-only verification specs 023-026's tests use. */
+  simulateUpload(key: string, sizeBytes: number, body?: Buffer): void {
+    this.objects.set(key, { sizeBytes, body, contentType: body ? "application/octet-stream" : undefined });
   }
 
   async headObject(key: string): Promise<{ exists: boolean; sizeBytes?: number }> {
-    if (!this.objects.has(key)) {
+    const entry = this.objects.get(key);
+    if (!entry) {
       return { exists: false };
     }
-    return { exists: true, sizeBytes: this.objects.get(key) };
+    return { exists: true, sizeBytes: entry.sizeBytes };
   }
 
   async createPresignedDownloadUrl(key: string): Promise<string> {
@@ -42,5 +48,17 @@ export class RecordingStorageClient implements StorageClient {
   async deleteObject(key: string): Promise<void> {
     this.deletedKeys.push(key);
     this.objects.delete(key);
+  }
+
+  async putObject(key: string, body: Buffer, contentType: string): Promise<void> {
+    this.objects.set(key, { sizeBytes: body.length, body, contentType });
+  }
+
+  async getObjectStream(key: string): Promise<{ stream: NodeJS.ReadableStream; contentType?: string } | null> {
+    const entry = this.objects.get(key);
+    if (!entry?.body) {
+      return null;
+    }
+    return { stream: Readable.from(entry.body), contentType: entry.contentType };
   }
 }
