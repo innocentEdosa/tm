@@ -17,6 +17,9 @@ import {
   FileText,
   GraduationCap,
   ClipboardList,
+  Bell,
+  Search,
+  X,
 } from "lucide-react";
 
 type IconComponent = React.ComponentType<{ className?: string }>;
@@ -80,7 +83,16 @@ export interface AppShellProps {
    * `NavGroup` (expandable, e.g. "Settings" with Authentication/Forms children) as well as plain
    * links, rendered via the same `renderEntry` the main nav sections use. */
   footerEntries?: NavEntry[];
-  identity: { initial: string; primary: string; secondary?: string };
+  identity: { initial: string; primary: string; secondary?: string; avatarUrl?: string };
+  /** The topbar row above the content area (search, notifications, signed-in identity). Fully
+   * optional — every field has a sensible default, since neither global search nor notifications
+   * have a real backend yet; this only renders the chrome, ready to wire up later. */
+  topbar?: {
+    searchPlaceholder?: string;
+    onSearch?: (query: string) => void;
+    hasUnreadNotifications?: boolean;
+    onNotificationsClick?: () => void;
+  };
   logoutHref: string;
   afterLogoutHref: string;
   children: React.ReactNode;
@@ -104,11 +116,11 @@ function entryIsActive(entry: NavEntry, pathname: string): boolean {
 
 /**
  * Shared desktop shell (Desktop Shell Visual Language spec) — a single fixed-width sidebar (brand
- * mark, optional workspace-label pill, sectioned/expandable nav, bottom-pinned identity block) and a
- * content slot. There is no separate icon rail and no topbar (spec FR-001/FR-004). Rendered
- * identically by both the tenant dashboard and the Super Admin platform dashboard (spec FR-002a); any
- * visual difference between the two comes entirely from the props each caller passes in, never from
- * branching in here.
+ * mark, optional workspace-label pill, sectioned/expandable nav, bottom-pinned identity block), a
+ * topbar (search, notifications, signed-in identity), and a content slot. No separate icon rail
+ * (spec FR-001/FR-004). Rendered identically by both the tenant dashboard and the Super Admin
+ * platform dashboard (spec FR-002a); any visual difference between the two comes entirely from the
+ * props each caller passes in, never from branching in here.
  */
 export function AppShell({
   appMarkLabel,
@@ -117,12 +129,19 @@ export function AppShell({
   navSections,
   footerEntries,
   identity,
+  topbar,
   logoutHref,
   afterLogoutHref,
   children,
 }: AppShellProps) {
   const pathname = usePathname();
   const router = useRouter();
+  const [searchQuery, setSearchQuery] = useState("");
+
+  function handleSearchSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    topbar?.onSearch?.(searchQuery);
+  }
 
   // Every group defaults closed, even one containing the active route — a closed group still peeks
   // its one active child through beneath the (unhighlighted) toggle row, rather than fully hiding it.
@@ -254,6 +273,58 @@ export function AppShell({
       </aside>
 
       <div className="shell-main">
+        <header className="shell-topbar">
+          <form className="shell-topbar-search" role="search" onSubmit={handleSearchSubmit}>
+            <input
+              type="search"
+              className="shell-topbar-search-input"
+              placeholder={topbar?.searchPlaceholder ?? "Search"}
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+            />
+            {searchQuery.length > 0 && (
+              <button
+                type="button"
+                className="shell-topbar-search-clear-btn"
+                aria-label="Clear search"
+                onClick={() => setSearchQuery("")}
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+            <button type="submit" className="shell-topbar-search-btn" aria-label="Search">
+              <Search className="h-3.5 w-3.5" />
+            </button>
+          </form>
+
+          <div className="shell-topbar-actions">
+            <button
+              type="button"
+              className="shell-topbar-bell"
+              aria-label="Notifications"
+              onClick={() => topbar?.onNotificationsClick?.()}
+            >
+              <Bell className="h-4 w-4" />
+              {topbar?.hasUnreadNotifications && <span className="shell-topbar-bell-dot" />}
+            </button>
+
+            <div className="shell-topbar-profile">
+              <span className="shell-topbar-avatar">
+                {identity.avatarUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element -- arbitrary avatar URL, no next/image domain config for it
+                  <img src={identity.avatarUrl} alt="" className="h-full w-full object-cover" />
+                ) : (
+                  identity.initial
+                )}
+              </span>
+              <span className="shell-topbar-profile-text">
+                <span className="shell-topbar-profile-name">{identity.primary}</span>
+                {identity.secondary && <span className="shell-topbar-profile-handle">{identity.secondary}</span>}
+              </span>
+            </div>
+          </div>
+        </header>
+
         <main className="shell-content">{children}</main>
       </div>
     </div>

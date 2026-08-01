@@ -205,10 +205,9 @@
 
 /* ─── Desktop shell (Desktop Shell Visual Language spec) ─────────
    A single fixed-width sidebar (brand mark, optional workspace-label pill, sectioned/expandable nav,
-   bottom-pinned identity block) + content area — no separate icon rail, no topbar (superseded the
-   earlier icon-rail/panel/topbar composition, spec Clarifications). Shared by both the tenant and
-   Super Admin platform dashboards via the one `AppShell` component (packages/ui) — these classes
-   carry no per-dashboard branching themselves. */
+   bottom-pinned identity block) + content area, plus a topbar (search, notifications, signed-in
+   identity) above the content. Shared by both the tenant and Super Admin platform dashboards via the
+   one `AppShell` component (packages/ui) — these classes carry no per-dashboard branching themselves. */
 
 .shell {
   @apply flex min-h-screen;
@@ -319,6 +318,75 @@
 
 .shell-main {
   @apply flex min-w-0 flex-1 flex-col;
+}
+
+/* ─── Desktop shell topbar ─────────────────────────────────────
+   Search + notifications + the signed-in user's identity, above the content area on every page.
+   Sits outside `.shell-content`'s own scroll region, so it stays put while content scrolls. Reuses
+   the shell's own tokens (border/cta) rather than introducing new colors. */
+
+.shell-topbar {
+  @apply flex shrink-0 items-center justify-between gap-3 border-b border-border bg-surface px-10 py-2.5;
+}
+
+.shell-topbar-search {
+  @apply relative w-full max-w-md;
+}
+
+.shell-topbar-actions {
+  @apply flex shrink-0 items-center gap-3;
+}
+.shell-topbar-search-input {
+  @apply h-9 w-full rounded-lg border border-border bg-white py-2 pr-16 pl-3 text-sm text-text
+         placeholder:text-slate-400 transition-colors duration-200
+         focus:outline-none focus:border-primary focus:ring-3 focus:ring-primary/10;
+}
+/* The browser's own native search-cancel icon renders with OS-level shading (a gradient, not a
+   flat color) in WebKit/Blink — suppressed here in favor of the plain lucide `X` button rendered
+   in JSX (`.shell-topbar-search-clear-btn`), which is a flat, solid grey like every other icon in
+   this shell. */
+.shell-topbar-search-input::-webkit-search-cancel-button,
+.shell-topbar-search-input::-webkit-search-decoration {
+  -webkit-appearance: none;
+  appearance: none;
+}
+.shell-topbar-search-clear-btn {
+  @apply absolute top-1/2 right-9 flex h-7 w-7 -translate-y-1/2 items-center justify-center
+         rounded-md text-slate-400 transition-colors duration-200 cursor-pointer
+         hover:text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cta;
+}
+.shell-topbar-search-btn {
+  @apply absolute top-1/2 right-1 flex h-7 w-7 -translate-y-1/2 items-center justify-center
+         rounded-md text-secondary transition-colors duration-200 cursor-pointer
+         hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cta;
+}
+
+/* Icon-only, matching the app's other icon-button precedent (e.g. the course editor's "More
+   actions" trigger) — no border/fill by default, just a subtle hover background. */
+.shell-topbar-bell {
+  @apply relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-secondary
+         transition-colors duration-200 cursor-pointer hover:bg-slate-50 hover:text-primary
+         focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cta;
+}
+.shell-topbar-bell-dot {
+  @apply absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-red-500 ring-2 ring-white;
+}
+
+.shell-topbar-profile {
+  @apply flex shrink-0 items-center gap-2;
+}
+.shell-topbar-avatar {
+  @apply flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-cta
+         text-xs font-semibold text-white;
+}
+.shell-topbar-profile-text {
+  @apply flex min-w-0 flex-col leading-tight;
+}
+.shell-topbar-profile-name {
+  @apply truncate text-xs font-semibold text-primary;
+}
+.shell-topbar-profile-handle {
+  @apply truncate text-xs text-slate-500;
 }
 
 .shell-content {
