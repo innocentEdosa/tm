@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import Link from "next/link";
+import { useQuery } from "@tanstack/react-query";
 import { PageHeader, Card } from "@tm/ui";
 import { createScormApi, type LaunchData } from "@/lib/scorm-rte-api";
 
@@ -13,6 +14,17 @@ declare global {
   }
 }
 
+type ScormLaunchData = LaunchData & {
+  navigation: { position: number; packageStatus: string; scos: { contentItemId: string; title: string; position: number; status: string }[] };
+};
+
+async function fetchLaunchData(contentItemId: string): Promise<ScormLaunchData> {
+  const res = await fetch(`${API_BASE}/content-items/${contentItemId}/scorm/launch`, { credentials: "include" });
+  if (!res.ok) throw new Error(res.status === 404 ? "This package hasn't been imported yet." : "Unable to load this SCORM package.");
+  const body = await res.json();
+  return body.data;
+}
+
 /**
  * Client Component: fetches launch data, injects the SCORM 1.2 RTE API object onto this component's
  * own `window` (the iframe's parent, per the standard's discovery algorithm — research.md §10), and
@@ -21,26 +33,10 @@ declare global {
  * FR-013).
  */
 export default function ScormLauncherClient({ contentItemId }: { contentItemId: string }) {
-  const [launchData, setLaunchData] = useState<LaunchData & { navigation: { position: number; packageStatus: string; scos: { contentItemId: string; title: string; position: number; status: string }[] } }>();
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetch(`${API_BASE}/content-items/${contentItemId}/scorm/launch`, { credentials: "include" })
-      .then((res) => {
-        if (!res.ok) throw new Error(res.status === 404 ? "This package hasn't been imported yet." : "Unable to load this SCORM package.");
-        return res.json();
-      })
-      .then((body) => {
-        if (!cancelled) setLaunchData(body.data);
-      })
-      .catch((err: Error) => {
-        if (!cancelled) setError(err.message);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [contentItemId]);
+  const { data: launchData, error } = useQuery({
+    queryKey: ["scorm-launch", contentItemId],
+    queryFn: () => fetchLaunchData(contentItemId),
+  });
 
   useEffect(() => {
     if (!launchData) return;
@@ -53,7 +49,7 @@ export default function ScormLauncherClient({ contentItemId }: { contentItemId: 
   if (error) {
     return (
       <main className="mx-auto max-w-3xl px-6 py-10">
-        <div className="banner-error">{error}</div>
+        <div className="banner-error">{(error as Error).message}</div>
       </main>
     );
   }

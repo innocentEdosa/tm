@@ -72,18 +72,33 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const navSections: NavSection[] = [
     {
       key: "menu",
-      entries: [
-        { key: "home", icon: "home", label: "Dashboard", href: "/dashboard" },
-        { key: "courses", icon: "bookOpen", label: "Courses", href: "/courses", disabled: true, tag: "Soon" },
-      ],
+      entries: [{ key: "home", icon: "home", label: "Dashboard", href: "/dashboard" }],
     },
   ];
 
+  // Course Creation UI spec (028): course.view/course.manage gate this entry, same view-only
+  // visibility pattern as Training Requests above (canAccessTna) — a pure course.view holder needs
+  // the list too, not just direct-by-id links.
+  const canAccessCourses =
+    session.permissions.includes("course.view") || session.permissions.includes("course.manage");
+
   // "Learning" (Training Request spec, 014, renamed by spec 020) — a new top-level section, peer to
-  // "Administration" and "Settings" (plan.md Summary), holding today's one link. The existing
-  // disabled "Courses" placeholder above is deliberately left where it is (research.md §8) — folding
-  // it into this section is a plausible future consolidation, not part of this spec.
-  if (canAccessTna) {
+  // "Administration" and "Settings" (plan.md Summary), holding today's one link. The old top-level
+  // disabled "Courses" placeholder (research.md §8) is now this section's "Courses" entry, live per
+  // spec 028 rather than a permanent "Soon" stub.
+  if (canAccessTna || canAccessCourses) {
+    const learningChildren: NavLinkItem[] = [];
+    if (canAccessCourses) {
+      learningChildren.push({ key: "courses", icon: "bookOpen", label: "Courses", href: "/learning/courses" });
+    }
+    if (canAccessTna) {
+      learningChildren.push({
+        key: "tna",
+        icon: "clipboardList",
+        label: "Training Requests",
+        href: "/learning/training-requests",
+      });
+    }
     navSections.push({
       key: "learning",
       entries: [
@@ -91,14 +106,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
           key: "learning",
           icon: "graduationCap",
           label: "Learning",
-          children: [
-            {
-              key: "tna",
-              icon: "clipboardList",
-              label: "Training Requests",
-              href: "/learning/training-requests",
-            },
-          ],
+          children: learningChildren,
         },
       ],
     });

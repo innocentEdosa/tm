@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { MoreHorizontal, Plus, GripVertical } from "lucide-react";
 import { PageHeader, Card, Badge, Drawer, Button, Input, Toggle } from "@tm/ui";
 
@@ -129,6 +130,8 @@ const EMPTY_FIELD_FORM: FieldFormState = {
 const ROW_ACTIONS_MENU_WIDTH = 140;
 const ROW_ACTIONS_MENU_HEIGHT = 84;
 
+class ForbiddenError extends Error {}
+
 function FieldRowActionsMenu({ onEdit, onArchive }: { onEdit: () => void; onArchive: () => void }) {
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
@@ -212,55 +215,49 @@ function FieldRowActionsMenu({ onEdit, onArchive }: { onEdit: () => void; onArch
 }
 
 export default function FormsSettingsClient({ subdomain }: { subdomain: string }) {
-  const [definitions, setDefinitions] = useState<FormDefinition[] | null>(null);
+  const queryClient = useQueryClient();
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const [fields, setFields] = useState<FieldRow[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FieldFormState>(EMPTY_FIELD_FORM);
   const [formError, setFormError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
   const [dragId, setDragId] = useState<string | null>(null);
 
-  async function loadDefinitions() {
-    const res = await fetch(`${API_BASE}/form-definitions?subdomain=${encodeURIComponent(subdomain)}`, {
-      credentials: "include",
-    });
-    if (res.status === 403) {
-      setError("You don't have access to manage forms.");
-      setDefinitions([]);
-      return;
-    }
-    const json = (await res.json()) as { data: FormDefinition[] };
-    setDefinitions(json.data);
-    setError(null);
-    if (json.data.length > 0 && !selectedKey) {
-      setSelectedKey(json.data[0].key);
-    }
-  }
-
-  async function loadFields(formKey: string) {
-    const res = await fetch(
-      `${API_BASE}/form-fields?formKey=${encodeURIComponent(formKey)}&subdomain=${encodeURIComponent(subdomain)}`,
-      { credentials: "include" },
-    );
-    const json = (await res.json()) as { data: FieldRow[] };
-    setFields(json.data);
-  }
+  const definitionsQuery = useQuery({
+    queryKey: ["form-definitions", subdomain],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/form-definitions?subdomain=${encodeURIComponent(subdomain)}`, {
+        credentials: "include",
+      });
+      if (res.status === 403) throw new ForbiddenError();
+      const json = (await res.json()) as { data: FormDefinition[] };
+      return json.data;
+    },
+    retry: false,
+  });
+  const definitions = definitionsQuery.error instanceof ForbiddenError ? [] : (definitionsQuery.data ?? null);
+  const error = definitionsQuery.error instanceof ForbiddenError ? "You don't have access to manage forms." : null;
 
   useEffect(() => {
-    loadDefinitions();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    if (selectedKey) {
-      loadFields(selectedKey);
+    if (definitionsQuery.data && definitionsQuery.data.length > 0 && !selectedKey) {
+      setSelectedKey(definitionsQuery.data[0].key);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedKey]);
+  }, [definitionsQuery.data, selectedKey]);
+
+  const fieldsQuery = useQuery({
+    queryKey: ["form-fields", selectedKey, subdomain],
+    queryFn: async () => {
+      const res = await fetch(
+        `${API_BASE}/form-fields?formKey=${encodeURIComponent(selectedKey!)}&subdomain=${encodeURIComponent(subdomain)}`,
+        { credentials: "include" },
+      );
+      const json = (await res.json()) as { data: FieldRow[] };
+      return json.data;
+    },
+    enabled: !!selectedKey,
+  });
+  const fields = fieldsQuery.data ?? null;
 
   function openCreate() {
     setEditingId(null);
@@ -283,7 +280,47 @@ export default function FormsSettingsClient({ subdomain }: { subdomain: string }
     setFormOpen(true);
   }
 
-  async function handleSubmit(event: React.FormEvent) {
+  const saveFieldMutation = useMutation({
+    mutationFn: async () => {
+      const trimmedLabel = form.label.trim();
+      const fieldKey = form.fieldKey.trim() || slugify(trimmedLabel);
+      const body = editingId
+        ? {
+            label: trimmedLabel,
+            fieldType: form.fieldType,
+            options: form.options.length > 0 ? form.options : null,
+            isRequired: form.isRequired,
+          }
+        : {
+            formKey: selectedKey,
+            label: trimmedLabel,
+            fieldKey,
+            fieldType: form.fieldType,
+            options: form.options.length > 0 ? form.options : undefined,
+            isRequired: form.isRequired,
+          };
+      const url = editingId
+        ? `${API_BASE}/form-fields/${editingId}?subdomain=${encodeURIComponent(subdomain)}`
+        : `${API_BASE}/form-fields?subdomain=${encodeURIComponent(subdomain)}`;
+      const res = await fetch(url, {
+        method: editingId ? "PATCH" : "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const json = (await res.json().catch(() => null)) as { message?: string } | null;
+        throw new Error(json?.message ?? "Couldn't save this field. Try again.");
+      }
+    },
+    onSuccess: () => {
+      setFormOpen(false);
+      queryClient.invalidateQueries({ queryKey: ["form-fields", selectedKey, subdomain] });
+    },
+    onError: (err: Error) => setFormError(err.message),
+  });
+
+  function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     setFormError(null);
     if (!selectedKey) return;
@@ -302,58 +339,46 @@ export default function FormsSettingsClient({ subdomain }: { subdomain: string }
       setFormError("A field with this key already exists on this form.");
       return;
     }
-
-    setSaving(true);
-    const body = editingId
-      ? {
-          label: trimmedLabel,
-          fieldType: form.fieldType,
-          options: form.options.length > 0 ? form.options : null,
-          isRequired: form.isRequired,
-        }
-      : {
-          formKey: selectedKey,
-          label: trimmedLabel,
-          fieldKey,
-          fieldType: form.fieldType,
-          options: form.options.length > 0 ? form.options : undefined,
-          isRequired: form.isRequired,
-        };
-    const url = editingId
-      ? `${API_BASE}/form-fields/${editingId}?subdomain=${encodeURIComponent(subdomain)}`
-      : `${API_BASE}/form-fields?subdomain=${encodeURIComponent(subdomain)}`;
-    const res = await fetch(url, {
-      method: editingId ? "PATCH" : "POST",
-      credentials: "include",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    setSaving(false);
-    if (res.ok) {
-      setFormOpen(false);
-      loadFields(selectedKey);
-      return;
-    }
-    const json = (await res.json().catch(() => null)) as { message?: string } | null;
-    setFormError(json?.message ?? "Couldn't save this field. Try again.");
+    saveFieldMutation.mutate();
   }
 
-  async function handleArchive(field: FieldRow) {
+  const archiveMutation = useMutation({
+    mutationFn: async (field: FieldRow) => {
+      await fetch(`${API_BASE}/form-fields/${field.id}?subdomain=${encodeURIComponent(subdomain)}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ archived: true }),
+      });
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["form-fields", selectedKey, subdomain] }),
+  });
+
+  function handleArchive(field: FieldRow) {
     if (!selectedKey) return;
-    await fetch(`${API_BASE}/form-fields/${field.id}?subdomain=${encodeURIComponent(subdomain)}`, {
-      method: "PATCH",
-      credentials: "include",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ archived: true }),
-    });
-    loadFields(selectedKey);
+    archiveMutation.mutate(field);
   }
 
   /** The whole form's layout — system + global + tenant fields — reordered as one flat sequence
    * (superseding this framework's original "tenant fields only reorder among themselves" rule, per
    * direct product feedback). Sends the complete new order; the server upserts a position override
    * per field. */
-  async function handleReorder(draggedId: string, targetIndex: number) {
+  const reorderMutation = useMutation({
+    mutationFn: async (reordered: FieldRow[]) => {
+      await fetch(`${API_BASE}/form-fields/reorder?subdomain=${encodeURIComponent(subdomain)}`, {
+        method: "PUT",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ formKey: selectedKey, fieldIds: reordered.map((f) => f.id) }),
+      });
+    },
+    onMutate: (reordered: FieldRow[]) => {
+      queryClient.setQueryData(["form-fields", selectedKey, subdomain], reordered);
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["form-fields", selectedKey, subdomain] }),
+  });
+
+  function handleReorder(draggedId: string, targetIndex: number) {
     if (!selectedKey || !fields) return;
     const withoutDragged = fields.filter((f) => f.id !== draggedId);
     const reordered = [
@@ -361,14 +386,7 @@ export default function FormsSettingsClient({ subdomain }: { subdomain: string }
       fields.find((f) => f.id === draggedId)!,
       ...withoutDragged.slice(targetIndex),
     ];
-    setFields(reordered);
-    await fetch(`${API_BASE}/form-fields/reorder?subdomain=${encodeURIComponent(subdomain)}`, {
-      method: "PUT",
-      credentials: "include",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ formKey: selectedKey, fieldIds: reordered.map((f) => f.id) }),
-    });
-    loadFields(selectedKey);
+    reorderMutation.mutate(reordered);
   }
 
   function addOption() {
@@ -566,7 +584,7 @@ export default function FormsSettingsClient({ subdomain }: { subdomain: string }
             checked={form.isRequired}
             onChange={(checked) => setForm((f) => ({ ...f, isRequired: checked }))}
           />
-          <Button type="submit" isLoading={saving} className="w-full">
+          <Button type="submit" isLoading={saveFieldMutation.isPending} className="w-full">
             {editingId ? "Save changes" : "Add field"}
           </Button>
         </form>

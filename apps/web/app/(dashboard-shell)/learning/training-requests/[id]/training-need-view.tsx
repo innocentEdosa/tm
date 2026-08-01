@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft } from "lucide-react";
 import { PageHeader, Card, Badge, Button } from "@tm/ui";
 import { STATUS_LABEL, STATUS_BADGE_VARIANT, type TrainingNeedStatus } from "../status";
@@ -74,66 +75,72 @@ export default function TrainingNeedView({
   canApprove: boolean;
 }) {
   const router = useRouter();
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [entry, setEntry] = useState<TrainingNeedDetail | null>(null);
-  const [customFields, setCustomFields] = useState<CustomFieldDefinition[]>([]);
-  const [customFieldValues, setCustomFieldValues] = useState<Record<string, unknown>>({});
-  const [approving, setApproving] = useState(false);
+  const queryClient = useQueryClient();
   const [approveError, setApproveError] = useState<string | null>(null);
 
-  function loadEntry() {
-    fetch(`${API_BASE}/training-needs/${trainingNeedId}?subdomain=${encodeURIComponent(subdomain)}`, {
-      credentials: "include",
-    })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((json: { data: TrainingNeedDetail } | null) => {
-        if (!json) {
-          setError("This training request couldn't be found.");
-          return;
-        }
-        setEntry(json.data);
-        setError(null);
-      })
-      .catch(() => setError("Couldn't load this training request. Try again."))
-      .finally(() => setLoading(false));
-  }
+  const entryQuery = useQuery({
+    queryKey: ["training-need", trainingNeedId, subdomain],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/training-needs/${trainingNeedId}?subdomain=${encodeURIComponent(subdomain)}`, {
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("This training request couldn't be found.");
+      const json = (await res.json()) as { data: TrainingNeedDetail };
+      return json.data;
+    },
+  });
 
-  useEffect(() => {
-    loadEntry();
+  const customFieldsQuery = useQuery({
+    queryKey: ["training-need-form-fields", subdomain],
+    queryFn: async () => {
+      const res = await fetch(
+        `${API_BASE}/form-fields?formKey=training_needs_analysis&subdomain=${encodeURIComponent(subdomain)}`,
+        { credentials: "include" },
+      );
+      const json = (res.ok ? await res.json() : { data: [] }) as { data: CustomFieldDefinition[] };
+      return json.data.filter((f) => !f.isSystem);
+    },
+  });
 
-    fetch(
-      `${API_BASE}/form-fields?formKey=training_needs_analysis&subdomain=${encodeURIComponent(subdomain)}`,
-      { credentials: "include" },
-    )
-      .then((res) => (res.ok ? res.json() : { data: [] }))
-      .then((json: { data: CustomFieldDefinition[] }) => setCustomFields(json.data.filter((f) => !f.isSystem)))
-      .catch(() => setCustomFields([]));
+  const customFieldValuesQuery = useQuery({
+    queryKey: ["training-need-custom-field-values", trainingNeedId, subdomain],
+    queryFn: async () => {
+      const res = await fetch(
+        `${API_BASE}/custom-field-values?formKey=training_needs_analysis&entityId=${trainingNeedId}&subdomain=${encodeURIComponent(subdomain)}`,
+        { credentials: "include" },
+      );
+      const json = (res.ok ? await res.json() : { data: {} }) as { data: Record<string, unknown> };
+      return json.data;
+    },
+  });
 
-    fetch(
-      `${API_BASE}/custom-field-values?formKey=training_needs_analysis&entityId=${trainingNeedId}&subdomain=${encodeURIComponent(subdomain)}`,
-      { credentials: "include" },
-    )
-      .then((res) => (res.ok ? res.json() : { data: {} }))
-      .then((json: { data: Record<string, unknown> }) => setCustomFieldValues(json.data))
-      .catch(() => setCustomFieldValues({}));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trainingNeedId, subdomain]);
+  const entry = entryQuery.data ?? null;
+  const loading = entryQuery.isPending;
+  const error = entryQuery.error ? (entryQuery.error as Error).message : null;
+  const customFields = customFieldsQuery.data ?? [];
+  const customFieldValues = customFieldValuesQuery.data ?? {};
 
-  async function handleApprove() {
+  const approveMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(
+        `${API_BASE}/training-needs/${trainingNeedId}/approve?subdomain=${encodeURIComponent(subdomain)}`,
+        { method: "POST", credentials: "include" },
+      );
+      if (!res.ok) {
+        const json = (await res.json().catch(() => null)) as { message?: string } | null;
+        throw new Error(json?.message ?? "Couldn't approve this training request. Try again.");
+      }
+    },
+    onSuccess: () => {
+      setApproveError(null);
+      queryClient.invalidateQueries({ queryKey: ["training-need", trainingNeedId, subdomain] });
+    },
+    onError: (err: Error) => setApproveError(err.message),
+  });
+
+  function handleApprove() {
     setApproveError(null);
-    setApproving(true);
-    const res = await fetch(
-      `${API_BASE}/training-needs/${trainingNeedId}/approve?subdomain=${encodeURIComponent(subdomain)}`,
-      { method: "POST", credentials: "include" },
-    );
-    setApproving(false);
-    if (res.ok) {
-      loadEntry();
-      return;
-    }
-    const json = (await res.json().catch(() => null)) as { message?: string } | null;
-    setApproveError(json?.message ?? "Couldn't approve this training request. Try again.");
+    approveMutation.mutate();
   }
 
   return (
@@ -166,7 +173,7 @@ export default function TrainingNeedView({
                 </Button>
               )}
               {canApprove && entry.status === "submitted" && (
-                <Button isLoading={approving} onClick={handleApprove}>
+                <Button isLoading={approveMutation.isPending} onClick={handleApprove}>
                   Approve
                 </Button>
               )}

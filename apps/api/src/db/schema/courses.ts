@@ -28,6 +28,13 @@ export const courses = pgTable(
     durationUnit: text("duration_unit").notNull(),
     provider: text("provider"),
     cost: numeric("cost", { precision: 12, scale: 2, mode: "number" }),
+    subcategory: text("subcategory"),
+    learningObjectives: text("learning_objectives").array().notNull().default([]),
+    requirements: text("requirements").array().notNull().default([]),
+    /** The course's top-level curriculum order — module ids and standalone (module-less) content-item
+     * ids interleaved in one sequence. Authoritative for rendering/reordering the outline; modules and
+     * standalone content items are appended here on creation and removed here on deletion. */
+    outlineOrder: text("outline_order").array().notNull().default([]),
     status: text("status").notNull().default("draft"),
     createdByUserId: uuid("created_by_user_id").references((): AnyPgColumn => users.id, {
       onDelete: "set null",

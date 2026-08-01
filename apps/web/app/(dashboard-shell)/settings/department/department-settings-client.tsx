@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { MoreHorizontal, Plus } from "lucide-react";
 import { PageHeader, Card, Badge, Modal, Drawer, Button, Input } from "@tm/ui";
 
@@ -203,6 +204,8 @@ interface RowActionsMenuProps {
 const ROW_ACTIONS_MENU_WIDTH = 160;
 const ROW_ACTIONS_MENU_HEIGHT = 116;
 
+class ForbiddenError extends Error {}
+
 function RowActionsMenu({ status, onEdit, onArchiveToggle, onDelete }: RowActionsMenuProps) {
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
@@ -300,65 +303,103 @@ function RowActionsMenu({ status, onEdit, onArchiveToggle, onDelete }: RowAction
 }
 
 export default function DepartmentSettingsClient({ subdomain }: { subdomain: string }) {
-  const [departments, setDepartments] = useState<DepartmentRow[] | null>(null);
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [error, setError] = useState<string | null>(null);
 
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<DepartmentFormState>(EMPTY_FORM);
   const [formError, setFormError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
 
   const [deleteTarget, setDeleteTarget] = useState<DepartmentRow | null>(null);
   const [deleteBlock, setDeleteBlock] = useState<DeleteBlock | null>(null);
 
   const [viewTargetId, setViewTargetId] = useState<string | null>(null);
 
-  // The whole form's layout (system + global + tenant fields, ordered) — fetched once, independent
-  // of which drawer is open, since both the create/edit drawer AND the view drawer need it.
-  const [layoutFields, setLayoutFields] = useState<CustomFieldDefinition[]>([]);
   const [customFieldValues, setCustomFieldValues] = useState<Record<string, unknown>>({});
   const [customFieldErrors, setCustomFieldErrors] = useState<Record<string, string>>({});
   const [viewCustomFieldValues, setViewCustomFieldValues] = useState<Record<string, unknown>>({});
 
   useEffect(() => {
-    fetch(`${API_BASE}/form-fields?formKey=department&subdomain=${encodeURIComponent(subdomain)}`, {
-      credentials: "include",
-    })
-      .then((res) => res.json())
-      .then((json: { data: CustomFieldDefinition[] }) => setLayoutFields(json.data))
-      .catch(() => setLayoutFields([]));
-  }, [subdomain]);
+    const handle = setTimeout(() => setDebouncedSearch(search), 250);
+    return () => clearTimeout(handle);
+  }, [search]);
+
+  const departmentsQuery = useQuery({
+    queryKey: ["departments", subdomain, debouncedSearch],
+    queryFn: async () => {
+      const qs = new URLSearchParams({ subdomain });
+      if (debouncedSearch) qs.set("search", debouncedSearch);
+      const res = await fetch(`${API_BASE}/departments?${qs.toString()}`, { credentials: "include" });
+      if (res.status === 403) throw new ForbiddenError();
+      const json = (await res.json()) as { data: DepartmentRow[] };
+      return json.data;
+    },
+    retry: false,
+  });
+  const departments = useMemo(
+    () => (departmentsQuery.error instanceof ForbiddenError ? [] : (departmentsQuery.data ?? null)),
+    [departmentsQuery.error, departmentsQuery.data],
+  );
+  const error = departmentsQuery.error instanceof ForbiddenError ? "You don't have access to view departments." : null;
+
+  function reloadDepartments() {
+    queryClient.invalidateQueries({ queryKey: ["departments", subdomain] });
+  }
+
+  // The whole form's layout (system + global + tenant fields, ordered) — fetched once, independent
+  // of which drawer is open, since both the create/edit drawer AND the view drawer need it.
+  const layoutFieldsQuery = useQuery({
+    queryKey: ["department-form-fields", subdomain],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/form-fields?formKey=department&subdomain=${encodeURIComponent(subdomain)}`, {
+        credentials: "include",
+      });
+      const json = (await res.json()) as { data: CustomFieldDefinition[] };
+      return json.data;
+    },
+  });
+  const layoutFields = useMemo(() => layoutFieldsQuery.data ?? [], [layoutFieldsQuery.data]);
+
+  const editCustomFieldValuesQuery = useQuery({
+    queryKey: ["department-custom-field-values", editingId, subdomain],
+    queryFn: async () => {
+      const res = await fetch(
+        `${API_BASE}/custom-field-values?formKey=department&entityId=${editingId}&subdomain=${encodeURIComponent(subdomain)}`,
+        { credentials: "include" },
+      );
+      const json = (await res.json()) as { data: Record<string, unknown> };
+      return json.data;
+    },
+    enabled: formOpen && !!editingId,
+  });
 
   useEffect(() => {
     if (!formOpen || !editingId) {
       setCustomFieldValues({});
       return;
     }
-    fetch(
-      `${API_BASE}/custom-field-values?formKey=department&entityId=${editingId}&subdomain=${encodeURIComponent(subdomain)}`,
-      { credentials: "include" },
-    )
-      .then((res) => res.json())
-      .then((json: { data: Record<string, unknown> }) => setCustomFieldValues(json.data))
-      .catch(() => setCustomFieldValues({}));
-  }, [formOpen, editingId, subdomain]);
+    if (editCustomFieldValuesQuery.data) setCustomFieldValues(editCustomFieldValuesQuery.data);
+  }, [formOpen, editingId, editCustomFieldValuesQuery.data]);
+
+  const viewCustomFieldValuesQuery = useQuery({
+    queryKey: ["department-custom-field-values", viewTargetId, subdomain],
+    queryFn: async () => {
+      const res = await fetch(
+        `${API_BASE}/custom-field-values?formKey=department&entityId=${viewTargetId}&subdomain=${encodeURIComponent(subdomain)}`,
+        { credentials: "include" },
+      );
+      const json = (await res.json()) as { data: Record<string, unknown> };
+      return json.data;
+    },
+    enabled: !!viewTargetId,
+  });
 
   useEffect(() => {
-    if (!viewTargetId) {
-      setViewCustomFieldValues({});
-      return;
-    }
-    fetch(
-      `${API_BASE}/custom-field-values?formKey=department&entityId=${viewTargetId}&subdomain=${encodeURIComponent(subdomain)}`,
-      { credentials: "include" },
-    )
-      .then((res) => res.json())
-      .then((json: { data: Record<string, unknown> }) => setViewCustomFieldValues(json.data))
-      .catch(() => setViewCustomFieldValues({}));
-  }, [viewTargetId, subdomain]);
+    setViewCustomFieldValues(viewTargetId ? (viewCustomFieldValuesQuery.data ?? {}) : {});
+  }, [viewTargetId, viewCustomFieldValuesQuery.data]);
 
   const customFields = useMemo(() => layoutFields.filter((f) => !f.isSystem), [layoutFields]);
 
@@ -380,31 +421,6 @@ export default function DepartmentSettingsClient({ subdomain }: { subdomain: str
     setCustomFieldErrors(errors);
     return Object.keys(errors).length === 0;
   }
-
-  async function load(searchTerm?: string) {
-    const qs = new URLSearchParams({ subdomain });
-    if (searchTerm) qs.set("search", searchTerm);
-    const res = await fetch(`${API_BASE}/departments?${qs.toString()}`, { credentials: "include" });
-    if (res.status === 403) {
-      setError("You don't have access to view departments.");
-      setDepartments([]);
-      return;
-    }
-    const json = (await res.json()) as { data: DepartmentRow[] };
-    setDepartments(json.data);
-    setError(null);
-  }
-
-  useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    const handle = setTimeout(() => load(search), 250);
-    return () => clearTimeout(handle);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search]);
 
   const byId = useMemo(() => new Map((departments ?? []).map((d) => [d.id, d])), [departments]);
   const viewTarget = viewTargetId ? (byId.get(viewTargetId) ?? null) : null;
@@ -456,7 +472,49 @@ export default function DepartmentSettingsClient({ subdomain }: { subdomain: str
     setFormOpen(true);
   }
 
-  async function handleSubmit(event: React.FormEvent) {
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      const body = {
+        name: form.name.trim(),
+        parentDepartmentId: form.parentDepartmentId || null,
+        description: form.description || undefined,
+        ...(editingId ? { status: form.status } : {}),
+        managerId: form.manager?.id ?? null,
+        assistantManagerId: form.assistantManager?.id ?? null,
+        customFieldValues,
+      };
+      const url = editingId
+        ? `${API_BASE}/departments/${editingId}?subdomain=${encodeURIComponent(subdomain)}`
+        : `${API_BASE}/departments?subdomain=${encodeURIComponent(subdomain)}`;
+      const res = await fetch(url, {
+        method: editingId ? "PATCH" : "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const json = (await res.json().catch(() => null)) as
+          | { message?: string; errors?: { fieldKey: string; message: string }[] }
+          | null;
+        throw { json };
+      }
+    },
+    onSuccess: () => {
+      setFormOpen(false);
+      reloadDepartments();
+    },
+    onError: (err: { json?: { message?: string; errors?: { fieldKey: string; message: string }[] } | null }) => {
+      const json = err?.json;
+      if (json?.errors) {
+        setCustomFieldErrors(Object.fromEntries(json.errors.map((e) => [e.fieldKey, e.message])));
+        setFormError("Some custom fields need attention.");
+        return;
+      }
+      setFormError(json?.message ?? "Couldn't save this department. Try again.");
+    },
+  });
+
+  function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     setFormError(null);
     const trimmedName = form.name.trim();
@@ -478,67 +536,50 @@ export default function DepartmentSettingsClient({ subdomain }: { subdomain: str
     if (!validateCustomFields()) {
       return;
     }
-    setSaving(true);
-    const body = {
-      name: form.name.trim(),
-      parentDepartmentId: form.parentDepartmentId || null,
-      description: form.description || undefined,
-      ...(editingId ? { status: form.status } : {}),
-      managerId: form.manager?.id ?? null,
-      assistantManagerId: form.assistantManager?.id ?? null,
-      customFieldValues,
-    };
-    const url = editingId
-      ? `${API_BASE}/departments/${editingId}?subdomain=${encodeURIComponent(subdomain)}`
-      : `${API_BASE}/departments?subdomain=${encodeURIComponent(subdomain)}`;
-    const res = await fetch(url, {
-      method: editingId ? "PATCH" : "POST",
-      credentials: "include",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    setSaving(false);
-    if (res.ok) {
-      setFormOpen(false);
-      load(search);
-      return;
-    }
-    const json = (await res.json().catch(() => null)) as
-      | { message?: string; errors?: { fieldKey: string; message: string }[] }
-      | null;
-    if (json?.errors) {
-      setCustomFieldErrors(Object.fromEntries(json.errors.map((e) => [e.fieldKey, e.message])));
-      setFormError("Some custom fields need attention.");
-      return;
-    }
-    setFormError(json?.message ?? "Couldn't save this department. Try again.");
+    saveMutation.mutate();
   }
 
-  async function handleArchiveToggle(dept: DepartmentRow) {
-    const nextStatus = dept.status === "active" ? "archived" : "active";
-    await fetch(`${API_BASE}/departments/${dept.id}?subdomain=${encodeURIComponent(subdomain)}`, {
-      method: "PATCH",
-      credentials: "include",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ status: nextStatus }),
-    });
-    load(search);
+  const archiveToggleMutation = useMutation({
+    mutationFn: async (dept: DepartmentRow) => {
+      const nextStatus = dept.status === "active" ? "archived" : "active";
+      await fetch(`${API_BASE}/departments/${dept.id}?subdomain=${encodeURIComponent(subdomain)}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ status: nextStatus }),
+      });
+    },
+    onSuccess: () => reloadDepartments(),
+  });
+
+  function handleArchiveToggle(dept: DepartmentRow) {
+    archiveToggleMutation.mutate(dept);
   }
 
-  async function handleDeleteConfirm() {
+  const deleteMutation = useMutation({
+    mutationFn: async (target: DepartmentRow) => {
+      const res = await fetch(
+        `${API_BASE}/departments/${target.id}?subdomain=${encodeURIComponent(subdomain)}`,
+        { method: "DELETE", credentials: "include" },
+      );
+      if (res.status === 409) {
+        const json = (await res.json()) as DeleteBlock;
+        throw { block: json };
+      }
+    },
+    onSuccess: () => {
+      setDeleteTarget(null);
+      setDeleteBlock(null);
+      reloadDepartments();
+    },
+    onError: (err: { block?: DeleteBlock }) => {
+      if (err?.block) setDeleteBlock(err.block);
+    },
+  });
+
+  function handleDeleteConfirm() {
     if (!deleteTarget) return;
-    const res = await fetch(
-      `${API_BASE}/departments/${deleteTarget.id}?subdomain=${encodeURIComponent(subdomain)}`,
-      { method: "DELETE", credentials: "include" },
-    );
-    if (res.status === 409) {
-      const json = (await res.json()) as DeleteBlock;
-      setDeleteBlock(json);
-      return;
-    }
-    setDeleteTarget(null);
-    setDeleteBlock(null);
-    load(search);
+    deleteMutation.mutate(deleteTarget);
   }
 
   const excludedParentIds = useMemo(
@@ -835,7 +876,7 @@ export default function DepartmentSettingsClient({ subdomain }: { subdomain: str
         <form className="space-y-4" onSubmit={handleSubmit}>
           {formError && <div className="banner-error">{formError}</div>}
           {layoutFields.map((field) => renderFormField(field))}
-          <Button type="submit" isLoading={saving} className="w-full">
+          <Button type="submit" isLoading={saveMutation.isPending} className="w-full">
             {editingId ? "Save changes" : "Create department"}
           </Button>
         </form>

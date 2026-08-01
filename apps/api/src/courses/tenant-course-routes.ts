@@ -1,11 +1,17 @@
 import type { FastifyPluginAsync } from "fastify";
 import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { requireTenantUserSession } from "../tenant-auth/require-tenant-user-session";
-import { requirePermission, requireAnyPermission } from "../permissions/require-permission";
+import { requirePermission, requireAnyPermission, userHasAnyPermission } from "../permissions/require-permission";
 import { courses } from "../db/schema/courses";
 import { courseCategories } from "../db/schema/course-categories";
+import { courseModules, contentItems } from "../db/schema/course-content";
+import { courseAuthors } from "../db/schema/course-authors";
+import { courseReviews } from "../db/schema/course-reviews";
+import { fileAttachments } from "../db/schema/file-attachments";
 import { users } from "../db/schema/users";
 import { resolveOrCreateCourseCategory } from "./course-category-resolution";
+import { deleteAllAttachmentsForEntity } from "../attachments/tenant-attachment-routes";
+import * as storage from "../storage/storage";
 
 const DELIVERY_MODES = ["in_person", "virtual", "self_paced", "blended"] as const;
 const DURATION_UNITS = ["minutes", "hours", "days"] as const;
@@ -18,6 +24,31 @@ type Status = (typeof STATUSES)[number];
 
 type CourseRow = typeof courses.$inferSelect;
 
+/** Course Assignment Settings' visibility gate — a course is visible to a caller who lacks
+ * `course.manage` (i.e. a learner, not a course admin) when it has no assignment rows at all
+ * (never configured, or created before this feature — treated the same as an explicit "Everyone"
+ * row for backward compatibility), an explicit `assignee_type = 'all'` row, a `'user'` row naming
+ * them directly, a `'department'` row naming their own department, or a `'role'` row naming any
+ * role they hold. Callers with `course.manage` never have this condition applied at all — course
+ * admins always see every course regardless of who it's assigned to. */
+function buildAssignmentVisibilityCondition(userId: string) {
+  return sql`(
+    NOT EXISTS (SELECT 1 FROM course_assignments ca WHERE ca.course_id = ${courses.id})
+    OR EXISTS (SELECT 1 FROM course_assignments ca WHERE ca.course_id = ${courses.id} AND ca.assignee_type = 'all')
+    OR EXISTS (SELECT 1 FROM course_assignments ca WHERE ca.course_id = ${courses.id} AND ca.assignee_type = 'user' AND ca.user_id = ${userId})
+    OR EXISTS (
+      SELECT 1 FROM course_assignments ca
+      JOIN users u ON u.id = ${userId}
+      WHERE ca.course_id = ${courses.id} AND ca.assignee_type = 'department' AND ca.department_id = u.department_id
+    )
+    OR EXISTS (
+      SELECT 1 FROM course_assignments ca
+      JOIN user_roles ur ON ur.role_id = ca.role_id AND ur.user_id = ${userId}
+      WHERE ca.course_id = ${courses.id} AND ca.assignee_type = 'role'
+    )
+  )`;
+}
+
 interface CourseWriteBody {
   title?: string;
   description?: string | null;
@@ -26,6 +57,7 @@ interface CourseWriteBody {
   duration?: { value?: number; unit?: DurationUnit };
   provider?: string | null;
   cost?: number | null;
+  subcategory?: string | null;
   status?: Status;
 }
 
@@ -55,7 +87,10 @@ function validateFields(body: CourseWriteBody): { code: number; message: string 
  * — no route ever takes or trusts a client-supplied tenant id. */
 const tenantCourseRoutes: FastifyPluginAsync = async (fastify) => {
   /** Batch-joins category name and creator/updater full names for a page of course rows — mirrors
-   * `tenant-department-routes.ts`'s `userById` Map pattern for manager/assistantManager. */
+   * `tenant-department-routes.ts`'s `userById` Map pattern for manager/assistantManager. Also
+   * batch-resolves each course's current image (if any) to a fresh presigned download URL —
+   * `file_attachments` rows never store a stable public URL, so this is computed at read time, the
+   * same way the SCORM launch route computes `entryPointUrl` server-side. */
   async function toResponseRows(tenantDb: typeof fastify.db, rows: CourseRow[]) {
     const categoryIds = Array.from(new Set(rows.map((r) => r.categoryId)));
     const categoryRows =
@@ -78,6 +113,42 @@ const tenantCourseRoutes: FastifyPluginAsync = async (fastify) => {
         : [];
     const userById = new Map(userRows.map((u) => [u.id, u]));
 
+    const courseIds = rows.map((r) => r.id);
+    const moduleCountRows =
+      courseIds.length > 0
+        ? await tenantDb
+            .select({ courseId: courseModules.courseId, count: sql<number>`count(*)::int` })
+            .from(courseModules)
+            .where(inArray(courseModules.courseId, courseIds))
+            .groupBy(courseModules.courseId)
+        : [];
+    const moduleCountByCourseId = new Map(moduleCountRows.map((r) => [r.courseId, r.count]));
+
+    const imageAttachments =
+      courseIds.length > 0
+        ? await tenantDb
+            .select({ entityId: fileAttachments.entityId, storageKey: fileAttachments.storageKey, createdAt: fileAttachments.createdAt })
+            .from(fileAttachments)
+            .where(and(eq(fileAttachments.entityType, "course"), inArray(fileAttachments.entityId, courseIds), eq(fileAttachments.status, "ready")))
+            .orderBy(desc(fileAttachments.createdAt))
+        : [];
+    // First occurrence per course id wins (rows are already ordered newest-first) — a course only
+    // ever has one "current" image (uploading a new one deletes the prior attachment).
+    const latestImageKeyByCourseId = new Map<string, string>();
+    for (const a of imageAttachments) {
+      if (!latestImageKeyByCourseId.has(a.entityId) && a.storageKey) {
+        latestImageKeyByCourseId.set(a.entityId, a.storageKey);
+      }
+    }
+    const imageUrlByCourseId = new Map<string, string>();
+    if (latestImageKeyByCourseId.size > 0 && storage.isStorageConfigured()) {
+      await Promise.all(
+        Array.from(latestImageKeyByCourseId.entries()).map(async ([courseId, key]) => {
+          imageUrlByCourseId.set(courseId, await storage.createPresignedDownloadUrl(key));
+        }),
+      );
+    }
+
     return rows.map((r) => ({
       id: r.id,
       title: r.title,
@@ -87,6 +158,11 @@ const tenantCourseRoutes: FastifyPluginAsync = async (fastify) => {
       duration: { value: Number(r.durationValue), unit: r.durationUnit },
       provider: r.provider,
       cost: r.cost === null ? null : Number(r.cost),
+      subcategory: r.subcategory,
+      learningObjectives: r.learningObjectives,
+      requirements: r.requirements,
+      courseImageUrl: imageUrlByCourseId.get(r.id) ?? null,
+      moduleCount: moduleCountByCourseId.get(r.id) ?? 0,
       status: r.status,
       createdBy: r.createdByUserId ? (userById.get(r.createdByUserId) ?? null) : null,
       createdAt: r.createdAt,
@@ -111,6 +187,11 @@ const tenantCourseRoutes: FastifyPluginAsync = async (fastify) => {
     async (request) => {
       const tenantId = request.user!.tenantId;
       const conditions = [eq(courses.tenantId, tenantId)];
+
+      const canManage = await userHasAnyPermission(request.tenantDb, request.user!.id, ["course.manage"]);
+      if (!canManage) {
+        conditions.push(buildAssignmentVisibilityCondition(request.user!.id));
+      }
 
       if (request.query.status) {
         conditions.push(eq(courses.status, request.query.status));
@@ -172,6 +253,20 @@ const tenantCourseRoutes: FastifyPluginAsync = async (fastify) => {
       if (!existing) {
         return reply.code(404).send({ success: false, message: "Not found" });
       }
+
+      const canManage = await userHasAnyPermission(request.tenantDb, request.user!.id, ["course.manage"]);
+      if (!canManage) {
+        const [visible] = await request.tenantDb
+          .select({ id: courses.id })
+          .from(courses)
+          .where(and(eq(courses.id, request.params.courseId), buildAssignmentVisibilityCondition(request.user!.id)));
+        // Not "Forbidden" — matches every other route's 404-for-absent shape, so a learner outside
+        // a course's assigned audience can't distinguish "doesn't exist" from "not assigned to you".
+        if (!visible) {
+          return reply.code(404).send({ success: false, message: "Not found" });
+        }
+      }
+
       const [data] = await toResponseRows(request.tenantDb, [existing]);
       return { success: true, data };
     },
@@ -210,6 +305,7 @@ const tenantCourseRoutes: FastifyPluginAsync = async (fastify) => {
           durationUnit: body.duration.unit,
           provider: body.provider ?? null,
           cost: body.cost ?? null,
+          subcategory: body.subcategory ?? null,
           status: "draft",
           createdByUserId: request.user!.id,
         })
@@ -261,6 +357,7 @@ const tenantCourseRoutes: FastifyPluginAsync = async (fastify) => {
           ...(body.duration?.unit !== undefined ? { durationUnit: body.duration.unit } : {}),
           ...(body.provider !== undefined ? { provider: body.provider } : {}),
           ...(body.cost !== undefined ? { cost: body.cost } : {}),
+          ...(body.subcategory !== undefined ? { subcategory: body.subcategory } : {}),
           ...(body.status !== undefined ? { status: body.status } : {}),
           updatedByUserId: request.user!.id,
           updatedAt: new Date(),
@@ -293,6 +390,73 @@ const tenantCourseRoutes: FastifyPluginAsync = async (fastify) => {
 
       const [data] = await toResponseRows(request.tenantDb, [updated]);
       return reply.code(200).send({ success: true, data });
+    },
+  );
+
+  // PATCH /tenant/courses/:courseId/objectives — Course Objectives panel's own save action,
+  // independent of the main Course Details form (matching the frontend's separate save button).
+  // Neither list is required — a blank/omitted entry is simply dropped, never rejected.
+  fastify.patch<{ Params: { courseId: string }; Body: { learningObjectives?: unknown; requirements?: unknown } }>(
+    "/tenant/courses/:courseId/objectives",
+    { preHandler: [requireTenantUserSession(), requirePermission("course.manage")] },
+    async (request, reply) => {
+      const { courseId } = request.params;
+      const [existing] = await request.tenantDb.select({ id: courses.id }).from(courses).where(eq(courses.id, courseId));
+      if (!existing) {
+        return reply.code(404).send({ success: false, message: "Not found" });
+      }
+
+      const body = request.body ?? {};
+      if (!Array.isArray(body.learningObjectives) || !Array.isArray(body.requirements)) {
+        return reply.code(400).send({ success: false, message: "learningObjectives and requirements must be arrays" });
+      }
+      const learningObjectives = body.learningObjectives.filter((v): v is string => typeof v === "string").map((v) => v.trim()).filter(Boolean);
+      const requirements = body.requirements.filter((v): v is string => typeof v === "string").map((v) => v.trim()).filter(Boolean);
+
+      const [updated] = await request.tenantDb
+        .update(courses)
+        .set({ learningObjectives, requirements, updatedByUserId: request.user!.id, updatedAt: new Date() })
+        .where(eq(courses.id, courseId))
+        .returning();
+
+      const [data] = await toResponseRows(request.tenantDb, [updated]);
+      return reply.code(200).send({ success: true, data });
+    },
+  );
+
+  // DELETE /tenant/courses/:courseId — courses→modules is deliberately `restrict` at the DB level
+  // (this table's own original design), so a full course delete is an explicit application-level
+  // cascade rather than a database `ON DELETE CASCADE`: content items → modules → authors → reviews →
+  // every attachment belonging to any of those (plus the course's own image) → the course row itself.
+  // The whole request already runs inside one transaction (`tenant-context.ts`), so this sequence is
+  // atomic without an explicit nested transaction.
+  fastify.delete<{ Params: { courseId: string } }>(
+    "/tenant/courses/:courseId",
+    { preHandler: [requireTenantUserSession(), requirePermission("course.manage")] },
+    async (request, reply) => {
+      const { courseId } = request.params;
+      const [existing] = await request.tenantDb.select({ id: courses.id }).from(courses).where(eq(courses.id, courseId));
+      if (!existing) {
+        return reply.code(404).send({ success: false, message: "Not found" });
+      }
+
+      const itemRows = await request.tenantDb.select({ id: contentItems.id }).from(contentItems).where(eq(contentItems.courseId, courseId));
+      for (const item of itemRows) {
+        await deleteAllAttachmentsForEntity(request.tenantDb, "content_item", item.id);
+      }
+      const authorRows = await request.tenantDb.select({ id: courseAuthors.id }).from(courseAuthors).where(eq(courseAuthors.courseId, courseId));
+      for (const author of authorRows) {
+        await deleteAllAttachmentsForEntity(request.tenantDb, "course_author", author.id);
+      }
+      await deleteAllAttachmentsForEntity(request.tenantDb, "course", courseId);
+
+      await request.tenantDb.delete(contentItems).where(eq(contentItems.courseId, courseId));
+      await request.tenantDb.delete(courseModules).where(eq(courseModules.courseId, courseId));
+      await request.tenantDb.delete(courseAuthors).where(eq(courseAuthors.courseId, courseId));
+      await request.tenantDb.delete(courseReviews).where(eq(courseReviews.courseId, courseId));
+      await request.tenantDb.delete(courses).where(eq(courses.id, courseId));
+
+      return reply.code(200).send({ success: true });
     },
   );
 };

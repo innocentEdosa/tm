@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { MoreHorizontal } from "lucide-react";
 import { Button, Input, Card, Badge, PageHeader, Pagination, Drawer } from "@tm/ui";
 
@@ -297,9 +298,32 @@ export default function TeamSettingsClient({
   canAddMember: boolean;
   canManageMembers: boolean;
 }) {
-  const [allDepartments, setAllDepartments] = useState<DepartmentOption[]>([]);
+  const queryClient = useQueryClient();
+
+  const departmentsQuery = useQuery({
+    queryKey: ["team-departments", subdomain],
+    queryFn: async () => {
+      const res = await fetch(`${TENANT_API_BASE}/departments?subdomain=${encodeURIComponent(subdomain)}`, {
+        credentials: "include",
+      });
+      const json = (res.ok ? await res.json() : { data: [] }) as { data: DepartmentOption[] };
+      return json.data;
+    },
+  });
+  const allDepartments = departmentsQuery.data ?? [];
   const activeDepartmentOptions = allDepartments.filter((d) => d.status === "active");
-  const [roleOptions, setRoleOptions] = useState<RoleOption[]>([]);
+
+  const rolesQuery = useQuery({
+    queryKey: ["team-roles", subdomain],
+    queryFn: async () => {
+      const res = await fetch(`${TENANT_API_BASE}/roles?subdomain=${encodeURIComponent(subdomain)}`, {
+        credentials: "include",
+      });
+      const json = (res.ok ? await res.json() : { data: [] }) as { data: RoleOption[] };
+      return json.data;
+    },
+  });
+  const roleOptions = rolesQuery.data ?? [];
 
   // Directory (spec 012, User Story 1)
   const [search, setSearch] = useState("");
@@ -307,8 +331,6 @@ export default function TeamSettingsClient({
   const [departmentFilter, setDepartmentFilter] = useState("");
   const [includeArchived, setIncludeArchived] = useState(false);
   const [page, setPage] = useState(1);
-  const [members, setMembers] = useState<MemberRow[] | null>(null);
-  const [meta, setMeta] = useState<MemberListMeta | null>(null);
   const [listError, setListError] = useState<string | null>(null);
 
   // Profile drawer (spec 012, User Story 4) — the "member" form's custom fields are the same set
@@ -316,7 +338,22 @@ export default function TeamSettingsClient({
   // a row is clicked (research.md §4/§7 — reuses the existing, already-generic Custom Fields
   // Framework routes, no new endpoint).
   const [viewTargetId, setViewTargetId] = useState<string | null>(null);
-  const [memberFields, setMemberFields] = useState<MemberCustomField[] | null>(null);
+  // Lazily enabled — mirrors the original "fetch once, on first use" behavior instead of always
+  // fetching on mount, since a session that never opens a member drawer shouldn't pay for it.
+  const [memberFieldsRequested, setMemberFieldsRequested] = useState(false);
+
+  const memberFieldsQuery = useQuery({
+    queryKey: ["member-form-fields", subdomain],
+    queryFn: async () => {
+      const res = await fetch(`${TENANT_API_BASE}/form-fields?formKey=member&subdomain=${encodeURIComponent(subdomain)}`, {
+        credentials: "include",
+      });
+      const json = (res.ok ? await res.json() : { data: [] }) as { data: MemberCustomField[] };
+      return json.data;
+    },
+    enabled: memberFieldsRequested,
+  });
+  const memberFields = memberFieldsQuery.data ?? null;
   // Spec 013: `memberFields` now also includes the form's own system-field placeholder rows
   // (full_name/email/role_id/department_id, 0043_seed_member_system_fields.sql) so the generic
   // Forms settings preview can render the whole form — this screen renders those fixed fields
@@ -335,7 +372,6 @@ export default function TeamSettingsClient({
   const [formEmail, setFormEmail] = useState("");
   const [formRoleId, setFormRoleId] = useState("");
   const [formDepartmentId, setFormDepartmentId] = useState("");
-  const [status, setStatus] = useState<"idle" | "loading" | "error">("idle");
   const [formError, setFormError] = useState<string | null>(null);
 
   // Spec 013 US3 — the tenant's own "member" custom fields, rendered dynamically after the fixed
@@ -343,14 +379,28 @@ export default function TeamSettingsClient({
   const [formCustomFieldValues, setFormCustomFieldValues] = useState<Record<string, unknown>>({});
   const [formCustomFieldErrors, setFormCustomFieldErrors] = useState<Record<string, string>>({});
 
+  const editMemberCustomFieldValuesQuery = useQuery({
+    queryKey: ["member-custom-field-values", editingMemberId, subdomain],
+    queryFn: async () => {
+      const res = await fetch(
+        `${TENANT_API_BASE}/custom-field-values?formKey=member&entityId=${editingMemberId}&subdomain=${encodeURIComponent(subdomain)}`,
+        { credentials: "include" },
+      );
+      const json = (res.ok ? await res.json() : { data: {} }) as { data: Record<string, unknown> };
+      return json.data;
+    },
+    enabled: !!editingMemberId,
+  });
+
+  useEffect(() => {
+    if (editingMemberId && editMemberCustomFieldValuesQuery.data) {
+      setFormCustomFieldValues(editMemberCustomFieldValuesQuery.data);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editMemberCustomFieldValuesQuery.data]);
+
   function ensureMemberFieldsLoaded() {
-    if (memberFields !== null) return;
-    fetch(`${TENANT_API_BASE}/form-fields?formKey=member&subdomain=${encodeURIComponent(subdomain)}`, {
-      credentials: "include",
-    })
-      .then((res) => (res.ok ? res.json() : { data: [] }))
-      .then((json: { data: MemberCustomField[] }) => setMemberFields(json.data))
-      .catch(() => setMemberFields([]));
+    setMemberFieldsRequested(true);
   }
 
   function openCreateForm() {
@@ -379,12 +429,6 @@ export default function TeamSettingsClient({
     setFormCustomFieldErrors({});
     setFormError(null);
     ensureMemberFieldsLoaded();
-    fetch(`${TENANT_API_BASE}/custom-field-values?formKey=member&entityId=${member.id}&subdomain=${encodeURIComponent(subdomain)}`, {
-      credentials: "include",
-    })
-      .then((res) => (res.ok ? res.json() : { data: {} }))
-      .then((json: { data: Record<string, unknown> }) => setFormCustomFieldValues(json.data))
-      .catch(() => setFormCustomFieldValues({}));
     setFormOpen(true);
   }
 
@@ -476,22 +520,6 @@ export default function TeamSettingsClient({
     );
   }
 
-  useEffect(() => {
-    fetch(`${TENANT_API_BASE}/departments?subdomain=${encodeURIComponent(subdomain)}`, {
-      credentials: "include",
-    })
-      .then((res) => (res.ok ? res.json() : { data: [] }))
-      .then((json: { data: DepartmentOption[] }) => setAllDepartments(json.data))
-      .catch(() => setAllDepartments([]));
-
-    fetch(`${TENANT_API_BASE}/roles?subdomain=${encodeURIComponent(subdomain)}`, {
-      credentials: "include",
-    })
-      .then((res) => (res.ok ? res.json() : { data: [] }))
-      .then((json: { data: RoleOption[] }) => setRoleOptions(json.data))
-      .catch(() => setRoleOptions([]));
-  }, [subdomain]);
-
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -508,77 +536,83 @@ export default function TeamSettingsClient({
     setPage(1);
   }, [departmentFilter]);
 
-  function loadMembers() {
-    const params = new URLSearchParams({
-      subdomain,
-      page: String(page),
-      pageSize: String(PAGE_SIZE),
-    });
-    if (debouncedSearch) params.set("search", debouncedSearch);
-    if (canViewAll && departmentFilter) params.set("departmentId", departmentFilter);
-    if (includeArchived) params.set("includeArchived", "true");
+  const membersQuery = useQuery({
+    queryKey: ["team-members", subdomain, page, debouncedSearch, departmentFilter, includeArchived],
+    queryFn: async () => {
+      const params = new URLSearchParams({
+        subdomain,
+        page: String(page),
+        pageSize: String(PAGE_SIZE),
+      });
+      if (debouncedSearch) params.set("search", debouncedSearch);
+      if (canViewAll && departmentFilter) params.set("departmentId", departmentFilter);
+      if (includeArchived) params.set("includeArchived", "true");
 
-    fetch(`${TENANT_API_BASE}/team?${params.toString()}`, { credentials: "include" })
-      .then((res) => {
-        if (!res.ok) throw new Error("Failed to load team members");
-        return res.json();
-      })
-      .then((json: { data: MemberRow[]; meta: MemberListMeta }) => {
-        setMembers(json.data);
-        setMeta(json.meta);
-        setListError(null);
-      })
-      .catch(() => setListError("Couldn't load team members. Try again."));
-  }
-
-  async function handleToggleArchive(member: MemberRow) {
-    const res = await fetch(`${TENANT_API_BASE}/team/${member.id}?subdomain=${encodeURIComponent(subdomain)}`, {
-      method: "PATCH",
-      credentials: "include",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ archived: !member.isArchived }),
-    });
-    if (res.ok) {
-      loadMembers();
-      return;
-    }
-    const json = (await res.json().catch(() => null)) as { message?: string } | null;
-    setListError(json?.message ?? "Couldn't update this team member. Try again.");
-  }
+      const res = await fetch(`${TENANT_API_BASE}/team?${params.toString()}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load team members");
+      return (await res.json()) as { data: MemberRow[]; meta: MemberListMeta };
+    },
+  });
+  const members = membersQuery.data?.data ?? null;
+  const meta = membersQuery.data?.meta ?? null;
 
   useEffect(() => {
-    loadMembers();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [subdomain, debouncedSearch, departmentFilter, includeArchived, page]);
+    if (membersQuery.isError) setListError("Couldn't load team members. Try again.");
+  }, [membersQuery.isError]);
+
+  function reloadMembers() {
+    queryClient.invalidateQueries({ queryKey: ["team-members", subdomain] });
+  }
+
+  const toggleArchiveMutation = useMutation({
+    mutationFn: async (member: MemberRow) => {
+      const res = await fetch(`${TENANT_API_BASE}/team/${member.id}?subdomain=${encodeURIComponent(subdomain)}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ archived: !member.isArchived }),
+      });
+      if (!res.ok) {
+        const json = (await res.json().catch(() => null)) as { message?: string } | null;
+        throw new Error(json?.message ?? "Couldn't update this team member. Try again.");
+      }
+    },
+    onSuccess: () => {
+      setListError(null);
+      reloadMembers();
+    },
+    onError: (err: Error) => setListError(err.message),
+  });
+
+  function handleToggleArchive(member: MemberRow) {
+    toggleArchiveMutation.mutate(member);
+  }
+
+  const viewValuesQuery = useQuery({
+    queryKey: ["member-custom-field-values", viewTargetId, subdomain],
+    queryFn: async () => {
+      const res = await fetch(
+        `${TENANT_API_BASE}/custom-field-values?formKey=member&entityId=${viewTargetId}&subdomain=${encodeURIComponent(subdomain)}`,
+        { credentials: "include" },
+      );
+      const json = (res.ok ? await res.json() : { data: {} }) as { data: Record<string, unknown> };
+      return json.data;
+    },
+    enabled: !!viewTargetId,
+  });
+
+  useEffect(() => {
+    setViewValues(viewValuesQuery.data ?? {});
+  }, [viewValuesQuery.data]);
 
   function openProfile(memberId: string) {
     setViewTargetId(memberId);
-    setViewValues({});
     setActiveTab("profile");
-
     ensureMemberFieldsLoaded();
-
-    fetch(
-      `${TENANT_API_BASE}/custom-field-values?formKey=member&entityId=${memberId}&subdomain=${encodeURIComponent(subdomain)}`,
-      { credentials: "include" },
-    )
-      .then((res) => (res.ok ? res.json() : { data: {} }))
-      .then((json: { data: Record<string, unknown> }) => setViewValues(json.data))
-      .catch(() => setViewValues({}));
   }
 
-  async function handleSubmit(event: React.FormEvent) {
-    event.preventDefault();
-    setFormError(null);
-    if (!formRoleId) {
-      setFormError("Role is required.");
-      return;
-    }
-    if (!validateFormCustomFields()) {
-      return;
-    }
-    setStatus("loading");
-    try {
+  const saveMemberMutation = useMutation({
+    mutationFn: async () => {
       const res = editingMemberId
         ? await fetch(`${TENANT_API_BASE}/team/${editingMemberId}?subdomain=${encodeURIComponent(subdomain)}`, {
             method: "PATCH",
@@ -603,19 +637,29 @@ export default function TeamSettingsClient({
               customFieldValues: formCustomFieldValues,
             }),
           });
-      if (res.status === 201 || res.status === 200) {
-        setStatus("idle");
-        setFormOpen(false);
-        loadMembers();
-        return;
+      if (res.status !== 201 && res.status !== 200) {
+        const json = (await res.json().catch(() => null)) as { message?: string } | null;
+        throw new Error(json?.message ?? "Couldn't save this team member. Try again.");
       }
-      const json = (await res.json().catch(() => null)) as { message?: string } | null;
-      setFormError(json?.message ?? "Couldn't save this team member. Try again.");
-      setStatus("error");
-    } catch {
-      setFormError("Couldn't reach the server. Try again.");
-      setStatus("error");
+    },
+    onSuccess: () => {
+      setFormOpen(false);
+      reloadMembers();
+    },
+    onError: (err: Error) => setFormError(err.message || "Couldn't reach the server. Try again."),
+  });
+
+  function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    setFormError(null);
+    if (!formRoleId) {
+      setFormError("Role is required.");
+      return;
     }
+    if (!validateFormCustomFields()) {
+      return;
+    }
+    saveMemberMutation.mutate();
   }
 
   const descriptionLine = canViewAll
@@ -812,7 +856,7 @@ export default function TeamSettingsClient({
 
           {tenantCustomFields.map((field) => renderCustomField(field))}
 
-          <Button type="submit" isLoading={status === "loading"}>
+          <Button type="submit" isLoading={saveMemberMutation.isPending}>
             {editingMemberId ? "Save changes" : "Add team member"}
           </Button>
         </form>

@@ -1,18 +1,24 @@
 import type { FastifyPluginAsync } from "fastify";
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { requireTenantUserSession } from "../tenant-auth/require-tenant-user-session";
 import { requirePermission, requireAnyPermission } from "../permissions/require-permission";
 import { courses } from "../db/schema/courses";
 import { courseModules, contentItems } from "../db/schema/course-content";
 import { users } from "../db/schema/users";
+import { deleteAllAttachmentsForEntity } from "../attachments/tenant-attachment-routes";
 import { CONTENT_ITEM_TYPES, validateContentItemPayload, type ContentItemType } from "./content-item-payload-validation";
 
 type ModuleRow = typeof courseModules.$inferSelect;
 type ContentItemRow = typeof contentItems.$inferSelect;
 
+const STATUSES = ["draft", "published"] as const;
+type Status = (typeof STATUSES)[number];
+
 interface ModuleWriteBody {
   title?: string;
   description?: string | null;
+  /** Independent of the parent course's own draft/active/archived status. */
+  status?: Status;
 }
 
 interface ContentItemCreateBody {
@@ -27,12 +33,16 @@ interface ContentItemUpdateBody {
   title?: string;
   description?: string | null;
   payload?: Record<string, unknown>;
-  moduleId?: string;
+  /** `undefined` = unchanged; a module id = move into that module; `null` = move to standalone
+   * (course-level, no module) — an explicit key with a `null` value, not merely omitted. */
+  moduleId?: string | null;
+  /** Independent of the parent course's own status. */
+  status?: Status;
 }
 
-/** contracts/course-content-api.md. All routes operate through `request.tenantDb` (RLS-scoped) — no
- * route ever takes or trusts a client-supplied tenant id. Reuses spec 023's `course.view`/
- * `course.manage` — no new permission keys (research.md §8). */
+/** contracts/course-content-api.md, extended for standalone (module-less) lessons. All routes operate
+ * through `request.tenantDb` (RLS-scoped) — no route ever takes or trusts a client-supplied tenant id.
+ * Reuses spec 023's `course.view`/`course.manage` — no new permission keys (research.md §8). */
 const tenantCourseContentRoutes: FastifyPluginAsync = async (fastify) => {
   async function buildUserById(tenantDb: typeof fastify.db, userIds: string[]) {
     const ids = Array.from(new Set(userIds));
@@ -40,11 +50,24 @@ const tenantCourseContentRoutes: FastifyPluginAsync = async (fastify) => {
     return new Map(rows.map((u) => [u.id, u]));
   }
 
+  /** A course's top-level outline (`courses.outlineOrder`) always contains module ids and standalone
+   * content-item ids only — never a module-scoped item's id. Appending/removing here is a single
+   * atomic `array_append`/`array_remove` rather than a read-modify-write, so it can't race with a
+   * concurrent reorder. */
+  async function appendToOutlineOrder(tenantDb: typeof fastify.db, courseId: string, id: string) {
+    await tenantDb.update(courses).set({ outlineOrder: sql`array_append(${courses.outlineOrder}, ${id})` }).where(eq(courses.id, courseId));
+  }
+
+  async function removeFromOutlineOrder(tenantDb: typeof fastify.db, courseId: string, id: string) {
+    await tenantDb.update(courses).set({ outlineOrder: sql`array_remove(${courses.outlineOrder}, ${id})` }).where(eq(courses.id, courseId));
+  }
+
   function toModuleRow(m: ModuleRow, userById: Map<string, { id: string; fullName: string }>, contentItemRows?: ReturnType<typeof toContentItemRow>[]) {
     return {
       id: m.id,
       title: m.title,
       description: m.description,
+      status: m.status,
       ...(contentItemRows !== undefined ? { contentItems: contentItemRows } : {}),
       createdBy: m.createdByUserId ? (userById.get(m.createdByUserId) ?? null) : null,
       createdAt: m.createdAt,
@@ -60,6 +83,7 @@ const tenantCourseContentRoutes: FastifyPluginAsync = async (fastify) => {
       title: c.title,
       description: c.description,
       payload: c.payload,
+      status: c.status,
       createdBy: c.createdByUserId ? (userById.get(c.createdByUserId) ?? null) : null,
       createdAt: c.createdAt,
       updatedBy: c.updatedByUserId ? (userById.get(c.updatedByUserId) ?? null) : null,
@@ -68,11 +92,14 @@ const tenantCourseContentRoutes: FastifyPluginAsync = async (fastify) => {
   }
 
   async function resolveCourse(tenantDb: typeof fastify.db, courseId: string) {
-    const [course] = await tenantDb.select({ id: courses.id }).from(courses).where(eq(courses.id, courseId));
+    const [course] = await tenantDb.select({ id: courses.id, outlineOrder: courses.outlineOrder }).from(courses).where(eq(courses.id, courseId));
     return course ?? null;
   }
 
-  // GET /tenant/courses/:courseId/curriculum — spec FR-002, contracts §GET curriculum.
+  // GET /tenant/courses/:courseId/curriculum — spec FR-002, contracts §GET curriculum, extended to
+  // also return standalone (module-less) content items and the course's outlineOrder — the frontend
+  // combines `modules` + `standaloneContentItems` using `outlineOrder` to render one interleaved
+  // outline (a direct port of the mock UI's own `useMockCourseOutline`).
   fastify.get<{ Params: { courseId: string } }>(
     "/tenant/courses/:courseId/curriculum",
     { preHandler: [requireTenantUserSession(), requireAnyPermission("course.view", "course.manage")] },
@@ -92,14 +119,20 @@ const tenantCourseContentRoutes: FastifyPluginAsync = async (fastify) => {
       ]);
 
       const itemsByModule = new Map<string, ContentItemRow[]>();
+      const standaloneItems: ContentItemRow[] = [];
       for (const item of itemRows) {
+        if (item.moduleId === null) {
+          standaloneItems.push(item);
+          continue;
+        }
         const list = itemsByModule.get(item.moduleId) ?? [];
         list.push(item);
         itemsByModule.set(item.moduleId, list);
       }
 
-      const data = moduleRows.map((m) => toModuleRow(m, userById, (itemsByModule.get(m.id) ?? []).map((c) => toContentItemRow(c, userById))));
-      return { success: true, data };
+      const modules = moduleRows.map((m) => toModuleRow(m, userById, (itemsByModule.get(m.id) ?? []).map((c) => toContentItemRow(c, userById))));
+      const standaloneContentItems = standaloneItems.map((c) => toContentItemRow(c, userById));
+      return { success: true, data: { modules, standaloneContentItems, outlineOrder: course.outlineOrder } };
     },
   );
 
@@ -131,6 +164,7 @@ const tenantCourseContentRoutes: FastifyPluginAsync = async (fastify) => {
           createdByUserId: request.user!.id,
         })
         .returning();
+      await appendToOutlineOrder(request.tenantDb, courseId, created.id);
 
       const userById = await buildUserById(request.tenantDb, [request.user!.id]);
       return reply.code(201).send({ success: true, data: toModuleRow(created, userById, []) });
@@ -152,12 +186,16 @@ const tenantCourseContentRoutes: FastifyPluginAsync = async (fastify) => {
       if (body.title !== undefined && !body.title.trim()) {
         return reply.code(400).send({ success: false, message: "title cannot be blank" });
       }
+      if (body.status !== undefined && !STATUSES.includes(body.status)) {
+        return reply.code(422).send({ success: false, message: "Invalid status" });
+      }
 
       const [updated] = await request.tenantDb
         .update(courseModules)
         .set({
           ...(body.title !== undefined ? { title: body.title.trim() } : {}),
           ...(body.description !== undefined ? { description: body.description } : {}),
+          ...(body.status !== undefined ? { status: body.status } : {}),
           updatedByUserId: request.user!.id,
           updatedAt: new Date(),
         })
@@ -170,17 +208,23 @@ const tenantCourseContentRoutes: FastifyPluginAsync = async (fastify) => {
   );
 
   // DELETE /tenant/modules/:moduleId — spec FR-009, contracts §DELETE module. Content items cascade
-  // via ON DELETE CASCADE (research.md §5).
+  // via ON DELETE CASCADE (research.md §5); each one's attachments are cleaned up explicitly first
+  // (the DB cascade only deletes the content_items rows, not their file_attachments).
   fastify.delete<{ Params: { moduleId: string } }>(
     "/tenant/modules/:moduleId",
     { preHandler: [requireTenantUserSession(), requirePermission("course.manage")] },
     async (request, reply) => {
       const { moduleId } = request.params;
-      const [existing] = await request.tenantDb.select({ id: courseModules.id }).from(courseModules).where(eq(courseModules.id, moduleId));
+      const [existing] = await request.tenantDb.select().from(courseModules).where(eq(courseModules.id, moduleId));
       if (!existing) {
         return reply.code(404).send({ success: false, message: "Not found" });
       }
+      const itemRows = await request.tenantDb.select({ id: contentItems.id }).from(contentItems).where(eq(contentItems.moduleId, moduleId));
+      for (const item of itemRows) {
+        await deleteAllAttachmentsForEntity(request.tenantDb, "content_item", item.id);
+      }
       await request.tenantDb.delete(courseModules).where(eq(courseModules.id, moduleId));
+      await removeFromOutlineOrder(request.tenantDb, existing.courseId, moduleId);
       return reply.code(200).send({ success: true });
     },
   );
@@ -212,6 +256,88 @@ const tenantCourseContentRoutes: FastifyPluginAsync = async (fastify) => {
       const reordered = await request.tenantDb.select().from(courseModules).where(eq(courseModules.courseId, courseId)).orderBy(courseModules.position);
       const userById = await buildUserById(request.tenantDb, reordered.flatMap((m) => [m.createdByUserId, m.updatedByUserId]).filter((id): id is string => !!id));
       return reply.code(200).send({ success: true, data: reordered.map((m) => toModuleRow(m, userById)) });
+    },
+  );
+
+  // POST /tenant/courses/:courseId/outline/reorder — the course's top-level outline (modules and
+  // standalone lessons interleaved in one order). Same exact-set-match validation style as the
+  // module/content-item reorder endpoints above, just validated against modules ∪ standalone items
+  // instead of a single container's children.
+  fastify.post<{ Params: { courseId: string }; Body: { orderedIds?: string[] } }>(
+    "/tenant/courses/:courseId/outline/reorder",
+    { preHandler: [requireTenantUserSession(), requirePermission("course.manage")] },
+    async (request, reply) => {
+      const { courseId } = request.params;
+      const course = await resolveCourse(request.tenantDb, courseId);
+      if (!course) {
+        return reply.code(404).send({ success: false, message: "Not found" });
+      }
+
+      const submitted = request.body?.orderedIds ?? [];
+      const moduleIds = (await request.tenantDb.select({ id: courseModules.id }).from(courseModules).where(eq(courseModules.courseId, courseId))).map((m) => m.id);
+      const standaloneIds = (
+        await request.tenantDb.select({ id: contentItems.id }).from(contentItems).where(and(eq(contentItems.courseId, courseId), isNull(contentItems.moduleId)))
+      ).map((c) => c.id);
+      const currentIds = new Set([...moduleIds, ...standaloneIds]);
+      const submittedIds = new Set(submitted);
+      const exactMatch = submitted.length === currentIds.size && submitted.every((id) => currentIds.has(id)) && Array.from(currentIds).every((id) => submittedIds.has(id));
+      if (!exactMatch) {
+        return reply.code(422).send({ success: false, message: "orderedIds must exactly match the course's current module and standalone-lesson ids" });
+      }
+
+      const [updated] = await request.tenantDb.update(courses).set({ outlineOrder: submitted }).where(eq(courses.id, courseId)).returning({ outlineOrder: courses.outlineOrder });
+      return reply.code(200).send({ success: true, data: { outlineOrder: updated.outlineOrder } });
+    },
+  );
+
+  // POST /tenant/courses/:courseId/content-items — a standalone (module-less) lesson, living directly
+  // at the course's top level. Same type/payload validation as the module-scoped create below;
+  // appends its id to the course's outlineOrder instead of a module's contentItemIds.
+  fastify.post<{ Params: { courseId: string }; Body: ContentItemCreateBody }>(
+    "/tenant/courses/:courseId/content-items",
+    { preHandler: [requireTenantUserSession(), requirePermission("course.manage")] },
+    async (request, reply) => {
+      const { courseId } = request.params;
+      const body = request.body ?? {};
+      if (!body.type || !body.title?.trim()) {
+        return reply.code(400).send({ success: false, message: "type and title are required" });
+      }
+      if (!CONTENT_ITEM_TYPES.includes(body.type as ContentItemType)) {
+        return reply.code(422).send({ success: false, message: "Invalid type" });
+      }
+      const validation = validateContentItemPayload(body.type as ContentItemType, body.payload);
+      if (validation.error) {
+        return reply.code(422).send({ success: false, message: validation.error });
+      }
+
+      const course = await resolveCourse(request.tenantDb, courseId);
+      if (!course) {
+        return reply.code(404).send({ success: false, message: "Not found" });
+      }
+
+      const existingStandalone = await request.tenantDb
+        .select({ id: contentItems.id })
+        .from(contentItems)
+        .where(and(eq(contentItems.courseId, courseId), isNull(contentItems.moduleId)));
+
+      const [created] = await request.tenantDb
+        .insert(contentItems)
+        .values({
+          tenantId: request.user!.tenantId,
+          courseId,
+          moduleId: null,
+          type: body.type,
+          title: body.title.trim(),
+          description: body.description ?? null,
+          payload: body.payload ?? {},
+          position: existingStandalone.length,
+          createdByUserId: request.user!.id,
+        })
+        .returning();
+      await appendToOutlineOrder(request.tenantDb, courseId, created.id);
+
+      const userById = await buildUserById(request.tenantDb, [request.user!.id]);
+      return reply.code(201).send({ success: true, data: toContentItemRow(created, userById) });
     },
   );
 
@@ -284,18 +410,38 @@ const tenantCourseContentRoutes: FastifyPluginAsync = async (fastify) => {
           return reply.code(422).send({ success: false, message: validation.error });
         }
       }
+      if (body.status !== undefined && !STATUSES.includes(body.status)) {
+        return reply.code(422).send({ success: false, message: "Invalid status" });
+      }
 
+      // `moduleId` can move a content item between modules (existing behavior) or, since a content
+      // item can now be standalone, into/out of the course's top-level outline: `null` moves it to
+      // standalone (appending to `courses.outlineOrder`); moving out of standalone into a real module
+      // removes it from `outlineOrder` instead (a module-scoped item is never listed there).
       let newPosition: number | undefined;
+      let outlineOrderChange: "add" | "remove" | null = null;
       if (body.moduleId !== undefined && body.moduleId !== existing.moduleId) {
-        const [targetModule] = await request.tenantDb.select().from(courseModules).where(eq(courseModules.id, body.moduleId));
-        if (!targetModule) {
-          return reply.code(404).send({ success: false, message: "Target module not found" });
+        if (body.moduleId === null) {
+          const standaloneSiblings = await request.tenantDb
+            .select({ id: contentItems.id })
+            .from(contentItems)
+            .where(and(eq(contentItems.courseId, existing.courseId), isNull(contentItems.moduleId)));
+          newPosition = standaloneSiblings.length;
+          outlineOrderChange = "add";
+        } else {
+          const [targetModule] = await request.tenantDb.select().from(courseModules).where(eq(courseModules.id, body.moduleId));
+          if (!targetModule) {
+            return reply.code(404).send({ success: false, message: "Target module not found" });
+          }
+          if (targetModule.courseId !== existing.courseId) {
+            return reply.code(422).send({ success: false, message: "Cannot move a content item to a module in a different course" });
+          }
+          const targetSiblings = await request.tenantDb.select({ id: contentItems.id }).from(contentItems).where(eq(contentItems.moduleId, body.moduleId));
+          newPosition = targetSiblings.length;
+          if (existing.moduleId === null) {
+            outlineOrderChange = "remove";
+          }
         }
-        if (targetModule.courseId !== existing.courseId) {
-          return reply.code(422).send({ success: false, message: "Cannot move a content item to a module in a different course" });
-        }
-        const targetSiblings = await request.tenantDb.select({ id: contentItems.id }).from(contentItems).where(eq(contentItems.moduleId, body.moduleId));
-        newPosition = targetSiblings.length;
       }
 
       const [updated] = await request.tenantDb
@@ -305,28 +451,41 @@ const tenantCourseContentRoutes: FastifyPluginAsync = async (fastify) => {
           ...(body.description !== undefined ? { description: body.description } : {}),
           ...(body.payload !== undefined ? { payload: body.payload } : {}),
           ...(body.moduleId !== undefined && body.moduleId !== existing.moduleId ? { moduleId: body.moduleId, position: newPosition } : {}),
+          ...(body.status !== undefined ? { status: body.status } : {}),
           updatedByUserId: request.user!.id,
           updatedAt: new Date(),
         })
         .where(eq(contentItems.id, contentItemId))
         .returning();
 
+      if (outlineOrderChange === "add") {
+        await appendToOutlineOrder(request.tenantDb, existing.courseId, contentItemId);
+      } else if (outlineOrderChange === "remove") {
+        await removeFromOutlineOrder(request.tenantDb, existing.courseId, contentItemId);
+      }
+
       const userById = await buildUserById(request.tenantDb, [updated.createdByUserId, updated.updatedByUserId].filter((id): id is string => !!id));
       return reply.code(200).send({ success: true, data: toContentItemRow(updated, userById) });
     },
   );
 
-  // DELETE /tenant/content-items/:contentItemId — spec FR-009, contracts §DELETE content-item.
+  // DELETE /tenant/content-items/:contentItemId — spec FR-009, contracts §DELETE content-item. Its
+  // attachments are explicitly cleaned up first (research.md §9's `deleteAllAttachmentsForEntity`,
+  // previously unwired); a standalone item is also removed from `courses.outlineOrder`.
   fastify.delete<{ Params: { contentItemId: string } }>(
     "/tenant/content-items/:contentItemId",
     { preHandler: [requireTenantUserSession(), requirePermission("course.manage")] },
     async (request, reply) => {
       const { contentItemId } = request.params;
-      const [existing] = await request.tenantDb.select({ id: contentItems.id }).from(contentItems).where(eq(contentItems.id, contentItemId));
+      const [existing] = await request.tenantDb.select().from(contentItems).where(eq(contentItems.id, contentItemId));
       if (!existing) {
         return reply.code(404).send({ success: false, message: "Not found" });
       }
+      await deleteAllAttachmentsForEntity(request.tenantDb, "content_item", contentItemId);
       await request.tenantDb.delete(contentItems).where(eq(contentItems.id, contentItemId));
+      if (existing.moduleId === null) {
+        await removeFromOutlineOrder(request.tenantDb, existing.courseId, contentItemId);
+      }
       return reply.code(200).send({ success: true });
     },
   );

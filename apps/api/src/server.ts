@@ -1,4 +1,5 @@
-import Fastify, { FastifyInstance } from "fastify";
+import Fastify, { FastifyError, FastifyInstance } from "fastify";
+import compress from "@fastify/compress";
 import cors from "@fastify/cors";
 import postgres from "@fastify/postgres";
 import { createDb } from "./db/client";
@@ -20,6 +21,9 @@ import tenantDepartmentRoutes from "./departments/tenant-department-routes";
 import tenantFormRoutes from "./custom-fields/tenant-form-routes";
 import tenantTrainingNeedsRoutes from "./training-needs/tenant-training-needs-routes";
 import tenantCourseRoutes from "./courses/tenant-course-routes";
+import tenantCourseAuthorRoutes from "./courses/tenant-course-author-routes";
+import tenantCourseReviewRoutes from "./courses/tenant-course-review-routes";
+import tenantCourseAssignmentRoutes from "./course-assignments/tenant-course-assignment-routes";
 import tenantCourseContentRoutes from "./course-content/tenant-course-content-routes";
 import tenantAttachmentRoutes from "./attachments/tenant-attachment-routes";
 import tenantProgressRoutes from "./progress/tenant-progress-routes";
@@ -49,6 +53,10 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Fas
     credentials: true,
   });
 
+  // Compresses JSON responses (gzip/brotli per the client's Accept-Encoding) — list endpoints in
+  // particular return uncompressed JSON today, paying full transfer size on every request.
+  await server.register(compress);
+
   // Connects as the restricted `tm_app` (or equivalent) role — never DATABASE_URL, which is the
   // migration/owner role. See drizzle/README.md and apps/api/.env.example.
   await server.register(postgres, {
@@ -57,6 +65,21 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Fas
   });
 
   server.decorate("db", createDb(server));
+
+  // Defense in depth: routes are expected to catch known errors and reply with a safe message
+  // themselves (see provisioning-routes.ts for the pattern), but any error that escapes a handler
+  // uncaught (e.g. a raw Drizzle/Postgres failure) must never reach the client verbatim — that
+  // leaks query text, column names, and bound params (including user-supplied input like login
+  // emails) straight into the frontend. Fastify's own 4xx errors (bad JSON body, etc.) keep their
+  // message since those are already safe to show.
+  server.setErrorHandler<FastifyError>((error, request, reply) => {
+    request.log.error(error);
+    const statusCode = error.statusCode && error.statusCode < 500 ? error.statusCode : 500;
+    reply.code(statusCode).send({
+      success: false,
+      message: statusCode < 500 ? error.message : "Something went wrong. Please try again.",
+    });
+  });
 
   options.registerAuthStub?.(server);
 
@@ -81,6 +104,9 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Fas
   await server.register(tenantFormRoutes);
   await server.register(tenantTrainingNeedsRoutes);
   await server.register(tenantCourseRoutes);
+  await server.register(tenantCourseAuthorRoutes);
+  await server.register(tenantCourseReviewRoutes);
+  await server.register(tenantCourseAssignmentRoutes);
   await server.register(tenantCourseContentRoutes);
   await server.register(tenantAttachmentRoutes);
   await server.register(tenantProgressRoutes);

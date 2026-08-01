@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft } from "lucide-react";
 import { PageHeader, Card, Badge, Button, Input } from "@tm/ui";
 import { STATUS_LABEL, STATUS_BADGE_VARIANT, type TrainingNeedStatus } from "./status";
@@ -60,66 +61,87 @@ export default function TrainingNeedForm({
   canManageAll: boolean;
 }) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const isEditing = !!trainingNeedId;
 
-  const [loading, setLoading] = useState(isEditing);
   const [status, setStatus] = useState<TrainingNeedStatus>("draft");
   const [departmentName, setDepartmentName] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
-  const [departments, setDepartments] = useState<DepartmentOption[]>([]);
 
-  const [layoutFields, setLayoutFields] = useState<CustomFieldDefinition[]>([]);
   const [customFieldValues, setCustomFieldValues] = useState<Record<string, unknown>>({});
   const [customFieldErrors, setCustomFieldErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
+
+  const layoutFieldsQuery = useQuery({
+    queryKey: ["training-need-form-fields", subdomain],
+    queryFn: async () => {
+      const res = await fetch(
+        `${API_BASE}/form-fields?formKey=training_needs_analysis&subdomain=${encodeURIComponent(subdomain)}`,
+        { credentials: "include" },
+      );
+      const json = (res.ok ? await res.json() : { data: [] }) as { data: CustomFieldDefinition[] };
+      return json.data;
+    },
+  });
+  const layoutFields = layoutFieldsQuery.data ?? [];
+
+  const departmentsQuery = useQuery({
+    queryKey: ["training-need-departments", subdomain],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/departments?subdomain=${encodeURIComponent(subdomain)}`, {
+        credentials: "include",
+      });
+      const json = (res.ok ? await res.json() : { data: [] }) as { data: DepartmentOption[] };
+      return json.data;
+    },
+    enabled: canManageAll,
+  });
+  const departments = departmentsQuery.data ?? [];
+
+  const entryQuery = useQuery({
+    queryKey: ["training-need", trainingNeedId, subdomain],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/training-needs/${trainingNeedId}?subdomain=${encodeURIComponent(subdomain)}`, {
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("This training request couldn't be found.");
+      const json = (await res.json()) as { data: TrainingNeedRow };
+      return json.data;
+    },
+    enabled: isEditing,
+    retry: false,
+  });
+
+  const existingCustomFieldValuesQuery = useQuery({
+    queryKey: ["training-need-custom-field-values", trainingNeedId, subdomain],
+    queryFn: async () => {
+      const res = await fetch(
+        `${API_BASE}/custom-field-values?formKey=training_needs_analysis&entityId=${trainingNeedId}&subdomain=${encodeURIComponent(subdomain)}`,
+        { credentials: "include" },
+      );
+      const json = (res.ok ? await res.json() : { data: {} }) as { data: Record<string, unknown> };
+      return json.data;
+    },
+    enabled: isEditing,
+  });
+
+  const loading = isEditing && entryQuery.isPending;
 
   useEffect(() => {
-    fetch(
-      `${API_BASE}/form-fields?formKey=training_needs_analysis&subdomain=${encodeURIComponent(subdomain)}`,
-      { credentials: "include" },
-    )
-      .then((res) => (res.ok ? res.json() : { data: [] }))
-      .then((json: { data: CustomFieldDefinition[] }) => setLayoutFields(json.data))
-      .catch(() => setLayoutFields([]));
-  }, [subdomain]);
+    if (entryQuery.data) {
+      setForm({ title: entryQuery.data.title, priority: entryQuery.data.priority, departmentId: entryQuery.data.departmentId });
+      setStatus(entryQuery.data.status);
+      setDepartmentName(entryQuery.data.departmentName);
+    }
+  }, [entryQuery.data]);
 
   useEffect(() => {
-    if (!canManageAll) return;
-    fetch(`${API_BASE}/departments?subdomain=${encodeURIComponent(subdomain)}`, {
-      credentials: "include",
-    })
-      .then((res) => (res.ok ? res.json() : { data: [] }))
-      .then((json: { data: DepartmentOption[] }) => setDepartments(json.data))
-      .catch(() => setDepartments([]));
-  }, [subdomain, canManageAll]);
+    if (entryQuery.error) setFormError((entryQuery.error as Error).message);
+  }, [entryQuery.error]);
 
   useEffect(() => {
-    if (!trainingNeedId) return;
-    fetch(`${API_BASE}/training-needs/${trainingNeedId}?subdomain=${encodeURIComponent(subdomain)}`, {
-      credentials: "include",
-    })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((json: { data: TrainingNeedRow } | null) => {
-        if (!json) {
-          setFormError("This training request couldn't be found.");
-          return;
-        }
-        setForm({ title: json.data.title, priority: json.data.priority, departmentId: json.data.departmentId });
-        setStatus(json.data.status);
-        setDepartmentName(json.data.departmentName);
-      })
-      .catch(() => setFormError("Couldn't load this training request. Try again."))
-      .finally(() => setLoading(false));
-
-    fetch(
-      `${API_BASE}/custom-field-values?formKey=training_needs_analysis&entityId=${trainingNeedId}&subdomain=${encodeURIComponent(subdomain)}`,
-      { credentials: "include" },
-    )
-      .then((res) => (res.ok ? res.json() : { data: {} }))
-      .then((json: { data: Record<string, unknown> }) => setCustomFieldValues(json.data))
-      .catch(() => setCustomFieldValues({}));
-  }, [trainingNeedId, subdomain]);
+    if (existingCustomFieldValuesQuery.data) setCustomFieldValues(existingCustomFieldValuesQuery.data);
+  }, [existingCustomFieldValuesQuery.data]);
 
   const customFields = layoutFields.filter((f) => !f.isSystem);
 
@@ -142,7 +164,52 @@ export default function TrainingNeedForm({
     return Object.keys(errors).length === 0;
   }
 
-  async function handleSave(nextStatus?: "submitted") {
+  const saveMutation = useMutation({
+    mutationFn: async (nextStatus?: "submitted") => {
+      const body = {
+        title: form.title.trim(),
+        priority: form.priority,
+        ...(canManageAll && !isEditing ? { departmentId: form.departmentId } : {}),
+        ...(nextStatus ? { status: nextStatus } : {}),
+        customFieldValues,
+      };
+      const url = isEditing
+        ? `${API_BASE}/training-needs/${trainingNeedId}?subdomain=${encodeURIComponent(subdomain)}`
+        : `${API_BASE}/training-needs?subdomain=${encodeURIComponent(subdomain)}`;
+      const res = await fetch(url, {
+        method: isEditing ? "PATCH" : "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const json = (await res.json().catch(() => null)) as
+          | { message?: string; errors?: { fieldKey: string; message: string }[] }
+          | null;
+        throw { json };
+      }
+      return (await res.json().catch(() => null)) as { data?: { id: string } } | null;
+    },
+    onSuccess: (json) => {
+      queryClient.invalidateQueries({ queryKey: ["training-needs", subdomain] });
+      queryClient.invalidateQueries({ queryKey: ["training-need", trainingNeedId, subdomain] });
+      // Land on the entry's own view page (not the list) — lets you see what you just
+      // saved/created immediately, matching the new dedicated view page.
+      const savedId = trainingNeedId ?? json?.data?.id;
+      router.push(savedId ? `/learning/training-requests/${savedId}` : "/learning/training-requests");
+    },
+    onError: (err: { json?: { message?: string; errors?: { fieldKey: string; message: string }[] } | null }) => {
+      const json = err?.json;
+      if (json?.errors) {
+        setCustomFieldErrors(Object.fromEntries(json.errors.map((e) => [e.fieldKey, e.message])));
+        setFormError("Some fields need attention.");
+        return;
+      }
+      setFormError(json?.message ?? "Couldn't save this training request. Try again.");
+    },
+  });
+
+  function handleSave(nextStatus?: "submitted") {
     setFormError(null);
     if (!form.title.trim()) {
       setFormError("Title is required.");
@@ -156,42 +223,7 @@ export default function TrainingNeedForm({
       setFormError("Some fields need attention before this can be submitted.");
       return;
     }
-
-    setSaving(true);
-    const body = {
-      title: form.title.trim(),
-      priority: form.priority,
-      ...(canManageAll && !isEditing ? { departmentId: form.departmentId } : {}),
-      ...(nextStatus ? { status: nextStatus } : {}),
-      customFieldValues,
-    };
-    const url = isEditing
-      ? `${API_BASE}/training-needs/${trainingNeedId}?subdomain=${encodeURIComponent(subdomain)}`
-      : `${API_BASE}/training-needs?subdomain=${encodeURIComponent(subdomain)}`;
-    const res = await fetch(url, {
-      method: isEditing ? "PATCH" : "POST",
-      credentials: "include",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    setSaving(false);
-    if (res.ok) {
-      // Land on the entry's own view page (not the list) — lets you see what you just
-      // saved/created immediately, matching the new dedicated view page.
-      const json = (await res.json().catch(() => null)) as { data?: { id: string } } | null;
-      const savedId = trainingNeedId ?? json?.data?.id;
-      router.push(savedId ? `/learning/training-requests/${savedId}` : "/learning/training-requests");
-      return;
-    }
-    const json = (await res.json().catch(() => null)) as
-      | { message?: string; errors?: { fieldKey: string; message: string }[] }
-      | null;
-    if (json?.errors) {
-      setCustomFieldErrors(Object.fromEntries(json.errors.map((e) => [e.fieldKey, e.message])));
-      setFormError("Some fields need attention.");
-      return;
-    }
-    setFormError(json?.message ?? "Couldn't save this training request. Try again.");
+    saveMutation.mutate(nextStatus);
   }
 
   /** Whether a field actually renders a control at all — `status` never does (driven by the
@@ -417,10 +449,10 @@ export default function TrainingNeedForm({
         <div className="mt-8 flex justify-end gap-2 border-t border-border pt-6">
           {status === "draft" ? (
             <>
-              <Button variant="secondary" isLoading={saving} onClick={() => handleSave()}>
+              <Button variant="secondary" isLoading={saveMutation.isPending} onClick={() => handleSave()}>
                 Save as draft
               </Button>
-              <Button isLoading={saving} onClick={() => handleSave("submitted")}>
+              <Button isLoading={saveMutation.isPending} onClick={() => handleSave("submitted")}>
                 Submit
               </Button>
             </>
@@ -428,7 +460,7 @@ export default function TrainingNeedForm({
             // Submitted or Approved — editing never re-offers Submit (spec FR-006's "editing after
             // submission doesn't reset status" extends the same way to Approved: content can still
             // be corrected, but only the dedicated Approve action on the view page changes status).
-            <Button isLoading={saving} onClick={() => handleSave()}>
+            <Button isLoading={saveMutation.isPending} onClick={() => handleSave()}>
               Save changes
             </Button>
           )}

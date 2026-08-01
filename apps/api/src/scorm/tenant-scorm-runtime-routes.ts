@@ -10,6 +10,7 @@ import { users } from "../db/schema/users";
 import { SCORM_LESSON_STATUSES, mapLessonStatusToProgressStatus } from "./lesson-status-mapping";
 import { guessContentType } from "./mime-types";
 import * as storage from "../storage/storage";
+import { resolveTenantStorageFolder } from "../storage/tenant-storage-path";
 
 const SUSPEND_DATA_MAX_LENGTH = 4096;
 
@@ -150,7 +151,8 @@ const tenantScormRuntimeRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(404).send({ success: false, message: "Not found" });
       }
 
-      const key = `${request.user!.tenantId}/scorm/${packageId}/${relativePath}`;
+      const tenantFolder = await resolveTenantStorageFolder(request.tenantDb, request.user!.tenantId);
+      const key = `${tenantFolder}/scorm/${packageId}/${relativePath}`;
       const object = await storage.getObjectStream(key);
       if (!object) {
         return reply.code(404).send({ success: false, message: "Not found" });

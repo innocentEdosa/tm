@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button, Toggle } from "@tm/ui";
 
 const API_BASE = "/tenant-api/tenant-auth";
@@ -12,78 +13,66 @@ const METHOD_OPTIONS: { key: string; label: string; description: string }[] = [
   { key: "zoho", label: "Zoho", description: "Sign in with Zoho." },
 ];
 
-type LoadState =
-  | { status: "loading" }
-  | { status: "forbidden" }
-  | { status: "error" }
-  | { status: "ready" };
+class ForbiddenError extends Error {}
+
+async function fetchMethods(subdomain: string): Promise<string[]> {
+  const res = await fetch(`${API_BASE}/settings/methods?subdomain=${encodeURIComponent(subdomain)}`, {
+    credentials: "include",
+  });
+  if (res.status === 401 || res.status === 403) throw new ForbiddenError();
+  if (!res.ok) throw new Error("load-failed");
+  const json = (await res.json()) as { data: { methods: string[] } };
+  return json.data.methods;
+}
 
 export default function AuthenticationSettingsClient({ subdomain }: { subdomain: string }) {
-  const [state, setState] = useState<LoadState>({ status: "loading" });
+  const queryClient = useQueryClient();
+  const methodsQuery = useQuery({
+    queryKey: ["auth-settings-methods", subdomain],
+    queryFn: () => fetchMethods(subdomain),
+    retry: false,
+  });
   const [methods, setMethods] = useState<string[]>([]);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [saveError, setSaveError] = useState("");
 
   useEffect(() => {
-    let cancelled = false;
-    fetch(`${API_BASE}/settings/methods?subdomain=${encodeURIComponent(subdomain)}`, {
-      credentials: "include",
-    })
-      .then(async (res) => {
-        if (cancelled) return;
-        if (res.status === 401 || res.status === 403) {
-          setState({ status: "forbidden" });
-          return;
-        }
-        if (!res.ok) {
-          setState({ status: "error" });
-          return;
-        }
-        const json = (await res.json()) as { data: { methods: string[] } };
-        setMethods(json.data.methods);
-        setState({ status: "ready" });
-      })
-      .catch(() => {
-        if (!cancelled) setState({ status: "error" });
+    if (methodsQuery.data) setMethods(methodsQuery.data);
+  }, [methodsQuery.data]);
+
+  const saveMutation = useMutation({
+    mutationFn: async (nextMethods: string[]) => {
+      const res = await fetch(`${API_BASE}/settings/methods?subdomain=${encodeURIComponent(subdomain)}`, {
+        method: "PUT",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ methods: nextMethods }),
       });
-    return () => {
-      cancelled = true;
-    };
-  }, [subdomain]);
+      if (res.status === 409) throw new Error("At least one login method must stay enabled.");
+      if (!res.ok) throw new Error("Couldn't save changes. Try again.");
+    },
+    onSuccess: () => {
+      setSaveStatus("saved");
+      queryClient.invalidateQueries({ queryKey: ["auth-settings-methods", subdomain] });
+    },
+    onError: (err: Error) => {
+      setSaveError(err.message || "Couldn't reach the server. Try again.");
+      setSaveStatus("error");
+    },
+  });
 
   function toggleMethod(key: string, checked: boolean) {
     setMethods((prev) => (checked ? [...prev, key] : prev.filter((m) => m !== key)));
     setSaveStatus("idle");
   }
 
-  async function handleSave() {
+  function handleSave() {
     setSaveStatus("saving");
     setSaveError("");
-    try {
-      const res = await fetch(`${API_BASE}/settings/methods?subdomain=${encodeURIComponent(subdomain)}`, {
-        method: "PUT",
-        credentials: "include",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ methods }),
-      });
-      if (res.status === 409) {
-        setSaveError("At least one login method must stay enabled.");
-        setSaveStatus("error");
-        return;
-      }
-      if (!res.ok) {
-        setSaveError("Couldn't save changes. Try again.");
-        setSaveStatus("error");
-        return;
-      }
-      setSaveStatus("saved");
-    } catch {
-      setSaveError("Couldn't reach the server. Try again.");
-      setSaveStatus("error");
-    }
+    saveMutation.mutate(methods);
   }
 
-  if (state.status === "loading") {
+  if (methodsQuery.isPending) {
     return (
       <main className="mx-auto max-w-2xl px-6 py-12">
         <p className="text-sm text-slate-600">Loading…</p>
@@ -91,7 +80,7 @@ export default function AuthenticationSettingsClient({ subdomain }: { subdomain:
     );
   }
 
-  if (state.status === "forbidden") {
+  if (methodsQuery.error instanceof ForbiddenError) {
     return (
       <main className="mx-auto max-w-2xl px-6 py-12">
         <div className="banner-error">
@@ -101,7 +90,7 @@ export default function AuthenticationSettingsClient({ subdomain }: { subdomain:
     );
   }
 
-  if (state.status === "error") {
+  if (methodsQuery.error) {
     return (
       <main className="mx-auto max-w-2xl px-6 py-12">
         <div className="banner-error">Couldn&apos;t load authentication settings. Try refreshing.</div>

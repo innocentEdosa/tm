@@ -1,9 +1,16 @@
 import type { NextConfig } from "next";
+import path from "node:path";
 
 const API_ORIGIN = process.env.API_ORIGIN ?? "http://localhost:3001";
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  // Next infers the monorepo root by walking up for lockfiles; this repo also has a stray lockfile
+  // one level above the actual workspace root (pnpm-workspace.yaml lives here), which made Next guess
+  // wrong and warn on every build. Pinning it explicitly also keeps `output: "standalone"`'s file
+  // tracing (used by apps/web/Dockerfile, docker-compose.prod.yml) from over-including files outside
+  // this workspace.
+  outputFileTracingRoot: path.join(__dirname, "../.."),
   transpilePackages: ["@tm/ui"],
   // Proxies browser requests to apps/api through this app's own origin, so the Super Admin
   // session cookie (apps/api's Set-Cookie response) is set by, and only ever sent back to, this

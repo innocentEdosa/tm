@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Inter, Plus_Jakarta_Sans, JetBrains_Mono } from "next/font/google";
+import QueryProvider from "@/lib/query-provider";
 import "./globals.css";
 
 // Design system lock (2026-07-05, Desktop Shell Visual Language spec) — Inter for body/UI text,
@@ -42,7 +43,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       {/* Font variables live on <html>, not <body> — the `@theme` tokens that consume them
          (--font-sans etc., globals.css) are declared on `:root`, which can only see custom
          properties set on `:root` itself or an ancestor, never on a descendant like <body>. */}
-      <body className="antialiased">{children}</body>
+      <body className="antialiased">
+        <QueryProvider>{children}</QueryProvider>
+      </body>
     </html>
   );
 }

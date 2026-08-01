@@ -8,8 +8,9 @@
 // Spec 022 formally reverses spec 020's FR-014 — this page now edits members, roles, departments,
 // and custom field definitions, each via a Modal, matching the same pattern already proven by the
 // Add Member modal (spec 021).
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import type { ApiResponse } from "@tm/types";
@@ -221,24 +222,73 @@ const EMPTY_FIELD_FORM: FieldFormState = {
   isRequired: false,
 };
 
+class UnauthenticatedError extends Error {}
+class NotFoundError extends Error {}
+
 export default function TenantConsolePage() {
   const params = useParams<{ tenantId: string }>();
   const router = useRouter();
   const tenantId = params.tenantId;
+  const queryClient = useQueryClient();
 
   const [tab, setTab] = useState<Tab>("company");
-  const [tenant, setTenant] = useState<TenantDetail | null | "loading" | "error" | "unauthenticated">(
-    "loading",
-  );
-  const [departments, setDepartments] = useState<DepartmentRow[] | null>(null);
-  const [roles, setRoles] = useState<RoleRow[] | null>(null);
-  const [members, setMembers] = useState<MembersData | null>(null);
+
+  const tenantQuery = useQuery({
+    queryKey: ["tenant-detail", tenantId],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/tenants/${tenantId}`, { credentials: "include", cache: "no-store" });
+      if (res.status === 401) throw new UnauthenticatedError();
+      if (res.status === 404) throw new NotFoundError();
+      if (!res.ok) throw new Error("load-failed");
+      const json = (await res.json()) as ApiResponse<TenantDetail>;
+      return json.data;
+    },
+    retry: false,
+  });
+  const tenant: TenantDetail | null | "loading" | "error" | "unauthenticated" = tenantQuery.isPending
+    ? "loading"
+    : tenantQuery.error instanceof UnauthenticatedError
+      ? "unauthenticated"
+      : tenantQuery.error instanceof NotFoundError
+        ? null
+        : tenantQuery.error
+          ? "error"
+          : tenantQuery.data!;
+
+  const departmentsQuery = useQuery({
+    queryKey: ["tenant-console-departments", tenantId],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/tenants/${tenantId}/departments`, { credentials: "include", cache: "no-store" });
+      const json = (await res.json()) as ApiResponse<DepartmentRow[]>;
+      return json.data ?? [];
+    },
+  });
+  const departments = departmentsQuery.data ?? null;
+
+  const rolesQuery = useQuery({
+    queryKey: ["tenant-console-roles", tenantId],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/tenants/${tenantId}/roles`, { credentials: "include", cache: "no-store" });
+      const json = (await res.json()) as ApiResponse<RoleRow[]>;
+      return json.data ?? [];
+    },
+  });
+  const roles = rolesQuery.data ?? null;
+
+  const permissionCatalogQuery = useQuery({
+    queryKey: ["tenant-console-permission-catalog", tenantId],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/tenants/${tenantId}/permission-catalog`, { credentials: "include", cache: "no-store" });
+      const json = (await res.json()) as ApiResponse<PermissionCatalogEntry[]>;
+      return json.data ?? [];
+    },
+  });
+  const permissionCatalog = permissionCatalogQuery.data ?? null;
+
   const [memberSearch, setMemberSearch] = useState("");
   const [memberPage, setMemberPage] = useState(1);
-  const [permissionCatalog, setPermissionCatalog] = useState<PermissionCatalogEntry[] | null>(null);
 
   const [resetTarget, setResetTarget] = useState<MemberRow | null>(null);
-  const [resetSubmitting, setResetSubmitting] = useState(false);
   const [resetError, setResetError] = useState<string | null>(null);
   const [resetResult, setResetResult] = useState<{ member: MemberRow; password: string } | null>(null);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
@@ -252,7 +302,6 @@ export default function TenantConsolePage() {
     departmentId: "",
   });
   const [addMemberError, setAddMemberError] = useState<string | null>(null);
-  const [addMemberSubmitting, setAddMemberSubmitting] = useState(false);
 
   // Super Admin Edit Tenant Configuration spec (022) — Edit Member
   const [editMemberTarget, setEditMemberTarget] = useState<MemberRow | null>(null);
@@ -263,18 +312,14 @@ export default function TenantConsolePage() {
     archived: false,
   });
   const [editMemberCustomFieldValues, setEditMemberCustomFieldValues] = useState<Record<string, unknown>>({});
-  const [editMemberFields, setEditMemberFields] = useState<FieldRow[] | null>(null);
   const [editMemberError, setEditMemberError] = useState<string | null>(null);
-  const [editMemberSubmitting, setEditMemberSubmitting] = useState(false);
 
   // Spec 022 — Roles: create/edit
   const [roleModalOpen, setRoleModalOpen] = useState<{ mode: "create" | "edit"; roleId?: string } | null>(null);
   const [roleForm, setRoleForm] = useState<RoleFormState>(EMPTY_ROLE_FORM);
   const [roleFormError, setRoleFormError] = useState<string | null>(null);
-  const [roleFormSubmitting, setRoleFormSubmitting] = useState(false);
   const [deleteRoleTarget, setDeleteRoleTarget] = useState<RoleRow | null>(null);
   const [deleteRoleError, setDeleteRoleError] = useState<string | null>(null);
-  const [deleteRoleSubmitting, setDeleteRoleSubmitting] = useState(false);
 
   // Spec 022 — Departments: create/edit
   const [departmentModalOpen, setDepartmentModalOpen] = useState<{ mode: "create" | "edit"; departmentId?: string } | null>(
@@ -282,174 +327,120 @@ export default function TenantConsolePage() {
   );
   const [departmentForm, setDepartmentForm] = useState<DepartmentFormState>(EMPTY_DEPARTMENT_FORM);
   const [departmentFormError, setDepartmentFormError] = useState<string | null>(null);
-  const [departmentFormSubmitting, setDepartmentFormSubmitting] = useState(false);
 
   // Spec 022 — Forms tab: form-type selector + field list + create/edit field
-  const [formDefinitions, setFormDefinitions] = useState<FormDefinitionRow[] | null>(null);
-  const [selectedFormKey, setSelectedFormKey] = useState<string | null>(null);
-  const [formFields, setFormFields] = useState<FieldRow[] | null>(null);
   const [fieldModalOpen, setFieldModalOpen] = useState<{ mode: "create" | "edit"; fieldId?: string } | null>(null);
   const [fieldForm, setFieldForm] = useState<FieldFormState>(EMPTY_FIELD_FORM);
   const [fieldFormError, setFieldFormError] = useState<string | null>(null);
-  const [fieldFormSubmitting, setFieldFormSubmitting] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetch(`${API_BASE}/tenants/${tenantId}`, { credentials: "include", cache: "no-store" })
-      .then(async (res) => {
-        if (cancelled) return;
-        if (res.status === 401) {
-          setTenant("unauthenticated");
-          return;
-        }
-        if (res.status === 404) {
-          setTenant(null);
-          return;
-        }
-        if (!res.ok) {
-          setTenant("error");
-          return;
-        }
-        const json = (await res.json()) as ApiResponse<TenantDetail>;
-        setTenant(json.data);
-      })
-      .catch(() => {
-        if (!cancelled) setTenant("error");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [tenantId]);
 
   useEffect(() => {
     if (tenant === "unauthenticated") router.replace("/platform/login");
   }, [tenant, router]);
 
-  const loadDepartments = useCallback(() => {
-    fetch(`${API_BASE}/tenants/${tenantId}/departments`, { credentials: "include", cache: "no-store" })
-      .then((res) => res.json())
-      .then((json: ApiResponse<DepartmentRow[]>) => setDepartments(json.data ?? []));
-  }, [tenantId]);
+  function loadDepartments() {
+    queryClient.invalidateQueries({ queryKey: ["tenant-console-departments", tenantId] });
+  }
+  function loadRoles() {
+    queryClient.invalidateQueries({ queryKey: ["tenant-console-roles", tenantId] });
+  }
 
-  const loadRoles = useCallback(() => {
-    fetch(`${API_BASE}/tenants/${tenantId}/roles`, { credentials: "include", cache: "no-store" })
-      .then((res) => res.json())
-      .then((json: ApiResponse<RoleRow[]>) => setRoles(json.data ?? []));
-  }, [tenantId]);
-
-  const loadPermissionCatalog = useCallback(() => {
-    fetch(`${API_BASE}/tenants/${tenantId}/permission-catalog`, { credentials: "include", cache: "no-store" })
-      .then((res) => res.json())
-      .then((json: ApiResponse<PermissionCatalogEntry[]>) => setPermissionCatalog(json.data ?? []));
-  }, [tenantId]);
-
-  useEffect(() => {
-    if (tab !== "departments" || departments !== null) return;
-    loadDepartments();
-  }, [tab, departments, loadDepartments]);
-
-  useEffect(() => {
-    if (tab !== "roles" || roles !== null) return;
-    loadRoles();
-    if (permissionCatalog === null) loadPermissionCatalog();
-  }, [tab, roles, loadRoles, permissionCatalog, loadPermissionCatalog]);
-
-  const loadMembers = useCallback(() => {
-    const query = new URLSearchParams({
-      page: String(memberPage),
-      pageSize: String(PAGE_SIZE),
-      ...(memberSearch ? { search: memberSearch } : {}),
-    });
-    fetch(`${API_BASE}/tenants/${tenantId}/members?${query}`, {
-      credentials: "include",
-      cache: "no-store",
-    })
-      .then((res) => res.json())
-      .then((json: ApiResponse<MemberRow[]> & { meta?: MembersData["meta"] }) => {
-        setMembers({
-          members: json.data ?? [],
-          meta: json.meta ?? { page: memberPage, pageSize: PAGE_SIZE, total: 0 },
-        });
+  const membersQuery = useQuery({
+    queryKey: ["tenant-console-members", tenantId, memberPage, memberSearch],
+    queryFn: async () => {
+      const query = new URLSearchParams({
+        page: String(memberPage),
+        pageSize: String(PAGE_SIZE),
+        ...(memberSearch ? { search: memberSearch } : {}),
       });
-  }, [tenantId, memberPage, memberSearch]);
-
-  useEffect(() => {
-    if (tab !== "members") return;
-    loadMembers();
-  }, [tab, loadMembers]);
-
-  const loadFormDefinitions = useCallback(() => {
-    fetch(`${API_BASE}/tenants/${tenantId}/form-definitions`, { credentials: "include", cache: "no-store" })
-      .then((res) => res.json())
-      .then((json: ApiResponse<FormDefinitionRow[]>) => {
-        const data = json.data ?? [];
-        setFormDefinitions(data);
-        if (data.length > 0) setSelectedFormKey((current) => current ?? data[0].key);
-      });
-  }, [tenantId]);
-
-  const loadFormFields = useCallback(
-    (formKey: string) => {
-      fetch(`${API_BASE}/tenants/${tenantId}/custom-fields?formKey=${encodeURIComponent(formKey)}`, {
+      const res = await fetch(`${API_BASE}/tenants/${tenantId}/members?${query}`, {
         credentials: "include",
         cache: "no-store",
-      })
-        .then((res) => res.json())
-        .then((json: ApiResponse<FieldRow[]>) => setFormFields(json.data ?? []));
+      });
+      const json = (await res.json()) as ApiResponse<MemberRow[]> & { meta?: MembersData["meta"] };
+      return {
+        members: json.data ?? [],
+        meta: json.meta ?? { page: memberPage, pageSize: PAGE_SIZE, total: 0 },
+      };
     },
-    [tenantId],
-  );
+    // Also needed (page 1, unfiltered) by the department create/edit modal's manager pickers below,
+    // regardless of which tab is currently active — mirrors the original "fetch if not loaded yet"
+    // trigger those modals used to call directly.
+    enabled: tab === "members" || departmentModalOpen !== null,
+  });
+  const members = membersQuery.data ?? null;
 
+  function loadMembers() {
+    queryClient.invalidateQueries({ queryKey: ["tenant-console-members", tenantId] });
+  }
+
+  const formDefinitionsQuery = useQuery({
+    queryKey: ["tenant-console-form-definitions", tenantId],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/tenants/${tenantId}/form-definitions`, { credentials: "include", cache: "no-store" });
+      const json = (await res.json()) as ApiResponse<FormDefinitionRow[]>;
+      return json.data ?? [];
+    },
+    enabled: tab === "forms",
+  });
+  const formDefinitions = formDefinitionsQuery.data ?? null;
+
+  const [selectedFormKey, setSelectedFormKey] = useState<string | null>(null);
   useEffect(() => {
-    if (tab !== "forms") return;
-    if (formDefinitions === null) loadFormDefinitions();
-  }, [tab, formDefinitions, loadFormDefinitions]);
+    if (formDefinitionsQuery.data && formDefinitionsQuery.data.length > 0) {
+      setSelectedFormKey((current) => current ?? formDefinitionsQuery.data[0].key);
+    }
+  }, [formDefinitionsQuery.data]);
 
-  useEffect(() => {
-    if (tab !== "forms" || !selectedFormKey) return;
-    setFormFields(null);
-    loadFormFields(selectedFormKey);
-  }, [tab, selectedFormKey, loadFormFields]);
+  const formFieldsQuery = useQuery({
+    queryKey: ["tenant-console-form-fields", tenantId, selectedFormKey],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/tenants/${tenantId}/custom-fields?formKey=${encodeURIComponent(selectedFormKey!)}`, {
+        credentials: "include",
+        cache: "no-store",
+      });
+      const json = (await res.json()) as ApiResponse<FieldRow[]>;
+      return json.data ?? [];
+    },
+    enabled: tab === "forms" && !!selectedFormKey,
+  });
+  const formFields = formFieldsQuery.data ?? null;
 
-  async function submitReset() {
-    if (!resetTarget) return;
-    setResetSubmitting(true);
-    setResetError(null);
-    try {
+  function loadFormFields(formKey: string) {
+    queryClient.invalidateQueries({ queryKey: ["tenant-console-form-fields", tenantId, formKey] });
+  }
+
+  const resetMutation = useMutation({
+    mutationFn: async () => {
       const res = await fetch(
-        `${API_BASE}/tenants/${tenantId}/members/${resetTarget.id}/reset-password`,
+        `${API_BASE}/tenants/${tenantId}/members/${resetTarget!.id}/reset-password`,
         { method: "POST", credentials: "include" },
       );
       const json = (await res.json()) as ApiResponse<{ generatedPassword: string }>;
-      if (!res.ok || !json.success) {
-        setResetError(json.message ?? "Couldn't reset this member's password. Try again.");
-        return;
-      }
-      setResetResult({ member: resetTarget, password: json.data.generatedPassword });
+      if (!res.ok || !json.success) throw new Error(json.message ?? "Couldn't reset this member's password. Try again.");
+      return json.data.generatedPassword;
+    },
+    onSuccess: (password) => {
+      setResetResult({ member: resetTarget!, password });
       setCopyState("idle");
       setResetTarget(null);
-    } catch {
-      setResetError("Couldn't reach the server. Try again.");
-    } finally {
-      setResetSubmitting(false);
-    }
+    },
+    onError: (err: Error) => setResetError(err.message || "Couldn't reach the server. Try again."),
+  });
+
+  function submitReset() {
+    if (!resetTarget) return;
+    setResetError(null);
+    resetMutation.mutate();
   }
 
   function openAddMember() {
     setAddMemberForm({ fullName: "", email: "", roleId: "", departmentId: "" });
     setAddMemberError(null);
     setAddMemberOpen(true);
-    // The Add Member form needs the tenant's roles/departments regardless of which tab is
-    // currently active — fetch them here too if the Roles/Departments tabs haven't been visited
-    // yet (spec 021 research.md §5).
-    if (roles === null) loadRoles();
-    if (departments === null) loadDepartments();
   }
 
-  async function submitAddMember() {
-    setAddMemberSubmitting(true);
-    setAddMemberError(null);
-    try {
+  const addMemberMutation = useMutation({
+    mutationFn: async () => {
       const res = await fetch(`${API_BASE}/tenants/${tenantId}/members`, {
         method: "POST",
         credentials: "include",
@@ -462,17 +453,18 @@ export default function TenantConsolePage() {
         }),
       });
       const json = (await res.json()) as ApiResponse<{ id: string; email: string }>;
-      if (!res.ok || !json.success) {
-        setAddMemberError(json.message ?? "Couldn't add this member. Try again.");
-        return;
-      }
+      if (!res.ok || !json.success) throw new Error(json.message ?? "Couldn't add this member. Try again.");
+    },
+    onSuccess: () => {
       setAddMemberOpen(false);
       loadMembers();
-    } catch {
-      setAddMemberError("Couldn't reach the server. Try again.");
-    } finally {
-      setAddMemberSubmitting(false);
-    }
+    },
+    onError: (err: Error) => setAddMemberError(err.message || "Couldn't reach the server. Try again."),
+  });
+
+  function submitAddMember() {
+    setAddMemberError(null);
+    addMemberMutation.mutate();
   }
 
   // Spec 022 — Edit Member
@@ -484,26 +476,44 @@ export default function TenantConsolePage() {
       departmentId: member.departmentId ?? "",
       archived: member.archived,
     });
-    setEditMemberCustomFieldValues({});
-    setEditMemberFields(null);
     setEditMemberError(null);
-    if (roles === null) loadRoles();
-    if (departments === null) loadDepartments();
-    fetch(`${API_BASE}/tenants/${tenantId}/members/${member.id}/custom-field-values`, {
-      credentials: "include",
-      cache: "no-store",
-    })
-      .then((res) => res.json())
-      .then((json: ApiResponse<Record<string, unknown>>) => setEditMemberCustomFieldValues(json.data ?? {}))
-      .catch(() => {});
-    fetch(`${API_BASE}/tenants/${tenantId}/custom-fields?formKey=member`, {
-      credentials: "include",
-      cache: "no-store",
-    })
-      .then((res) => res.json())
-      .then((json: ApiResponse<FieldRow[]>) => setEditMemberFields(json.data ?? []))
-      .catch(() => setEditMemberFields([]));
   }
+
+  const editMemberCustomFieldValuesQuery = useQuery({
+    queryKey: ["tenant-console-member-custom-field-values", tenantId, editMemberTarget?.id],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/tenants/${tenantId}/members/${editMemberTarget!.id}/custom-field-values`, {
+        credentials: "include",
+        cache: "no-store",
+      });
+      const json = (await res.json()) as ApiResponse<Record<string, unknown>>;
+      return json.data ?? {};
+    },
+    enabled: !!editMemberTarget,
+  });
+
+  const editMemberFieldsQuery = useQuery({
+    queryKey: ["tenant-console-member-fields", tenantId],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/tenants/${tenantId}/custom-fields?formKey=member`, {
+        credentials: "include",
+        cache: "no-store",
+      });
+      const json = (await res.json()) as ApiResponse<FieldRow[]>;
+      return json.data ?? [];
+    },
+    enabled: !!editMemberTarget,
+  });
+
+  useEffect(() => {
+    if (!editMemberTarget) {
+      setEditMemberCustomFieldValues({});
+      return;
+    }
+    if (editMemberCustomFieldValuesQuery.data) setEditMemberCustomFieldValues(editMemberCustomFieldValuesQuery.data);
+  }, [editMemberTarget, editMemberCustomFieldValuesQuery.data]);
+
+  const editMemberFields = editMemberTarget ? (editMemberFieldsQuery.data ?? null) : null;
 
   function renderEditMemberCustomField(field: FieldRow): React.ReactNode {
     const inputId = `edit-member-custom-${field.fieldKey}`;
@@ -576,12 +586,9 @@ export default function TenantConsolePage() {
     );
   }
 
-  async function submitEditMember() {
-    if (!editMemberTarget) return;
-    setEditMemberSubmitting(true);
-    setEditMemberError(null);
-    try {
-      const res = await fetch(`${API_BASE}/tenants/${tenantId}/members/${editMemberTarget.id}`, {
+  const editMemberMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`${API_BASE}/tenants/${tenantId}/members/${editMemberTarget!.id}`, {
         method: "PATCH",
         credentials: "include",
         headers: { "content-type": "application/json" },
@@ -595,18 +602,20 @@ export default function TenantConsolePage() {
       });
       const json = (await res.json()) as ApiResponse<unknown> & { errors?: { fieldKey: string; message: string }[] };
       if (!res.ok || !json.success) {
-        const message =
-          json.message ?? json.errors?.map((e) => e.message).join(", ") ?? "Couldn't save this member. Try again.";
-        setEditMemberError(message);
-        return;
+        throw new Error(json.message ?? json.errors?.map((e) => e.message).join(", ") ?? "Couldn't save this member. Try again.");
       }
+    },
+    onSuccess: () => {
       setEditMemberTarget(null);
       loadMembers();
-    } catch {
-      setEditMemberError("Couldn't reach the server. Try again.");
-    } finally {
-      setEditMemberSubmitting(false);
-    }
+    },
+    onError: (err: Error) => setEditMemberError(err.message || "Couldn't reach the server. Try again."),
+  });
+
+  function submitEditMember() {
+    if (!editMemberTarget) return;
+    setEditMemberError(null);
+    editMemberMutation.mutate();
   }
 
   // Spec 022 — Roles: create/edit/delete
@@ -614,71 +623,69 @@ export default function TenantConsolePage() {
     setRoleForm(EMPTY_ROLE_FORM);
     setRoleFormError(null);
     setRoleModalOpen({ mode: "create" });
-    if (permissionCatalog === null) loadPermissionCatalog();
   }
 
   function openEditRole(role: RoleRow) {
     setRoleForm({ name: role.name, description: role.description ?? "", permissionKeys: new Set(role.permissionKeys) });
     setRoleFormError(null);
     setRoleModalOpen({ mode: "edit", roleId: role.id });
-    if (permissionCatalog === null) loadPermissionCatalog();
   }
 
-  async function submitRoleForm() {
-    if (!roleModalOpen) return;
-    setRoleFormSubmitting(true);
-    setRoleFormError(null);
-    try {
+  const roleFormMutation = useMutation({
+    mutationFn: async () => {
       const payload = {
         name: roleForm.name.trim(),
         description: roleForm.description.trim() || undefined,
         permissionKeys: Array.from(roleForm.permissionKeys),
       };
       const url =
-        roleModalOpen.mode === "create"
+        roleModalOpen!.mode === "create"
           ? `${API_BASE}/tenants/${tenantId}/roles`
-          : `${API_BASE}/tenants/${tenantId}/roles/${roleModalOpen.roleId}`;
+          : `${API_BASE}/tenants/${tenantId}/roles/${roleModalOpen!.roleId}`;
       const res = await fetch(url, {
-        method: roleModalOpen.mode === "create" ? "POST" : "PATCH",
+        method: roleModalOpen!.mode === "create" ? "POST" : "PATCH",
         credentials: "include",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(payload),
       });
       const json = (await res.json()) as ApiResponse<unknown>;
-      if (!res.ok || !json.success) {
-        setRoleFormError(json.message ?? "Couldn't save this role. Try again.");
-        return;
-      }
+      if (!res.ok || !json.success) throw new Error(json.message ?? "Couldn't save this role. Try again.");
+    },
+    onSuccess: () => {
       setRoleModalOpen(null);
       loadRoles();
-    } catch {
-      setRoleFormError("Couldn't reach the server. Try again.");
-    } finally {
-      setRoleFormSubmitting(false);
-    }
+    },
+    onError: (err: Error) => setRoleFormError(err.message || "Couldn't reach the server. Try again."),
+  });
+
+  function submitRoleForm() {
+    if (!roleModalOpen) return;
+    setRoleFormError(null);
+    roleFormMutation.mutate();
   }
 
-  async function submitDeleteRole() {
-    if (!deleteRoleTarget) return;
-    setDeleteRoleSubmitting(true);
-    setDeleteRoleError(null);
-    try {
-      const res = await fetch(`${API_BASE}/tenants/${tenantId}/roles/${deleteRoleTarget.id}`, {
+  const deleteRoleMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`${API_BASE}/tenants/${tenantId}/roles/${deleteRoleTarget!.id}`, {
         method: "DELETE",
         credentials: "include",
       });
       if (res.status !== 204) {
         const json = (await res.json().catch(() => ({}))) as ApiResponse<unknown>;
-        setDeleteRoleError(json.message ?? "Couldn't delete this role. Try again.");
-        return;
+        throw new Error(json.message ?? "Couldn't delete this role. Try again.");
       }
+    },
+    onSuccess: () => {
       setDeleteRoleTarget(null);
       loadRoles();
-    } catch {
-      setDeleteRoleError("Couldn't reach the server. Try again.");
-    } finally {
-      setDeleteRoleSubmitting(false);
-    }
+    },
+    onError: (err: Error) => setDeleteRoleError(err.message || "Couldn't reach the server. Try again."),
+  });
+
+  function submitDeleteRole() {
+    if (!deleteRoleTarget) return;
+    setDeleteRoleError(null);
+    deleteRoleMutation.mutate();
   }
 
   function togglePermission(key: string) {
@@ -695,7 +702,6 @@ export default function TenantConsolePage() {
     setDepartmentForm(EMPTY_DEPARTMENT_FORM);
     setDepartmentFormError(null);
     setDepartmentModalOpen({ mode: "create" });
-    if (members === null) loadMembers();
   }
 
   function openEditDepartment(dept: DepartmentRow) {
@@ -709,14 +715,10 @@ export default function TenantConsolePage() {
     });
     setDepartmentFormError(null);
     setDepartmentModalOpen({ mode: "edit", departmentId: dept.id });
-    if (members === null) loadMembers();
   }
 
-  async function submitDepartmentForm() {
-    if (!departmentModalOpen) return;
-    setDepartmentFormSubmitting(true);
-    setDepartmentFormError(null);
-    try {
+  const departmentFormMutation = useMutation({
+    mutationFn: async () => {
       const payload = {
         name: departmentForm.name.trim(),
         description: departmentForm.description.trim() || undefined,
@@ -726,27 +728,29 @@ export default function TenantConsolePage() {
         assistantManagerId: departmentForm.assistantManagerId || null,
       };
       const url =
-        departmentModalOpen.mode === "create"
+        departmentModalOpen!.mode === "create"
           ? `${API_BASE}/tenants/${tenantId}/departments`
-          : `${API_BASE}/tenants/${tenantId}/departments/${departmentModalOpen.departmentId}`;
+          : `${API_BASE}/tenants/${tenantId}/departments/${departmentModalOpen!.departmentId}`;
       const res = await fetch(url, {
-        method: departmentModalOpen.mode === "create" ? "POST" : "PATCH",
+        method: departmentModalOpen!.mode === "create" ? "POST" : "PATCH",
         credentials: "include",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(payload),
       });
       const json = (await res.json()) as ApiResponse<unknown>;
-      if (!res.ok || !json.success) {
-        setDepartmentFormError(json.message ?? "Couldn't save this department. Try again.");
-        return;
-      }
+      if (!res.ok || !json.success) throw new Error(json.message ?? "Couldn't save this department. Try again.");
+    },
+    onSuccess: () => {
       setDepartmentModalOpen(null);
       loadDepartments();
-    } catch {
-      setDepartmentFormError("Couldn't reach the server. Try again.");
-    } finally {
-      setDepartmentFormSubmitting(false);
-    }
+    },
+    onError: (err: Error) => setDepartmentFormError(err.message || "Couldn't reach the server. Try again."),
+  });
+
+  function submitDepartmentForm() {
+    if (!departmentModalOpen) return;
+    setDepartmentFormError(null);
+    departmentFormMutation.mutate();
   }
 
   // Spec 022 — Forms tab: create/edit/archive field
@@ -768,21 +772,18 @@ export default function TenantConsolePage() {
     setFieldModalOpen({ mode: "edit", fieldId: field.id });
   }
 
-  async function submitFieldForm() {
-    if (!fieldModalOpen || !selectedFormKey) return;
-    setFieldFormSubmitting(true);
-    setFieldFormError(null);
-    try {
+  const fieldFormMutation = useMutation({
+    mutationFn: async () => {
       const options =
         fieldForm.fieldType === "select" || fieldForm.fieldType === "multiselect"
           ? fieldForm.options.split(",").map((o) => o.trim()).filter(Boolean)
           : undefined;
       const url =
-        fieldModalOpen.mode === "create"
+        fieldModalOpen!.mode === "create"
           ? `${API_BASE}/tenants/${tenantId}/custom-fields`
-          : `${API_BASE}/tenants/${tenantId}/custom-fields/${fieldModalOpen.fieldId}`;
+          : `${API_BASE}/tenants/${tenantId}/custom-fields/${fieldModalOpen!.fieldId}`;
       const payload =
-        fieldModalOpen.mode === "create"
+        fieldModalOpen!.mode === "create"
           ? {
               formKey: selectedFormKey,
               label: fieldForm.label.trim(),
@@ -798,34 +799,44 @@ export default function TenantConsolePage() {
               isRequired: fieldForm.isRequired,
             };
       const res = await fetch(url, {
-        method: fieldModalOpen.mode === "create" ? "POST" : "PATCH",
+        method: fieldModalOpen!.mode === "create" ? "POST" : "PATCH",
         credentials: "include",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(payload),
       });
       const json = (await res.json()) as ApiResponse<unknown>;
-      if (!res.ok || !json.success) {
-        setFieldFormError(json.message ?? "Couldn't save this field. Try again.");
-        return;
-      }
+      if (!res.ok || !json.success) throw new Error(json.message ?? "Couldn't save this field. Try again.");
+    },
+    onSuccess: () => {
       setFieldModalOpen(null);
-      loadFormFields(selectedFormKey);
-    } catch {
-      setFieldFormError("Couldn't reach the server. Try again.");
-    } finally {
-      setFieldFormSubmitting(false);
-    }
+      loadFormFields(selectedFormKey!);
+    },
+    onError: (err: Error) => setFieldFormError(err.message || "Couldn't reach the server. Try again."),
+  });
+
+  function submitFieldForm() {
+    if (!fieldModalOpen || !selectedFormKey) return;
+    setFieldFormError(null);
+    fieldFormMutation.mutate();
   }
 
-  async function archiveField(field: FieldRow) {
+  const archiveFieldMutation = useMutation({
+    mutationFn: async (field: FieldRow) => {
+      await fetch(`${API_BASE}/tenants/${tenantId}/custom-fields/${field.id}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ archived: true }),
+      });
+    },
+    onSuccess: () => {
+      if (selectedFormKey) loadFormFields(selectedFormKey);
+    },
+  });
+
+  function archiveField(field: FieldRow) {
     if (!selectedFormKey) return;
-    await fetch(`${API_BASE}/tenants/${tenantId}/custom-fields/${field.id}`, {
-      method: "PATCH",
-      credentials: "include",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ archived: true }),
-    });
-    loadFormFields(selectedFormKey);
+    archiveFieldMutation.mutate(field);
   }
 
   if (tenant === "loading" || tenant === "unauthenticated") {
@@ -1241,11 +1252,11 @@ export default function TenantConsolePage() {
                 type="button"
                 variant="outline"
                 onClick={() => setResetTarget(null)}
-                disabled={resetSubmitting}
+                disabled={resetMutation.isPending}
               >
                 Cancel
               </Button>
-              <Button type="button" onClick={submitReset} isLoading={resetSubmitting}>
+              <Button type="button" onClick={submitReset} isLoading={resetMutation.isPending}>
                 Reset Password
               </Button>
             </div>
@@ -1363,14 +1374,14 @@ export default function TenantConsolePage() {
               type="button"
               variant="outline"
               onClick={() => setAddMemberOpen(false)}
-              disabled={addMemberSubmitting}
+              disabled={addMemberMutation.isPending}
             >
               Cancel
             </Button>
             <Button
               type="button"
               onClick={submitAddMember}
-              isLoading={addMemberSubmitting}
+              isLoading={addMemberMutation.isPending}
               disabled={
                 !addMemberForm.fullName.trim() ||
                 !addMemberForm.email.trim() ||
@@ -1458,11 +1469,11 @@ export default function TenantConsolePage() {
                 type="button"
                 variant="outline"
                 onClick={() => setEditMemberTarget(null)}
-                disabled={editMemberSubmitting}
+                disabled={editMemberMutation.isPending}
               >
                 Cancel
               </Button>
-              <Button type="button" onClick={submitEditMember} isLoading={editMemberSubmitting}>
+              <Button type="button" onClick={submitEditMember} isLoading={editMemberMutation.isPending}>
                 Save
               </Button>
             </div>
@@ -1533,14 +1544,14 @@ export default function TenantConsolePage() {
               type="button"
               variant="outline"
               onClick={() => setRoleModalOpen(null)}
-              disabled={roleFormSubmitting}
+              disabled={roleFormMutation.isPending}
             >
               Cancel
             </Button>
             <Button
               type="button"
               onClick={submitRoleForm}
-              isLoading={roleFormSubmitting}
+              isLoading={roleFormMutation.isPending}
               disabled={!roleForm.name.trim()}
             >
               Save
@@ -1567,11 +1578,11 @@ export default function TenantConsolePage() {
                 type="button"
                 variant="outline"
                 onClick={() => setDeleteRoleTarget(null)}
-                disabled={deleteRoleSubmitting}
+                disabled={deleteRoleMutation.isPending}
               >
                 Cancel
               </Button>
-              <Button type="button" onClick={submitDeleteRole} isLoading={deleteRoleSubmitting}>
+              <Button type="button" onClick={submitDeleteRole} isLoading={deleteRoleMutation.isPending}>
                 Delete
               </Button>
             </div>
@@ -1688,14 +1699,14 @@ export default function TenantConsolePage() {
               type="button"
               variant="outline"
               onClick={() => setDepartmentModalOpen(null)}
-              disabled={departmentFormSubmitting}
+              disabled={departmentFormMutation.isPending}
             >
               Cancel
             </Button>
             <Button
               type="button"
               onClick={submitDepartmentForm}
-              isLoading={departmentFormSubmitting}
+              isLoading={departmentFormMutation.isPending}
               disabled={!departmentForm.name.trim()}
             >
               Save
@@ -1780,14 +1791,14 @@ export default function TenantConsolePage() {
               type="button"
               variant="outline"
               onClick={() => setFieldModalOpen(null)}
-              disabled={fieldFormSubmitting}
+              disabled={fieldFormMutation.isPending}
             >
               Cancel
             </Button>
             <Button
               type="button"
               onClick={submitFieldForm}
-              isLoading={fieldFormSubmitting}
+              isLoading={fieldFormMutation.isPending}
               disabled={!fieldForm.label.trim()}
             >
               Save

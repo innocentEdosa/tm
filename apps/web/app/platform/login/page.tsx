@@ -42,8 +42,10 @@ export default function SuperAdminLoginPage() {
       const json = (await res.json().catch(() => null)) as { message?: string } | null;
       if (res.status === 429) {
         setErrorMessage(json?.message ?? "Too many failed attempts. Try again later.");
-      } else {
+      } else if (res.status === 401) {
         setErrorMessage(json?.message ?? "Invalid email or password.");
+      } else {
+        setErrorMessage(json?.message ?? "Something went wrong. Try again.");
       }
       setStatus("error");
     } catch {

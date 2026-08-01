@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import { eq, inArray, isNotNull, or, sql } from "drizzle-orm";
 import { requireTenantUserSession } from "../tenant-auth/require-tenant-user-session";
-import { requirePermission, requireAnyPermission } from "../permissions/require-permission";
+import { requireAnyPermission } from "../permissions/require-permission";
 import { departments } from "../db/schema/departments";
 import { users } from "../db/schema/users";
 import {
@@ -26,9 +26,11 @@ type DepartmentRow = typeof departments.$inferSelect;
  * (RLS-scoped) — no route ever takes or trusts a client-supplied tenant id. */
 const tenantDepartmentRoutes: FastifyPluginAsync = async (fastify) => {
   // GET /tenant/departments — spec FR-001/FR-014/FR-015, contracts/department-management-api.md.
+  // Also readable by `course.manage` (Course Assignment Settings) — it needs the department list to
+  // populate the course-assignment picker, not to manage departments themselves.
   fastify.get<{ Querystring: { search?: string } }>(
     "/tenant/departments",
-    { preHandler: [requireTenantUserSession(), requirePermission("department.view")] },
+    { preHandler: [requireTenantUserSession(), requireAnyPermission("department.view", "course.manage")] },
     async (request) => {
       const all = await request.tenantDb.select().from(departments);
 
@@ -92,13 +94,14 @@ const tenantDepartmentRoutes: FastifyPluginAsync = async (fastify) => {
   // GET /tenant/users?search= — research.md §10. Exists solely to back the Manager/Assistant
   // Manager pickers, needed whenever creating or editing a department — gated by the legacy
   // superset or either of the two granular keys that actually use it (Granular Permissions
-  // addendum), not a general user-directory permission.
+  // addendum), not a general user-directory permission. Also readable by `course.manage`, which
+  // needs the same search to back the course-assignment picker's user target.
   fastify.get<{ Querystring: { search?: string } }>(
     "/tenant/users",
     {
       preHandler: [
         requireTenantUserSession(),
-        requireAnyPermission("department.manage", "department.create", "department.edit"),
+        requireAnyPermission("department.manage", "department.create", "department.edit", "course.manage"),
       ],
     },
     async (request, reply) => {

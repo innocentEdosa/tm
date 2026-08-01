@@ -180,7 +180,7 @@ const tenantProgressRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const rows = await request.tenantDb
-        .select({ progress: learnerContentProgress, learner: { id: users.id, fullName: users.fullName } })
+        .select({ progress: learnerContentProgress, learner: { id: users.id, fullName: users.fullName, email: users.email } })
         .from(learnerContentProgress)
         .innerJoin(contentItems, eq(contentItems.id, learnerContentProgress.contentItemId))
         .innerJoin(courseModules, eq(courseModules.id, contentItems.moduleId))

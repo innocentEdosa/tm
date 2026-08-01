@@ -5,9 +5,10 @@
 // convention (admin/permissions/page.tsx, provisioning/new/page.tsx) rather than the dashboard
 // shell's server-page/client-component split — the platform shell's layout already gates on a
 // binary Super Admin session with no per-page permission variance to resolve server-side.
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { MoreHorizontal } from "lucide-react";
 import type { ApiResponse } from "@tm/types";
@@ -59,11 +60,7 @@ interface ListData {
   meta: { page: number; pageSize: number; total: number };
 }
 
-type LoadState =
-  | { status: "loading" }
-  | { status: "unauthenticated" }
-  | { status: "error" }
-  | { status: "ready"; data: ListData };
+class UnauthenticatedError extends Error {}
 
 function statusBadgeVariant(status: string): "success" | "accent" | "neutral" | "warning" {
   if (status === "active") return "success";
@@ -73,27 +70,46 @@ function statusBadgeVariant(status: string): "success" | "accent" | "neutral" | 
 
 export default function TenantsPage() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
   // Super Admin Tenant Console spec — server-side search, matching team-settings-client.tsx's own
   // debounce convention (300ms), since the Tenants list grows past a glance-able size once dozens
   // of tenants exist.
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [state, setState] = useState<LoadState>({ status: "loading" });
-  const [reloadToken, setReloadToken] = useState(0);
   const [editingTenant, setEditingTenant] = useState<TenantRow | null>(null);
   const [editForm, setEditForm] = useState<EditForm | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
-  const [editSubmitting, setEditSubmitting] = useState(false);
   const [actioningId, setActioningId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [confirmArchive, setConfirmArchive] = useState<TenantRow | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<TenantRow | null>(null);
   const [deleteConfirmInput, setDeleteConfirmInput] = useState("");
   const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [deleteSubmitting, setDeleteSubmitting] = useState(false);
 
-  const reload = useCallback(() => setReloadToken((t) => t + 1), []);
+  const listQuery = useQuery({
+    queryKey: ["tenants", page, debouncedSearch],
+    queryFn: async () => {
+      const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE) });
+      if (debouncedSearch) params.set("search", debouncedSearch);
+      const res = await fetch(`${API_BASE}/tenants?${params}`, {
+        credentials: "include",
+        cache: "no-store",
+      });
+      if (res.status === 401) throw new UnauthenticatedError();
+      if (!res.ok) throw new Error("load-failed");
+      const json = (await res.json()) as ApiResponse<ListData>;
+      return json.data;
+    },
+    retry: false,
+  });
+  const isUnauthenticated = listQuery.error instanceof UnauthenticatedError;
+  const isLoadError = listQuery.isError && !isUnauthenticated;
+  const isLoading = listQuery.isPending;
+
+  function reload() {
+    queryClient.invalidateQueries({ queryKey: ["tenants"] });
+  }
 
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
@@ -119,29 +135,28 @@ export default function TenantsPage() {
     setDeleteError(null);
   }
 
-  async function submitDelete() {
-    if (!confirmDelete) return;
-    setDeleteSubmitting(true);
-    setDeleteError(null);
-    try {
-      const res = await fetch(`${API_BASE}/tenants/${confirmDelete.id}/delete`, {
+  const deleteMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`${API_BASE}/tenants/${confirmDelete!.id}/delete`, {
         method: "POST",
         credentials: "include",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ confirmTenantName: deleteConfirmInput }),
       });
       const json = (await res.json()) as ApiResponse<unknown>;
-      if (!res.ok || !json.success) {
-        setDeleteError(json.message ?? "Couldn't delete this tenant. Try again.");
-        return;
-      }
+      if (!res.ok || !json.success) throw new Error(json.message ?? "Couldn't delete this tenant. Try again.");
+    },
+    onSuccess: () => {
       closeDeleteConfirm();
       reload();
-    } catch {
-      setDeleteError("Couldn't reach the server. Try again.");
-    } finally {
-      setDeleteSubmitting(false);
-    }
+    },
+    onError: (err: Error) => setDeleteError(err.message || "Couldn't reach the server. Try again."),
+  });
+
+  function submitDelete() {
+    if (!confirmDelete) return;
+    setDeleteError(null);
+    deleteMutation.mutate();
   }
 
   function openEdit(tenant: TenantRow) {
@@ -156,104 +171,67 @@ export default function TenantsPage() {
     setEditError(null);
   }
 
-  async function submitEdit() {
-    if (!editingTenant || !editForm) return;
-    setEditSubmitting(true);
-    setEditError(null);
-
-    const payload: Record<string, unknown> = {
-      name: editForm.name.trim(),
-      industry: editForm.industry.trim() || undefined,
-      primaryContact: {
-        name: editForm.contactName.trim(),
-        email: editForm.contactEmail.trim(),
-        phone: editForm.contactPhone.trim() || undefined,
-      },
-    };
-    if (editForm.subdomain.trim() !== editingTenant.subdomain) {
-      payload.subdomain = editForm.subdomain.trim();
-    }
-
-    try {
-      const res = await fetch(`${API_BASE}/tenants/${editingTenant.id}`, {
+  const editMutation = useMutation({
+    mutationFn: async () => {
+      const payload: Record<string, unknown> = {
+        name: editForm!.name.trim(),
+        industry: editForm!.industry.trim() || undefined,
+        primaryContact: {
+          name: editForm!.contactName.trim(),
+          email: editForm!.contactEmail.trim(),
+          phone: editForm!.contactPhone.trim() || undefined,
+        },
+      };
+      if (editForm!.subdomain.trim() !== editingTenant!.subdomain) {
+        payload.subdomain = editForm!.subdomain.trim();
+      }
+      const res = await fetch(`${API_BASE}/tenants/${editingTenant!.id}`, {
         method: "PATCH",
         credentials: "include",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(payload),
       });
       const json = (await res.json()) as ApiResponse<unknown>;
-      if (!res.ok || !json.success) {
-        setEditError(json.message ?? "Couldn't save changes. Try again.");
-        return;
-      }
+      if (!res.ok || !json.success) throw new Error(json.message ?? "Couldn't save changes. Try again.");
+    },
+    onSuccess: () => {
       closeEdit();
       reload();
-    } catch {
-      setEditError("Couldn't reach the server. Try again.");
-    } finally {
-      setEditSubmitting(false);
-    }
+    },
+    onError: (err: Error) => setEditError(err.message || "Couldn't reach the server. Try again."),
+  });
+
+  function submitEdit() {
+    if (!editingTenant || !editForm) return;
+    setEditError(null);
+    editMutation.mutate();
   }
 
-  async function runAction(tenantId: string, action: "archive" | "reactivate" | "downgrade" | "recover") {
-    setActioningId(tenantId);
-    setActionError(null);
-    try {
+  const actionMutation = useMutation({
+    mutationFn: async ({ tenantId, action }: { tenantId: string; action: "archive" | "reactivate" | "downgrade" | "recover" }) => {
       const res = await fetch(`${API_BASE}/tenants/${tenantId}/${action}`, {
         method: "POST",
         credentials: "include",
       });
       const json = (await res.json()) as ApiResponse<unknown>;
-      if (!res.ok || !json.success) {
-        setActionError(json.message ?? `Couldn't ${action} this tenant. Try again.`);
-        return;
-      }
-      reload();
-    } catch {
-      setActionError("Couldn't reach the server. Try again.");
-    } finally {
-      setActioningId(null);
-    }
+      if (!res.ok || !json.success) throw new Error(json.message ?? `Couldn't ${action} this tenant. Try again.`);
+    },
+    onSuccess: () => reload(),
+    onError: (err: Error) => setActionError(err.message || "Couldn't reach the server. Try again."),
+    onSettled: () => setActioningId(null),
+  });
+
+  function runAction(tenantId: string, action: "archive" | "reactivate" | "downgrade" | "recover") {
+    setActioningId(tenantId);
+    setActionError(null);
+    actionMutation.mutate({ tenantId, action });
   }
 
   useEffect(() => {
-    let cancelled = false;
-    setState((prev) => (prev.status === "ready" ? prev : { status: "loading" }));
-
-    const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE) });
-    if (debouncedSearch) params.set("search", debouncedSearch);
-
-    fetch(`${API_BASE}/tenants?${params}`, {
-      credentials: "include",
-      cache: "no-store",
-    })
-      .then(async (res) => {
-        if (cancelled) return;
-        if (res.status === 401) {
-          setState({ status: "unauthenticated" });
-          return;
-        }
-        if (!res.ok) {
-          setState({ status: "error" });
-          return;
-        }
-        const json = (await res.json()) as ApiResponse<ListData>;
-        setState({ status: "ready", data: json.data });
-      })
-      .catch(() => {
-        if (!cancelled) setState({ status: "error" });
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [page, debouncedSearch, reloadToken]);
-
-  useEffect(() => {
-    if (state.status === "unauthenticated") {
+    if (isUnauthenticated) {
       router.replace("/platform/login");
     }
-  }, [state.status, router]);
+  }, [isUnauthenticated, router]);
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -276,11 +254,11 @@ export default function TenantsPage() {
         onChange={(e) => setSearch(e.target.value)}
       />
 
-      {(state.status === "loading" || state.status === "unauthenticated") && (
+      {(isLoading || isUnauthenticated) && (
         <p className="mt-8 text-sm text-slate-600">Loading…</p>
       )}
 
-      {state.status === "error" && (
+      {isLoadError && (
         <div role="alert" className="banner-error mt-8">
           Couldn&apos;t load tenants. Try again later.
         </div>
@@ -292,9 +270,9 @@ export default function TenantsPage() {
         </div>
       )}
 
-      {state.status === "ready" && (
+      {listQuery.data && (
         <>
-          {state.data.tenants.length === 0 ? (
+          {listQuery.data.tenants.length === 0 ? (
             <p className="mt-8 text-sm text-slate-600">
               {debouncedSearch ? "No tenants match your search." : "No tenants yet."}
             </p>
@@ -324,7 +302,7 @@ export default function TenantsPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {state.data.tenants.map((tenant) => (
+                  {listQuery.data.tenants.map((tenant) => (
                     <tr key={tenant.id}>
                       <td className="px-4 py-3 font-medium text-text">{tenant.name}</td>
                       <td className="px-4 py-3 text-slate-600">{tenant.subdomain}</td>
@@ -364,9 +342,9 @@ export default function TenantsPage() {
 
           <Pagination
             className="mt-4"
-            page={state.data.meta.page}
-            pageSize={state.data.meta.pageSize}
-            total={state.data.meta.total}
+            page={listQuery.data.meta.page}
+            pageSize={listQuery.data.meta.pageSize}
+            total={listQuery.data.meta.total}
             onPageChange={setPage}
           />
         </>
@@ -448,10 +426,10 @@ export default function TenantsPage() {
               </div>
             </div>
             <div className="flex justify-end gap-2 pt-2">
-              <Button type="button" variant="outline" onClick={closeEdit} disabled={editSubmitting}>
+              <Button type="button" variant="outline" onClick={closeEdit} disabled={editMutation.isPending}>
                 Cancel
               </Button>
-              <Button type="button" onClick={submitEdit} isLoading={editSubmitting}>
+              <Button type="button" onClick={submitEdit} isLoading={editMutation.isPending}>
                 Save changes
               </Button>
             </div>
@@ -511,13 +489,13 @@ export default function TenantsPage() {
               />
             </div>
             <div className="flex justify-end gap-2">
-              <Button type="button" variant="outline" onClick={closeDeleteConfirm} disabled={deleteSubmitting}>
+              <Button type="button" variant="outline" onClick={closeDeleteConfirm} disabled={deleteMutation.isPending}>
                 Cancel
               </Button>
               <Button
                 type="button"
                 onClick={submitDelete}
-                isLoading={deleteSubmitting}
+                isLoading={deleteMutation.isPending}
                 disabled={deleteConfirmInput !== confirmDelete.name}
               >
                 Delete

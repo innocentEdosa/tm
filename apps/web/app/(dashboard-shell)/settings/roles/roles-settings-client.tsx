@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { MoreHorizontal, Plus, ChevronDown } from "lucide-react";
 import { PageHeader, Card, Badge, Modal, Drawer, Button, Input } from "@tm/ui";
 
@@ -31,6 +32,8 @@ interface RoleFormState {
 }
 
 const EMPTY_FORM: RoleFormState = { name: "", description: "", permissionKeys: new Set() };
+
+class ForbiddenError extends Error {}
 
 const ROW_ACTIONS_MENU_WIDTH = 160;
 const ROW_ACTIONS_MENU_HEIGHT = 84;
@@ -120,15 +123,12 @@ function RowActionsMenu({ onEdit, onDelete }: { onEdit: () => void; onDelete: ()
 }
 
 export default function RolesSettingsClient({ subdomain }: { subdomain: string }) {
-  const [roles, setRoles] = useState<RoleRow[] | null>(null);
-  const [catalog, setCatalog] = useState<PermissionCatalogEntry[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
 
   const [formOpen, setFormOpen] = useState(false);
   const [editingRole, setEditingRole] = useState<RoleRow | null>(null);
   const [form, setForm] = useState<RoleFormState>(EMPTY_FORM);
   const [formError, setFormError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
   const [impactWarningTarget, setImpactWarningTarget] = useState<{ pendingSave: () => Promise<void>; memberCount: number } | null>(null);
@@ -136,34 +136,33 @@ export default function RolesSettingsClient({ subdomain }: { subdomain: string }
   const [deleteTarget, setDeleteTarget] = useState<RoleRow | null>(null);
   const [deleteBlock, setDeleteBlock] = useState<{ memberCount: number } | null>(null);
 
-  async function loadRoles() {
-    const res = await fetch(`${API_BASE}/roles?subdomain=${encodeURIComponent(subdomain)}`, {
-      credentials: "include",
-    });
-    if (res.status === 403) {
-      setError("You don't have access to manage roles.");
-      setRoles([]);
-      return;
-    }
-    const json = (await res.json()) as { data: RoleRow[] };
-    setRoles(json.data);
-    setError(null);
-  }
+  const rolesQuery = useQuery({
+    queryKey: ["roles", subdomain],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/roles?subdomain=${encodeURIComponent(subdomain)}`, {
+        credentials: "include",
+      });
+      if (res.status === 403) throw new ForbiddenError();
+      const json = (await res.json()) as { data: RoleRow[] };
+      return json.data;
+    },
+    retry: false,
+  });
+  const roles = rolesQuery.error instanceof ForbiddenError ? [] : (rolesQuery.data ?? null);
+  const error = rolesQuery.error instanceof ForbiddenError ? "You don't have access to manage roles." : null;
 
-  async function loadCatalog() {
-    const res = await fetch(`${API_BASE}/permission-catalog?subdomain=${encodeURIComponent(subdomain)}`, {
-      credentials: "include",
-    });
-    if (!res.ok) return;
-    const json = (await res.json()) as { data: PermissionCatalogEntry[] };
-    setCatalog(json.data);
-  }
-
-  useEffect(() => {
-    loadRoles();
-    loadCatalog();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [subdomain]);
+  const catalogQuery = useQuery({
+    queryKey: ["permission-catalog", subdomain],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/permission-catalog?subdomain=${encodeURIComponent(subdomain)}`, {
+        credentials: "include",
+      });
+      if (!res.ok) return [];
+      const json = (await res.json()) as { data: PermissionCatalogEntry[] };
+      return json.data;
+    },
+  });
+  const catalog = useMemo(() => catalogQuery.data ?? [], [catalogQuery.data]);
 
   const groupedCatalog = useMemo(() => {
     const groups = new Map<string, PermissionCatalogEntry[]>();
@@ -219,31 +218,37 @@ export default function RolesSettingsClient({ subdomain }: { subdomain: string }
     setFormOpen(true);
   }
 
-  async function doSave() {
-    setSaving(true);
-    const body = {
-      name: form.name.trim(),
-      description: form.description || undefined,
-      permissionKeys: Array.from(form.permissionKeys),
-    };
-    const url = editingRole
-      ? `${API_BASE}/roles/${editingRole.id}?subdomain=${encodeURIComponent(subdomain)}`
-      : `${API_BASE}/roles?subdomain=${encodeURIComponent(subdomain)}`;
-    const res = await fetch(url, {
-      method: editingRole ? "PATCH" : "POST",
-      credentials: "include",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    setSaving(false);
-    if (res.ok) {
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      const body = {
+        name: form.name.trim(),
+        description: form.description || undefined,
+        permissionKeys: Array.from(form.permissionKeys),
+      };
+      const url = editingRole
+        ? `${API_BASE}/roles/${editingRole.id}?subdomain=${encodeURIComponent(subdomain)}`
+        : `${API_BASE}/roles?subdomain=${encodeURIComponent(subdomain)}`;
+      const res = await fetch(url, {
+        method: editingRole ? "PATCH" : "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const json = (await res.json().catch(() => null)) as { message?: string } | null;
+        throw new Error(json?.message ?? "Couldn't save this role. Try again.");
+      }
+    },
+    onSuccess: () => {
       setFormOpen(false);
       setImpactWarningTarget(null);
-      loadRoles();
-      return;
-    }
-    const json = (await res.json().catch(() => null)) as { message?: string } | null;
-    setFormError(json?.message ?? "Couldn't save this role. Try again.");
+      queryClient.invalidateQueries({ queryKey: ["roles", subdomain] });
+    },
+    onError: (err: Error) => setFormError(err.message),
+  });
+
+  async function doSave() {
+    await saveMutation.mutateAsync().catch(() => {});
   }
 
   async function handleSubmit(event: React.FormEvent) {
@@ -271,18 +276,28 @@ export default function RolesSettingsClient({ subdomain }: { subdomain: string }
     await doSave();
   }
 
-  async function handleDelete(role: RoleRow) {
-    const res = await fetch(`${API_BASE}/roles/${role.id}?subdomain=${encodeURIComponent(subdomain)}`, {
-      method: "DELETE",
-      credentials: "include",
-    });
-    if (res.status === 409) {
-      setDeleteBlock({ memberCount: role.memberCount });
-      return;
-    }
-    setDeleteTarget(null);
-    setDeleteBlock(null);
-    loadRoles();
+  const deleteMutation = useMutation({
+    mutationFn: async (role: RoleRow) => {
+      const res = await fetch(`${API_BASE}/roles/${role.id}?subdomain=${encodeURIComponent(subdomain)}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (res.status === 409) {
+        throw { conflict: true, memberCount: role.memberCount };
+      }
+    },
+    onSuccess: () => {
+      setDeleteTarget(null);
+      setDeleteBlock(null);
+      queryClient.invalidateQueries({ queryKey: ["roles", subdomain] });
+    },
+    onError: (err: { conflict?: boolean; memberCount?: number }) => {
+      if (err?.conflict) setDeleteBlock({ memberCount: err.memberCount! });
+    },
+  });
+
+  function handleDelete(role: RoleRow) {
+    deleteMutation.mutate(role);
   }
 
   return (
@@ -434,7 +449,7 @@ export default function RolesSettingsClient({ subdomain }: { subdomain: string }
             </div>
           </div>
 
-          <Button type="submit" isLoading={saving} className="w-full">
+          <Button type="submit" isLoading={saveMutation.isPending} className="w-full">
             {editingRole ? "Save changes" : "Create role"}
           </Button>
         </form>
@@ -455,7 +470,7 @@ export default function RolesSettingsClient({ subdomain }: { subdomain: string }
               <Button variant="secondary" onClick={() => setImpactWarningTarget(null)}>
                 Cancel
               </Button>
-              <Button isLoading={saving} onClick={() => impactWarningTarget.pendingSave()}>
+              <Button isLoading={saveMutation.isPending} onClick={() => impactWarningTarget.pendingSave()}>
                 Continue
               </Button>
             </div>

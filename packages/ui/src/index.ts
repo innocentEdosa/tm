@@ -16,6 +16,14 @@ export { Pagination } from "./pagination";
 export type { PaginationProps } from "./pagination";
 export { Drawer } from "./drawer";
 export type { DrawerProps, DrawerSide } from "./drawer";
+export { Popover, PopoverMenuItem } from "./popover";
+export type { PopoverProps, PopoverMenuItemProps } from "./popover";
+export { Toast } from "./toast";
+export type { ToastProps, ToastVariant } from "./toast";
+export { RichTextEditor } from "./rich-text-editor";
+export type { RichTextEditorProps } from "./rich-text-editor";
+export { RepeatableFieldList } from "./repeatable-field-list";
+export type { RepeatableFieldListProps } from "./repeatable-field-list";
 export { AppShell } from "./app-shell";
 export type {
   AppShellProps,

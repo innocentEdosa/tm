@@ -20,7 +20,7 @@
      clinical. Cards stay bg-white so they lift off this tinted surface. Border tuned to a cool grey
      one step darker than the surface so the hairline stays visible instead of nearly disappearing
      against it (was a warm tan, mismatched hue against this cool surface + too close in lightness). */
-  --color-surface: #F8F9FA;
+  --color-surface: #fffcf9;
   --color-text: #020617;
   --color-border: #D9DEE3;
   /* Sidebar chrome (2026-07-13). Trying a dark-navy variant to compare against the light warm-tint

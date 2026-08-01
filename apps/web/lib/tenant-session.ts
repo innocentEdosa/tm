@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { cookies } from "next/headers";
 
 const API_ORIGIN = process.env.API_ORIGIN ?? "http://localhost:3001";
@@ -21,8 +22,12 @@ export type TenantSession =
  * rewrite — research.md §4-5 of Spec 4/5). Shared by every Server Component that needs to branch on
  * session state (`/tenant`, `/set-password`, `/dashboard`) — de-duplicates what was previously three
  * near-identical copies of this exact cookie-read/fetch/branch logic (research.md §8).
+ *
+ * Wrapped in React's `cache()` so the layout's own call and each page's call within the same request
+ * share one result instead of two round-trips to apps/api — request-scoped only (a fresh cache per
+ * render), never a stale-session risk, since Next resets it for every incoming request.
  */
-export async function getTenantSession(subdomain: string): Promise<TenantSession> {
+export const getTenantSession = cache(async (subdomain: string): Promise<TenantSession> => {
   const cookieStore = await cookies();
   const sessionCookie = cookieStore.get(TENANT_SESSION_COOKIE_NAME);
   if (!sessionCookie) {
@@ -58,4 +63,4 @@ export async function getTenantSession(subdomain: string): Promise<TenantSession
     roleName: body.data.roleName,
     permissions: body.data.permissions,
   };
-}
+});

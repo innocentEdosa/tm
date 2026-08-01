@@ -14,6 +14,7 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
         {label && (
           <label htmlFor={inputId} className="field-label">
             {label}
+            {props.required && <span className="text-red-600"> *</span>}
           </label>
         )}
         <input

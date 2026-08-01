@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { MoreHorizontal, Plus } from "lucide-react";
 import { PageHeader, Card, Badge, Modal, Button, Pagination } from "@tm/ui";
 import { STATUS_LABEL, STATUS_BADGE_VARIANT, type TrainingNeedStatus } from "./status";
@@ -48,6 +49,8 @@ interface DepartmentOption {
 
 const ROW_ACTIONS_MENU_WIDTH = 140;
 const ROW_ACTIONS_MENU_HEIGHT = 84;
+
+class ForbiddenError extends Error {}
 
 // Mirrors Department/Team's own RowActionsMenu exactly (portal-based, click-outside-to-close) —
 // research.md §6/§7, no shared component exists yet for this pattern in this codebase.
@@ -154,11 +157,8 @@ export default function TrainingNeedsClient({
   canManageDepartment: boolean;
 }) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const canManage = canManageAll || canManageDepartment;
-
-  const [rows, setRows] = useState<TrainingNeedRow[] | null>(null);
-  const [meta, setMeta] = useState<ListMeta | null>(null);
-  const [listError, setListError] = useState<string | null>(null);
 
   // Filters — org-wide (training_request.view.all) only (spec US2/contracts §GET list); a department-scoped
   // Manager's own list is small and unpaginated, no filter bar needed (research.md Scale/Scope).
@@ -168,74 +168,76 @@ export default function TrainingNeedsClient({
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 25;
 
-  // Only fetched for training_request.view.all (org-wide filter bar) — a plain department-scoped Manager may not
-  // hold department.view, so this fetch is skipped entirely for them.
-  const [departments, setDepartments] = useState<DepartmentOption[]>([]);
-
   const [deleteTarget, setDeleteTarget] = useState<TrainingNeedRow | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!canViewAll) return;
-    fetch(`${API_BASE}/departments?subdomain=${encodeURIComponent(subdomain)}`, {
-      credentials: "include",
-    })
-      .then((res) => (res.ok ? res.json() : { data: [] }))
-      .then((json: { data: DepartmentOption[] }) => setDepartments(json.data))
-      .catch(() => setDepartments([]));
-  }, [subdomain, canViewAll]);
+  // Only fetched for training_request.view.all (org-wide filter bar) — a plain department-scoped Manager may not
+  // hold department.view, so this fetch is skipped entirely for them.
+  const departmentsQuery = useQuery({
+    queryKey: ["training-need-departments", subdomain],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/departments?subdomain=${encodeURIComponent(subdomain)}`, {
+        credentials: "include",
+      });
+      const json = (res.ok ? await res.json() : { data: [] }) as { data: DepartmentOption[] };
+      return json.data;
+    },
+    enabled: canViewAll,
+  });
+  const departments = departmentsQuery.data ?? [];
 
-  function loadRows() {
-    const params = new URLSearchParams({ subdomain });
-    if (canViewAll) {
-      params.set("page", String(page));
-      params.set("pageSize", String(PAGE_SIZE));
-      if (departmentFilter) params.set("department", departmentFilter);
-      if (priorityFilter) params.set("priority", priorityFilter);
-      if (statusFilter) params.set("status", statusFilter);
-    }
-    fetch(`${API_BASE}/training-needs?${params.toString()}`, { credentials: "include" })
-      .then((res) => {
-        if (res.status === 403) {
-          setListError("You don't have access to view training requests.");
-          setRows([]);
-          setMeta(null);
-          return null;
-        }
-        return res.json();
-      })
-      .then((json: { data: TrainingNeedRow[]; pagination?: ListMeta } | null) => {
-        if (!json) return;
-        setRows(json.data);
-        setMeta(json.pagination ?? null);
-        setListError(null);
-      })
-      .catch(() => setListError("Couldn't load training requests. Try again."));
-  }
+  const rowsQuery = useQuery({
+    queryKey: ["training-needs", subdomain, canViewAll, canViewAll ? { page, departmentFilter, priorityFilter, statusFilter } : null],
+    queryFn: async () => {
+      const params = new URLSearchParams({ subdomain });
+      if (canViewAll) {
+        params.set("page", String(page));
+        params.set("pageSize", String(PAGE_SIZE));
+        if (departmentFilter) params.set("department", departmentFilter);
+        if (priorityFilter) params.set("priority", priorityFilter);
+        if (statusFilter) params.set("status", statusFilter);
+      }
+      const res = await fetch(`${API_BASE}/training-needs?${params.toString()}`, { credentials: "include" });
+      if (res.status === 403) throw new ForbiddenError();
+      if (!res.ok) throw new Error("Couldn't load training requests. Try again.");
+      return (await res.json()) as { data: TrainingNeedRow[]; pagination?: ListMeta };
+    },
+  });
 
-  useEffect(() => {
-    loadRows();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [subdomain, canViewAll, departmentFilter, priorityFilter, statusFilter, page]);
+  const rows = rowsQuery.error instanceof ForbiddenError ? [] : (rowsQuery.data?.data ?? null);
+  const meta = rowsQuery.error instanceof ForbiddenError ? null : (rowsQuery.data?.pagination ?? null);
+  const listError = rowsQuery.error instanceof ForbiddenError
+    ? "You don't have access to view training requests."
+    : rowsQuery.error
+      ? (rowsQuery.error as Error).message
+      : null;
 
   useEffect(() => {
     setPage(1);
   }, [departmentFilter, priorityFilter, statusFilter]);
 
-  async function handleDeleteConfirm() {
+  const deleteMutation = useMutation({
+    mutationFn: async (target: TrainingNeedRow) => {
+      const res = await fetch(
+        `${API_BASE}/training-needs/${target.id}?subdomain=${encodeURIComponent(subdomain)}`,
+        { method: "DELETE", credentials: "include" },
+      );
+      if (!res.ok) {
+        const json = (await res.json().catch(() => null)) as { message?: string } | null;
+        throw new Error(json?.message ?? "Couldn't delete this training request.");
+      }
+    },
+    onSuccess: () => {
+      setDeleteTarget(null);
+      queryClient.invalidateQueries({ queryKey: ["training-needs", subdomain] });
+    },
+    onError: (err: Error) => setDeleteError(err.message),
+  });
+
+  function handleDeleteConfirm() {
     if (!deleteTarget) return;
     setDeleteError(null);
-    const res = await fetch(
-      `${API_BASE}/training-needs/${deleteTarget.id}?subdomain=${encodeURIComponent(subdomain)}`,
-      { method: "DELETE", credentials: "include" },
-    );
-    if (res.ok) {
-      setDeleteTarget(null);
-      loadRows();
-      return;
-    }
-    const json = (await res.json().catch(() => null)) as { message?: string } | null;
-    setDeleteError(json?.message ?? "Couldn't delete this training request.");
+    deleteMutation.mutate(deleteTarget);
   }
 
   const descriptionLine = canViewAll

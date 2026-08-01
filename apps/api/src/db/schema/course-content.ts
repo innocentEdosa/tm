@@ -23,6 +23,10 @@ export const courseModules = pgTable(
     title: text("title").notNull(),
     description: text("description"),
     position: integer("position").notNull(),
+    /** Independent of the parent course's own draft/active/archived status — a module can be
+     * draft/published while its course is still active, matching the course-editor UI's per-module
+     * publish toggle. */
+    status: text("status").notNull().default("draft"),
     createdByUserId: uuid("created_by_user_id").references((): AnyPgColumn => users.id, {
       onDelete: "set null",
     }),
@@ -32,15 +36,20 @@ export const courseModules = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index("course_modules_tenant_id_course_id_idx").on(table.tenantId, table.courseId)],
+  (table) => [
+    index("course_modules_tenant_id_course_id_idx").on(table.tenantId, table.courseId),
+    check("course_modules_status_check", sql`${table.status} in ('draft', 'published')`),
+  ],
 );
 
 /**
- * A tenant-scoped, ordered, polymorphic unit of curriculum content within exactly one module
+ * A tenant-scoped, ordered, polymorphic unit of curriculum content within at most one module
  * (data-model.md `content_items`). `courseId` is denormalized from the owning module at creation and
  * never changes (research.md §1 — FR-008 only allows moving between modules of the *same* course).
  * `type` is immutable once set (enforced in the route handler, not the database) and determines the
  * required shape of `payload` (research.md §3, validated in `content-item-payload-validation.ts`).
+ * `moduleId` is nullable — a standalone (module-less) lesson lives directly at the course's top
+ * level, ordered via `courses.outlineOrder` rather than a module's own `position` sequence.
  */
 export const contentItems = pgTable(
   "content_items",
@@ -52,14 +61,15 @@ export const contentItems = pgTable(
     courseId: uuid("course_id")
       .notNull()
       .references((): AnyPgColumn => courses.id, { onDelete: "restrict" }),
-    moduleId: uuid("module_id")
-      .notNull()
-      .references((): AnyPgColumn => courseModules.id, { onDelete: "cascade" }),
+    moduleId: uuid("module_id").references((): AnyPgColumn => courseModules.id, { onDelete: "cascade" }),
     type: text("type").notNull(),
     title: text("title").notNull(),
     description: text("description"),
     position: integer("position").notNull(),
     payload: jsonb("payload").notNull().default({}),
+    /** Independent of the parent course's own status — a lesson can be draft/published while its
+     * course is active, matching the course-editor UI's per-lesson publish toggle. */
+    status: text("status").notNull().default("draft"),
     createdByUserId: uuid("created_by_user_id").references((): AnyPgColumn => users.id, {
       onDelete: "set null",
     }),
@@ -76,5 +86,6 @@ export const contentItems = pgTable(
       "content_items_type_check",
       sql`${table.type} in ('video', 'article', 'live_class', 'test', 'assignment', 'external_import')`,
     ),
+    check("content_items_status_check", sql`${table.status} in ('draft', 'published')`),
   ],
 );

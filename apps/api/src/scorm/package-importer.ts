@@ -4,6 +4,7 @@ import type { Db } from "../db/client";
 import { contentItems } from "../db/schema/course-content";
 import { scormPackages, scormPackageItems } from "../db/schema/scorm";
 import * as storage from "../storage/storage";
+import { resolveTenantStorageFolder } from "../storage/tenant-storage-path";
 import { parseManifest } from "./manifest-parser";
 import { guessContentType } from "./mime-types";
 
@@ -55,6 +56,13 @@ export async function importPackage(
   if (!anchor) {
     return { error: "Content item not found" };
   }
+  // A SCORM upload always targets a module-scoped content item (the upload route only offers this
+  // sub-choice from within a module) — `moduleId` is only nullable at all for standalone lessons,
+  // a case that can't reach this code path.
+  if (anchor.moduleId === null) {
+    return { error: "SCORM import requires a module-scoped content item" };
+  }
+  const anchorModuleId = anchor.moduleId;
 
   const [packageRow] = await tenantDb
     .insert(scormPackages)
@@ -66,7 +74,7 @@ export async function importPackage(
     const laterSiblings = await tenantDb
       .select({ id: contentItems.id, position: contentItems.position })
       .from(contentItems)
-      .where(eq(contentItems.moduleId, anchor.moduleId));
+      .where(eq(contentItems.moduleId, anchorModuleId));
     for (const sibling of laterSiblings) {
       if (sibling.position > anchor.position) {
         await tenantDb
@@ -108,9 +116,10 @@ export async function importPackage(
     });
   }
 
+  const tenantFolder = await resolveTenantStorageFolder(tenantDb, tenantId);
   for (const entry of zip.getEntries()) {
     if (entry.isDirectory) continue;
-    const key = `${tenantId}/scorm/${packageRow.id}/${entry.entryName}`;
+    const key = `${tenantFolder}/scorm/${packageRow.id}/${entry.entryName}`;
     await storage.putObject(key, entry.getData(), guessContentType(entry.entryName));
   }
 

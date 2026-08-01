@@ -7,6 +7,7 @@ import { contentItems } from "../db/schema/course-content";
 import { scormPackageItems } from "../db/schema/scorm";
 import { learnerContentProgress } from "../db/schema/learner-content-progress";
 import * as storage from "../storage/storage";
+import { resolveTenantStorageFolder } from "../storage/tenant-storage-path";
 import { importPackage } from "./package-importer";
 import type { Db } from "../db/client";
 
@@ -54,7 +55,8 @@ const tenantScormUploadRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const uploadId = randomUUID();
-      const storageKey = `${request.user!.tenantId}/scorm-raw/${contentItemId}/${uploadId}.zip`;
+      const tenantFolder = await resolveTenantStorageFolder(request.tenantDb, request.user!.tenantId);
+      const storageKey = `${tenantFolder}/scorm-raw/${contentItemId}/${uploadId}.zip`;
       const uploadUrl = await storage.createPresignedUploadUrl(storageKey, "application/zip", body.sizeBytes);
       return reply.code(201).send({ success: true, data: { uploadUrl, storageKey } });
     },

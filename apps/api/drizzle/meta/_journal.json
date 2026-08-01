@@ -644,6 +644,69 @@
       "when": 1784473728721,
       "tag": "0091_add_learner_content_progress_scorm_raw_status",
       "breakpoints": true
+    },
+    {
+      "idx": 92,
+      "version": "7",
+      "when": 1784580698760,
+      "tag": "0092_courses_add_subcategory",
+      "breakpoints": true
+    },
+    {
+      "idx": 93,
+      "version": "7",
+      "when": 1785246174604,
+      "tag": "0093_bizarre_the_call",
+      "breakpoints": true
+    },
+    {
+      "idx": 94,
+      "version": "7",
+      "when": 1785246288881,
+      "tag": "0094_rls_course_authors",
+      "breakpoints": true
+    },
+    {
+      "idx": 95,
+      "version": "7",
+      "when": 1785246329898,
+      "tag": "0095_rls_course_reviews",
+      "breakpoints": true
+    },
+    {
+      "idx": 96,
+      "version": "7",
+      "when": 1785246355542,
+      "tag": "0096_lock_course_authoring_grants",
+      "breakpoints": true
+    },
+    {
+      "idx": 97,
+      "version": "7",
+      "when": 1785247587094,
+      "tag": "0097_glamorous_jackpot",
+      "breakpoints": true
+    },
+    {
+      "idx": 98,
+      "version": "7",
+      "when": 1785610091231,
+      "tag": "0098_course_assignments_table",
+      "breakpoints": true
+    },
+    {
+      "idx": 99,
+      "version": "7",
+      "when": 1785610092231,
+      "tag": "0099_rls_course_assignments",
+      "breakpoints": true
+    },
+    {
+      "idx": 100,
+      "version": "7",
+      "when": 1785610093231,
+      "tag": "0100_lock_course_assignments_grants",
+      "breakpoints": true
     }
   ]
 }
