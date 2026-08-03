@@ -130,21 +130,27 @@ export const platformCourseContentItems = pgTable(
   ],
 );
 
-/** A platform-level file attachment on a Platform Course Content Item (data-model.md
- * `platform_file_attachments`). Same shape as `file_attachments` minus `tenant_id` — kept as its own
- * table rather than a nullable-`tenant_id` reuse of `file_attachments` (research.md §2). `storage_key`
- * is unique here (safe — nothing clones *into* this table, only tenant `file_attachments` rows clone
- * *out of* it, referencing the same key). */
+/** A platform-level file attachment on a Platform Course or Platform Course Content Item
+ * (data-model.md `platform_file_attachments`). Same shape as tenant `file_attachments` (spec
+ * 028's `kind`/`url` addition included) minus `tenant_id` — kept as its own table rather than a
+ * nullable-`tenant_id` reuse of `file_attachments` (research.md §2). `storage_key` is unique here
+ * (safe — nothing clones *into* this table, only tenant `file_attachments` rows clone *out of* it,
+ * referencing the same key; Postgres allows multiple NULLs under a unique index, so `kind:'link'`
+ * rows with no `storage_key` don't collide). `platform_course` (course thumbnail) was added
+ * alongside the image-upload/link-resource UI-reuse follow-up — mirrors tenant's own `course`
+ * entity type. */
 export const platformFileAttachments = pgTable(
   "platform_file_attachments",
   {
     id: uuid("id").primaryKey().defaultRandom(),
     entityType: text("entity_type").notNull(),
     entityId: uuid("entity_id").notNull(),
+    kind: text("kind").notNull().default("file"),
     fileName: text("file_name").notNull(),
-    contentType: text("content_type").notNull(),
-    sizeBytes: bigint("size_bytes", { mode: "number" }).notNull(),
-    storageKey: text("storage_key").notNull(),
+    contentType: text("content_type"),
+    sizeBytes: bigint("size_bytes", { mode: "number" }),
+    storageKey: text("storage_key"),
+    url: text("url"),
     status: text("status").notNull().default("pending"),
     createdBySuperAdminId: uuid("created_by_super_admin_id").references(() => superAdmins.id, {
       onDelete: "set null",
@@ -155,8 +161,14 @@ export const platformFileAttachments = pgTable(
   (table) => [
     index("platform_file_attachments_entity_type_entity_id_idx").on(table.entityType, table.entityId),
     uniqueIndex("platform_file_attachments_storage_key_unique").on(table.storageKey),
-    check("platform_file_attachments_entity_type_check", sql`${table.entityType} in ('platform_content_item')`),
+    check("platform_file_attachments_entity_type_check", sql`${table.entityType} in ('platform_content_item', 'platform_course')`),
+    check("platform_file_attachments_kind_check", sql`${table.kind} in ('file', 'link')`),
     check("platform_file_attachments_status_check", sql`${table.status} in ('pending', 'ready')`),
+    check(
+      "platform_file_attachments_kind_shape_check",
+      sql`(${table.kind} = 'file' and ${table.storageKey} is not null and ${table.contentType} is not null and ${table.sizeBytes} is not null and ${table.url} is null)
+        or (${table.kind} = 'link' and ${table.url} is not null and ${table.storageKey} is null and ${table.contentType} is null and ${table.sizeBytes} is null)`,
+    ),
   ],
 );
 

@@ -34,7 +34,7 @@ async function createActivePlatformCourseWithCurriculum(server: Server, adminHea
 
   const upload = await server.inject({
     method: "POST",
-    url: `/admin/platform-course-content-items/${itemId}/attachments/upload-url`,
+    url: `/admin/platform-course-content-items/${itemId}/attachments`,
     headers: adminHeaders,
     payload: { fileName: "handout.pdf", contentType: "application/pdf", sizeBytes: 512 },
   });
@@ -77,7 +77,7 @@ describe("course marketplace select — free course (spec 029 US4, FR-008/FR-009
       recording.simulateUpload(storageKey, 512);
       await server.inject({
         method: "POST",
-        url: `/admin/platform-course-content-items/${itemId}/attachments/${attachmentId}/confirm`,
+        url: `/admin/platform-file-attachments/${attachmentId}/confirm`,
         headers: adminHeaders,
       });
 

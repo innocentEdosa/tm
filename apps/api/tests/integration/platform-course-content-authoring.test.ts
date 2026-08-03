@@ -209,7 +209,7 @@ describe("platform course content authoring (spec 029 US2, FR-003/FR-004/FR-005)
 
       const uploadResponse = await server.inject({
         method: "POST",
-        url: `/admin/platform-course-content-items/${itemId}/attachments/upload-url`,
+        url: `/admin/platform-course-content-items/${itemId}/attachments`,
         headers,
         payload: { fileName: "handout.pdf", contentType: "application/pdf", sizeBytes: 1024 },
       });
@@ -218,9 +218,11 @@ describe("platform course content authoring (spec 029 US2, FR-003/FR-004/FR-005)
       const storageKey = recording.uploadedKeys[0].key;
       recording.simulateUpload(storageKey, 1024);
 
+      // Confirm/download-url/delete are generic (entity-agnostic) — shared by course-image and
+      // content-item attachments alike, mirroring tenant-attachment-routes.ts.
       const confirmResponse = await server.inject({
         method: "POST",
-        url: `/admin/platform-course-content-items/${itemId}/attachments/${attachmentId}/confirm`,
+        url: `/admin/platform-file-attachments/${attachmentId}/confirm`,
         headers,
       });
       expect(confirmResponse.statusCode).toBe(200);
@@ -235,7 +237,7 @@ describe("platform course content authoring (spec 029 US2, FR-003/FR-004/FR-005)
 
       const deleteResponse = await server.inject({
         method: "DELETE",
-        url: `/admin/platform-course-content-items/${itemId}/attachments/${attachmentId}`,
+        url: `/admin/platform-file-attachments/${attachmentId}`,
         headers,
       });
       expect(deleteResponse.statusCode).toBe(200);

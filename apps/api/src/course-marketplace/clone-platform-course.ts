@@ -21,11 +21,13 @@ import { resolveOrCreateCourseCategory } from "../courses/course-category-resolu
  * Clones `courses`/`course_modules`/`content_items` metadata rows, resolving the platform course's
  * plain `categoryName` into the target tenant's own category list via the existing
  * `resolveOrCreateCourseCategory` (spec 023). For each platform content item's `ready`
- * `platform_file_attachments` row, creates a new tenant `file_attachments` row referencing the
- * *same* `storage_key` — never re-uploads or duplicates the underlying R2 object (spec
- * Clarifications, SC-005). The cloned course starts `active` (not `draft`) since its platform source
- * was already published — a tenant selecting it expects it immediately usable, not a draft they must
- * separately publish.
+ * `platform_file_attachments` row (`kind:"file"` or `kind:"link"` alike), and for the platform
+ * course's own image if it has one, creates a new tenant `file_attachments` row referencing the
+ * *same* `storage_key` for a `file` row — never re-uploads or duplicates the underlying R2 object
+ * (spec Clarifications, SC-005) — or copying the `url` directly for a `link` row (nothing to share,
+ * it was never in R2 to begin with). The cloned course starts `active` (not `draft`) since its
+ * platform source was already published — a tenant selecting it expects it immediately usable, not
+ * a draft they must separately publish.
  */
 export async function clonePlatformCourseIntoTenant(
   tenantDb: Db,
@@ -56,6 +58,31 @@ export async function clonePlatformCourseIntoTenant(
       createdByUserId,
     })
     .returning();
+
+  const [courseImage] = await tenantDb
+    .select()
+    .from(platformFileAttachments)
+    .where(
+      and(
+        eq(platformFileAttachments.entityType, "platform_course"),
+        eq(platformFileAttachments.entityId, platformCourseId),
+        eq(platformFileAttachments.status, "ready"),
+      ),
+    );
+  if (courseImage) {
+    await tenantDb.insert(fileAttachments).values({
+      tenantId,
+      entityType: "course",
+      entityId: newCourse.id,
+      kind: "file",
+      fileName: courseImage.fileName,
+      contentType: courseImage.contentType,
+      sizeBytes: courseImage.sizeBytes,
+      storageKey: courseImage.storageKey,
+      status: "ready",
+      createdByUserId,
+    });
+  }
 
   const platformModules = await tenantDb
     .select()
@@ -137,10 +164,12 @@ export async function clonePlatformCourseIntoTenant(
         tenantId,
         entityType: "content_item",
         entityId: newItem.id,
+        kind: attachment.kind,
         fileName: attachment.fileName,
         contentType: attachment.contentType,
         sizeBytes: attachment.sizeBytes,
         storageKey: attachment.storageKey,
+        url: attachment.url,
         status: "ready",
         createdByUserId,
       });

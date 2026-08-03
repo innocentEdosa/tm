@@ -156,7 +156,7 @@ describe("course marketplace immutability + cross-tenant isolation (spec 029 SC-
       try {
         const upload = await server.inject({
           method: "POST",
-          url: `/admin/platform-course-content-items/${itemId}/attachments/upload-url`,
+          url: `/admin/platform-course-content-items/${itemId}/attachments`,
           headers: adminHeaders,
           payload: { fileName: "doc.pdf", contentType: "application/pdf", sizeBytes: 100 },
         });
@@ -165,7 +165,7 @@ describe("course marketplace immutability + cross-tenant isolation (spec 029 SC-
         recording.simulateUpload(platformStorageKey, 100);
         await server.inject({
           method: "POST",
-          url: `/admin/platform-course-content-items/${itemId}/attachments/${attachmentId}/confirm`,
+          url: `/admin/platform-file-attachments/${attachmentId}/confirm`,
           headers: adminHeaders,
         });
 

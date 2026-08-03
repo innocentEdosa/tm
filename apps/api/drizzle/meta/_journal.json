@@ -735,6 +735,13 @@
       "when": 1785742258596,
       "tag": "0104_lock_platform_course_grants",
       "breakpoints": true
+    },
+    {
+      "idx": 105,
+      "version": "7",
+      "when": 1785750719919,
+      "tag": "0105_platform_file_attachments_course_and_link_kind",
+      "breakpoints": true
     }
   ]
 }
