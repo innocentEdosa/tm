@@ -105,27 +105,35 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // "Learning" (Training Request spec, 014, renamed by spec 020) — a new top-level section, peer to
   // "Administration" and "Settings" (plan.md Summary). The old top-level disabled "Courses"
   // placeholder (research.md §8) is now this section's "Courses" entry, live per spec 028 rather than
-  // a permanent "Soon" stub. "Course Marketplace" (spec 029) sits alongside it — authoring/managing
-  // owned courses vs. browsing the Super-Admin-curated catalog are distinct flows, both gated on the
-  // same course.manage permission. "Learning Program" and "Learning Resources" are new disabled
-  // "Soon" stubs until their own specs land, same convention as Training Plan's placeholders below.
+  // a permanent "Soon" stub. "Learning Resources" (previously a disabled "Soon" stub) is repointed at
+  // the Course Marketplace (spec 029) rather than getting its own separate nav entry — browsing the
+  // Super-Admin-curated catalog *is* this tenant's "learning resources" concept, gated on the same
+  // course.manage permission. "Learning Program" stays a disabled "Soon" stub until its own spec lands.
   if (canAccessCourses || canAccessCourseMarketplace) {
     const learningChildren: NavLinkItem[] = [];
     if (canAccessCourses) {
       learningChildren.push({ key: "courses", icon: "bookOpen", label: "Courses", href: "/learning/courses" });
     }
+    learningChildren.push({
+      key: "learning-program",
+      icon: "graduationCap",
+      label: "Learning Program",
+      href: "/learning/learning-program",
+      disabled: true,
+      tag: "Soon",
+    });
     if (canAccessCourseMarketplace) {
+      learningChildren.push({ key: "learning-resources", icon: "fileText", label: "Learning Resources", href: "/learning/marketplace" });
+    } else {
       learningChildren.push({
-        key: "marketplace",
-        icon: "store",
-        label: "Course Marketplace",
-        href: "/learning/marketplace",
+        key: "learning-resources",
+        icon: "fileText",
+        label: "Learning Resources",
+        href: "/learning/learning-resources",
+        disabled: true,
+        tag: "Soon",
       });
     }
-    learningChildren.push(
-      { key: "learning-program", icon: "graduationCap", label: "Learning Program", href: "/learning/learning-program", disabled: true, tag: "Soon" },
-      { key: "learning-resources", icon: "fileText", label: "Learning Resources", href: "/learning/learning-resources", disabled: true, tag: "Soon" },
-    );
     navSections.push({
       key: "learning",
       entries: [
