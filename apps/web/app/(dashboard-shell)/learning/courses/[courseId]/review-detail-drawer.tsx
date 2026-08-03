@@ -2,11 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Drawer, Button, Modal, Popover } from "@tm/ui";
+import { Drawer, Button, Modal, Popover, StarRating } from "@tm/ui";
 import { tenantFetch } from "@/lib/tenant-api-client";
 import { useSubdomain } from "@/lib/subdomain-context";
 import type { CourseReview } from "@/lib/course-api-types";
-import { StarRating } from "./star-rating";
 
 type DetailTab = "details" | "response";
 

@@ -20,6 +20,8 @@ export { Popover, PopoverMenuItem } from "./popover";
 export type { PopoverProps, PopoverMenuItemProps } from "./popover";
 export { Toast } from "./toast";
 export type { ToastProps, ToastVariant } from "./toast";
+export { StarRating } from "./star-rating";
+export type { StarRatingProps } from "./star-rating";
 export { RichTextEditor } from "./rich-text-editor";
 export type { RichTextEditorProps } from "./rich-text-editor";
 export { RepeatableFieldList } from "./repeatable-field-list";

@@ -89,6 +89,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
   if (canAccessTna || canAccessCourses) {
     const learningChildren: NavLinkItem[] = [];
     if (canAccessCourses) {
+      // My Courses (courses assigned to *me*, with my own progress) is listed first — the
+      // learner-facing entry point — ahead of the admin-facing course catalog/management list.
+      learningChildren.push({ key: "my-courses", icon: "layoutGrid", label: "My Courses", href: "/learning/my-courses" });
       learningChildren.push({ key: "courses", icon: "bookOpen", label: "Courses", href: "/learning/courses" });
     }
     if (canAccessTna) {

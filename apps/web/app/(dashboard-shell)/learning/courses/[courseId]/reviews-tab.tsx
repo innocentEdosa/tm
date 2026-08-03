@@ -3,11 +3,10 @@
 import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { MessageSquare } from "lucide-react";
-import { Button, Card, Popover } from "@tm/ui";
+import { Button, Card, Popover, StarRating } from "@tm/ui";
 import { tenantFetch } from "@/lib/tenant-api-client";
 import { useSubdomain } from "@/lib/subdomain-context";
 import type { CourseReview } from "@/lib/course-api-types";
-import { StarRating } from "./star-rating";
 import ReviewDetailDrawer from "./review-detail-drawer";
 
 const PAGE_SIZE = 10;
