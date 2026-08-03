@@ -4,9 +4,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { FileText, Plus, Sparkles, UploadCloud } from "lucide-react";
 import { Button, Input, Modal, Popover, PopoverMenuItem } from "@tm/ui";
-import { tenantFetch, uploadFileToPresignedUrl } from "@/lib/tenant-api-client";
-import { useSubdomain } from "@/lib/subdomain-context";
-import type { Course, ContentItem } from "@/lib/course-api-types";
+import { useCourseEditorApi } from "@/lib/course-editor-context";
+import { uploadFileToPresignedUrl } from "@/lib/course-editor-adapter";
 
 /**
  * The "Create a course" popover (replaces navigating straight to a full entry page) — offering
@@ -14,9 +13,9 @@ import type { Course, ContentItem } from "@/lib/course-api-types";
  * primitives (`@tm/ui`). SCORM here creates a whole new draft course (not just a content item)
  * pre-populated from the real imported SCOs, then opens the editor.
  */
-export default function CreateCourseMenu() {
+export default function CreateCourseMenu({ editorBasePath = "/learning/courses" }: { editorBasePath?: string }) {
   const router = useRouter();
-  const subdomain = useSubdomain();
+  const api = useCourseEditorApi();
   const [aiModalOpen, setAiModalOpen] = useState(false);
   const [scormModalOpen, setScormModalOpen] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -27,12 +26,8 @@ export default function CreateCourseMenu() {
     setCreateError(null);
     setCreating(true);
     try {
-      const { data: course } = await tenantFetch<{ data: Course }>("/courses", {
-        method: "POST",
-        subdomain,
-        body: { title: "Untitled course", category: "Uncategorized", deliveryMode: "self_paced", duration: { value: 1, unit: "hours" } },
-      });
-      router.push(`/learning/courses/${course.id}`);
+      const course = await api.createDraftCourse({ title: "Untitled course" });
+      router.push(`${editorBasePath}/${course.id}`);
     } catch (err) {
       setCreateError((err as Error).message);
     } finally {
@@ -70,22 +65,25 @@ export default function CreateCourseMenu() {
               subtitle="Set up course details, then build your curriculum"
               onClick={() => handleCreateManually(close)}
             />
-            <PopoverMenuItem
-              icon={<UploadCloud className="h-4 w-4" />}
-              title="Upload a SCORM package"
-              subtitle="Import a SCORM package as your starting content"
-              onClick={() => {
-                close();
-                setScormModalOpen(true);
-              }}
-            />
+            {api.supportsScormImport && (
+              <PopoverMenuItem
+                icon={<UploadCloud className="h-4 w-4" />}
+                title="Upload a SCORM package"
+                subtitle="Import a SCORM package as your starting content"
+                onClick={() => {
+                  close();
+                  setScormModalOpen(true);
+                }}
+              />
+            )}
           </>
         )}
       </Popover>
 
       <Modal open={aiModalOpen} onClose={() => setAiModalOpen(false)} title="Coming soon">
         <p className="text-sm text-secondary">
-          AI course generation isn&apos;t available yet. For now, use &ldquo;Create manually&rdquo; or &ldquo;Upload a SCORM package&rdquo; to get started.
+          AI course generation isn&apos;t available yet. For now, use &ldquo;Create manually&rdquo;
+          {api.supportsScormImport && <> or &ldquo;Upload a SCORM package&rdquo;</>} to get started.
         </p>
         <div className="mt-4 flex justify-end">
           <Button variant="secondary" onClick={() => setAiModalOpen(false)}>
@@ -94,14 +92,16 @@ export default function CreateCourseMenu() {
         </div>
       </Modal>
 
-      <ScormQuickCreateModal open={scormModalOpen} onClose={() => setScormModalOpen(false)} />
+      {api.supportsScormImport && (
+        <ScormQuickCreateModal open={scormModalOpen} onClose={() => setScormModalOpen(false)} editorBasePath={editorBasePath} />
+      )}
     </>
   );
 }
 
-function ScormQuickCreateModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+function ScormQuickCreateModal({ open, onClose, editorBasePath }: { open: boolean; onClose: () => void; editorBasePath: string }) {
   const router = useRouter();
-  const subdomain = useSubdomain();
+  const api = useCourseEditorApi();
   const [title, setTitle] = useState("");
   const [fileName, setFileName] = useState<string | null>(null);
   const [progress, setProgress] = useState<number | null>(null);
@@ -125,37 +125,26 @@ function ScormQuickCreateModal({ open, onClose }: { open: boolean; onClose: () =
     setFileName(file.name);
     setProgress(0);
 
+    if (!api.getScormUploadUrl || !api.importScormPackage) return;
     try {
-      const { data: course } = await tenantFetch<{ data: Course }>("/courses", {
-        method: "POST",
-        subdomain,
-        body: { title, category: "Uncategorized", deliveryMode: "self_paced", duration: { value: 1, unit: "hours" } },
-      });
-      const { data: mod } = await tenantFetch<{ data: { id: string } }>(`/courses/${course.id}/modules`, {
-        method: "POST",
-        subdomain,
-        body: { title: "Imported content" },
-      });
+      const course = await api.createDraftCourse({ title });
+      const mod = await api.createModule(course.id, { title: "Imported content", description: "" });
       // The anchor content item's own payload.url is never used once a real SCORM package is
       // imported onto it (the import only cares about payload.sourceType === "scorm") — this is a
       // throwaway placeholder to satisfy the generic content-item route's payload validation, which
       // (unlike the SCORM-specific import path) always requires a non-blank url.
-      const { data: anchor } = await tenantFetch<{ data: ContentItem }>(`/modules/${mod.id}/content-items`, {
-        method: "POST",
-        subdomain,
-        body: { type: "external_import", title: file.name.replace(/\.zip$/i, ""), payload: { url: "pending", sourceType: "scorm" } },
-      });
-
-      const { data: upload } = await tenantFetch<{ data: { uploadUrl: string; storageKey: string } }>(
-        `/content-items/${anchor.id}/scorm/upload-url`,
-        { method: "POST", subdomain, body: { sizeBytes: file.size } },
+      const anchor = await api.createContentItem(
+        { moduleId: mod.id },
+        { type: "external_import", title: file.name.replace(/\.zip$/i, ""), payload: { url: "pending", sourceType: "scorm" } },
       );
+
+      const upload = await api.getScormUploadUrl(anchor.id, file.size);
       await uploadFileToPresignedUrl(upload.uploadUrl, file, "application/zip", setProgress);
-      await tenantFetch(`/content-items/${anchor.id}/scorm/import`, { method: "POST", subdomain, body: { storageKey: upload.storageKey } });
+      await api.importScormPackage(anchor.id, upload.storageKey);
 
       reset();
       onClose();
-      router.push(`/learning/courses/${course.id}`);
+      router.push(`${editorBasePath}/${course.id}`);
     } catch (err) {
       setError((err as Error).message);
       setProgress(null);

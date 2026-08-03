@@ -68,6 +68,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
     session.permissions.includes("training_request.manage.all") ||
     session.permissions.includes("training_request.manage.department") ||
     session.permissions.includes("training_request.approve");
+  // Course Marketplace spec (029) — browsing and selecting reuses course.manage, no new permission
+  // key (spec Clarifications, locked scope).
+  const canAccessCourseMarketplace = session.permissions.includes("course.manage");
 
   const navSections: NavSection[] = [
     {
@@ -85,11 +88,21 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // "Learning" (Training Request spec, 014, renamed by spec 020) — a new top-level section, peer to
   // "Administration" and "Settings" (plan.md Summary), holding today's one link. The old top-level
   // disabled "Courses" placeholder (research.md §8) is now this section's "Courses" entry, live per
-  // spec 028 rather than a permanent "Soon" stub.
-  if (canAccessTna || canAccessCourses) {
+  // spec 028 rather than a permanent "Soon" stub. "Course Marketplace" (spec 029) sits alongside it —
+  // authoring/managing owned courses vs. browsing the Super-Admin-curated catalog are distinct flows,
+  // both gated on the same course.manage permission.
+  if (canAccessTna || canAccessCourses || canAccessCourseMarketplace) {
     const learningChildren: NavLinkItem[] = [];
     if (canAccessCourses) {
       learningChildren.push({ key: "courses", icon: "bookOpen", label: "Courses", href: "/learning/courses" });
+    }
+    if (canAccessCourseMarketplace) {
+      learningChildren.push({
+        key: "marketplace",
+        icon: "store",
+        label: "Course Marketplace",
+        href: "/learning/marketplace",
+      });
     }
     if (canAccessTna) {
       learningChildren.push({

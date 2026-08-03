@@ -29,6 +29,11 @@ import tenantAttachmentRoutes from "./attachments/tenant-attachment-routes";
 import tenantProgressRoutes from "./progress/tenant-progress-routes";
 import tenantScormUploadRoutes from "./scorm/tenant-scorm-upload-routes";
 import tenantScormRuntimeRoutes from "./scorm/tenant-scorm-runtime-routes";
+import platformCourseRoutes from "./platform-courses/platform-course-routes";
+import platformCourseContentRoutes from "./platform-courses/platform-course-content-routes";
+import platformCourseFileRoutes from "./platform-courses/platform-course-file-routes";
+import tenantMarketplaceRoutes from "./course-marketplace/tenant-marketplace-routes";
+import adminMarketplaceSelectionRoutes from "./course-marketplace/admin-marketplace-selection-routes";
 
 export interface BuildServerOptions {
   /**
@@ -112,6 +117,11 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Fas
   await server.register(tenantProgressRoutes);
   await server.register(tenantScormUploadRoutes);
   await server.register(tenantScormRuntimeRoutes);
+  await server.register(platformCourseRoutes);
+  await server.register(platformCourseContentRoutes);
+  await server.register(platformCourseFileRoutes);
+  await server.register(tenantMarketplaceRoutes);
+  await server.register(adminMarketplaceSelectionRoutes);
 
   server.get("/health", async () => ({
     status: "ok",

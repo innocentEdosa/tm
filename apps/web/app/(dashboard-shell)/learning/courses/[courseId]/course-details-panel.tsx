@@ -5,8 +5,7 @@ import dynamic from "next/dynamic";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Upload } from "lucide-react";
 import { Input, Button } from "@tm/ui";
-import { tenantFetch, uploadFileToPresignedUrl } from "@/lib/tenant-api-client";
-import { useSubdomain } from "@/lib/subdomain-context";
+import { useCourseEditorApi } from "@/lib/course-editor-context";
 import type { Course, DeliveryMode, DurationUnit } from "@/lib/course-api-types";
 import CategoryCombobox from "../category-combobox";
 
@@ -47,16 +46,13 @@ function FieldLabel({ children, htmlFor, required }: { children: React.ReactNode
  * (Cost belongs conceptually in a future Pricing tab).
  */
 export default function CourseDetailsPanel({ courseId, readOnly }: { courseId: string; readOnly: boolean }) {
-  const subdomain = useSubdomain();
+  const api = useCourseEditorApi();
   const queryClient = useQueryClient();
   const imageInputRef = useRef<HTMLInputElement>(null);
 
   const courseQuery = useQuery({
-    queryKey: ["course", courseId, subdomain],
-    queryFn: async () => {
-      const { data } = await tenantFetch<{ data: Course }>(`/courses/${courseId}`, { subdomain });
-      return data;
-    },
+    queryKey: ["course", courseId, api.cacheScope],
+    queryFn: () => api.fetchCourse(courseId),
   });
   const course = courseQuery.data;
 
@@ -94,19 +90,13 @@ export default function CourseDetailsPanel({ courseId, readOnly }: { courseId: s
   }
 
   async function handleImageFile(file: File | undefined) {
-    if (!file) return;
+    if (!file || !api.uploadCourseImage) return;
     setImageError(null);
     setLocalImagePreview(URL.createObjectURL(file));
     setUploadingImage(true);
     try {
-      const { data: attachment } = await tenantFetch<{ data: { id: string; uploadUrl: string } }>(`/courses/${courseId}/image`, {
-        method: "POST",
-        subdomain,
-        body: { fileName: file.name, contentType: file.type, sizeBytes: file.size },
-      });
-      await uploadFileToPresignedUrl(attachment.uploadUrl, file, file.type);
-      await tenantFetch(`/attachments/${attachment.id}/confirm`, { method: "POST", subdomain });
-      await queryClient.invalidateQueries({ queryKey: ["course", courseId, subdomain] });
+      await api.uploadCourseImage(courseId, file);
+      await queryClient.invalidateQueries({ queryKey: ["course", courseId, api.cacheScope] });
     } catch (err) {
       setImageError((err as Error).message);
     } finally {
@@ -119,19 +109,15 @@ export default function CourseDetailsPanel({ courseId, readOnly }: { courseId: s
     setSaved(false);
     setSaving(true);
     try {
-      await tenantFetch(`/courses/${courseId}`, {
-        method: "PATCH",
-        subdomain,
-        body: {
-          title,
-          description,
-          category: categoryName,
-          subcategory,
-          deliveryMode,
-          duration: { value: Number(durationValue), unit: durationUnit },
-        },
+      await api.updateCourseDetails(courseId, {
+        title,
+        description,
+        category: categoryName,
+        ...(api.supportsSubcategory ? { subcategory } : {}),
+        deliveryMode,
+        duration: { value: Number(durationValue), unit: durationUnit },
       });
-      await queryClient.invalidateQueries({ queryKey: ["course", courseId, subdomain] });
+      await queryClient.invalidateQueries({ queryKey: ["course", courseId, api.cacheScope] });
       setError(null);
       setSaved(true);
     } catch (err) {
@@ -163,7 +149,7 @@ export default function CourseDetailsPanel({ courseId, readOnly }: { courseId: s
               value={title}
               onChange={(e) => {
                 setTitle(e.target.value);
-                queryClient.setQueryData(["course", courseId, subdomain], (prev: Course | undefined) =>
+                queryClient.setQueryData(["course", courseId, api.cacheScope], (prev: Course | undefined) =>
                   prev ? { ...prev, title: e.target.value } : prev,
                 );
               }}
@@ -183,18 +169,36 @@ export default function CourseDetailsPanel({ courseId, readOnly }: { courseId: s
             />
           </div>
 
-          <CategoryCombobox value={categoryName} onChange={setCategoryName} id="details-category" />
+          {api.supportsCategoryList ? (
+            <CategoryCombobox value={categoryName} onChange={setCategoryName} id="details-category" />
+          ) : (
+            <div>
+              <FieldLabel htmlFor="details-category" required>
+                Category
+              </FieldLabel>
+              <input
+                id="details-category"
+                className="field-input"
+                placeholder="e.g. Compliance, Leadership, Technical"
+                value={categoryName}
+                onChange={(e) => setCategoryName(e.target.value)}
+                required
+              />
+            </div>
+          )}
 
-          <div>
-            <FieldLabel htmlFor="details-subcategory">Subcategory</FieldLabel>
-            <input
-              id="details-subcategory"
-              className="field-input"
-              placeholder="e.g. Workplace Safety"
-              value={subcategory}
-              onChange={(e) => setSubcategory(e.target.value)}
-            />
-          </div>
+          {api.supportsSubcategory && (
+            <div>
+              <FieldLabel htmlFor="details-subcategory">Subcategory</FieldLabel>
+              <input
+                id="details-subcategory"
+                className="field-input"
+                placeholder="e.g. Workplace Safety"
+                value={subcategory}
+                onChange={(e) => setSubcategory(e.target.value)}
+              />
+            </div>
+          )}
 
           <div>
             <FieldLabel htmlFor="details-deliveryMode" required>
@@ -230,6 +234,7 @@ export default function CourseDetailsPanel({ courseId, readOnly }: { courseId: s
             </div>
           </div>
 
+          {api.supportsCourseImage && (
           <div>
             <FieldLabel>Course image</FieldLabel>
             {imageError && <p className="banner-error mb-2">{imageError}</p>}
@@ -286,6 +291,7 @@ export default function CourseDetailsPanel({ courseId, readOnly }: { courseId: s
               </button>
             )}
           </div>
+          )}
         </fieldset>
 
         {!readOnly && (

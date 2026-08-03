@@ -18,8 +18,7 @@ import {
 import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Card, Input, Button, Modal, Popover, PopoverMenuItem, Badge } from "@tm/ui";
-import { tenantFetch } from "@/lib/tenant-api-client";
-import { useSubdomain } from "@/lib/subdomain-context";
+import { useCourseEditorApi } from "@/lib/course-editor-context";
 import {
   buildCourseOutline,
   type Curriculum,
@@ -94,12 +93,14 @@ function StatusBadge({ status }: { status: ContentStatus }) {
 function SortableContentItem({
   item,
   readOnly,
+  showStatusToggle,
   onToggleStatus,
   onEdit,
   onDelete,
 }: {
   item: ContentItem;
   readOnly: boolean;
+  showStatusToggle: boolean;
   onToggleStatus: () => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -140,16 +141,18 @@ function SortableContentItem({
                 >
                   Edit
                 </button>
-                <button
-                  type="button"
-                  className="block w-full cursor-pointer px-3 py-2 text-left text-sm text-secondary hover:bg-slate-50 hover:text-primary"
-                  onClick={() => {
-                    close();
-                    onToggleStatus();
-                  }}
-                >
-                  {item.status === "published" ? "Unpublish" : "Publish"}
-                </button>
+                {showStatusToggle && (
+                  <button
+                    type="button"
+                    className="block w-full cursor-pointer px-3 py-2 text-left text-sm text-secondary hover:bg-slate-50 hover:text-primary"
+                    onClick={() => {
+                      close();
+                      onToggleStatus();
+                    }}
+                  >
+                    {item.status === "published" ? "Unpublish" : "Publish"}
+                  </button>
+                )}
                 <button
                   type="button"
                   className="block w-full cursor-pointer px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50"
@@ -199,6 +202,7 @@ function ModuleContentItems({
   moduleId,
   contentItems: allContentItems,
   readOnly,
+  showStatusToggle,
   addingType,
   addingCreatedId,
   addingSessionId,
@@ -213,6 +217,7 @@ function ModuleContentItems({
   moduleId: string;
   contentItems: ContentItem[];
   readOnly: boolean;
+  showStatusToggle: boolean;
   addingType: ContentItemType | null;
   addingCreatedId: string | null;
   addingSessionId: number | null;
@@ -241,6 +246,7 @@ function ModuleContentItems({
                 key={item.id}
                 item={item}
                 readOnly={readOnly}
+                showStatusToggle={showStatusToggle}
                 onToggleStatus={() => onToggleItemStatus(item)}
                 onEdit={() => onEditContent(item, target)}
                 onDelete={() => onDeleteItem(item)}
@@ -274,6 +280,7 @@ function SortableModule({
   status,
   contentItems,
   readOnly,
+  showStatusToggle,
   collapsed,
   onToggleCollapse,
   onRename,
@@ -294,6 +301,7 @@ function SortableModule({
   status: ContentStatus;
   contentItems: ContentItem[];
   readOnly: boolean;
+  showStatusToggle: boolean;
   collapsed: boolean;
   onToggleCollapse: () => void;
   onRename: (title: string) => void;
@@ -381,16 +389,18 @@ function SortableModule({
                     >
                       Edit module
                     </button>
-                    <button
-                      type="button"
-                      className="block w-full cursor-pointer px-3 py-2 text-left text-sm text-secondary hover:bg-slate-50 hover:text-primary"
-                      onClick={() => {
-                        close();
-                        onToggleStatus();
-                      }}
-                    >
-                      {status === "published" ? "Unpublish module" : "Publish module"}
-                    </button>
+                    {showStatusToggle && (
+                      <button
+                        type="button"
+                        className="block w-full cursor-pointer px-3 py-2 text-left text-sm text-secondary hover:bg-slate-50 hover:text-primary"
+                        onClick={() => {
+                          close();
+                          onToggleStatus();
+                        }}
+                      >
+                        {status === "published" ? "Unpublish module" : "Publish module"}
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="block w-full cursor-pointer px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50"
@@ -421,6 +431,7 @@ function SortableModule({
             moduleId={moduleId}
             contentItems={contentItems}
             readOnly={readOnly}
+            showStatusToggle={showStatusToggle}
             addingType={lessonForm.addingType}
             addingCreatedId={lessonForm.addingCreatedId}
             addingSessionId={lessonForm.addingSessionId}
@@ -575,15 +586,12 @@ type ItemContainer = { type: "module"; moduleId: string } | { type: "standalone"
  * additional risk that a brief refetch-driven update is the better trade here.
  */
 export default function CurriculumTab({ courseId, readOnly }: { courseId: string; readOnly: boolean }) {
-  const subdomain = useSubdomain();
+  const api = useCourseEditorApi();
   const queryClient = useQueryClient();
 
   const curriculumQuery = useQuery({
-    queryKey: ["course-curriculum", courseId, subdomain],
-    queryFn: async () => {
-      const { data } = await tenantFetch<{ data: Curriculum }>(`/courses/${courseId}/curriculum`, { subdomain });
-      return data;
-    },
+    queryKey: ["course-curriculum", courseId, api.cacheScope],
+    queryFn: () => api.fetchCurriculum(courseId),
   });
   const curriculum = curriculumQuery.data;
 
@@ -613,64 +621,62 @@ export default function CurriculumTab({ courseId, readOnly }: { courseId: string
   const addSessionRef = useRef(0);
 
   function invalidateCurriculum() {
-    queryClient.invalidateQueries({ queryKey: ["course-curriculum", courseId, subdomain] });
+    queryClient.invalidateQueries({ queryKey: ["course-curriculum", courseId, api.cacheScope] });
   }
   function invalidateCourse() {
-    queryClient.invalidateQueries({ queryKey: ["course", courseId, subdomain] });
+    queryClient.invalidateQueries({ queryKey: ["course", courseId, api.cacheScope] });
   }
   function patchCurriculum(updater: (prev: Curriculum) => Curriculum) {
-    queryClient.setQueryData<Curriculum>(["course-curriculum", courseId, subdomain], (prev) => (prev ? updater(prev) : prev));
+    queryClient.setQueryData<Curriculum>(["course-curriculum", courseId, api.cacheScope], (prev) => (prev ? updater(prev) : prev));
   }
 
   const createModuleMutation = useMutation({
-    mutationFn: (input: { title: string; description: string }) => tenantFetch(`/courses/${courseId}/modules`, { method: "POST", subdomain, body: input }),
+    mutationFn: (input: { title: string; description: string }) => api.createModule(courseId, input),
     onSuccess: () => {
       invalidateCurriculum();
       invalidateCourse();
     },
   });
   const updateModuleMutation = useMutation({
-    mutationFn: ({ moduleId, input }: { moduleId: string; input: { title: string; description: string } }) =>
-      tenantFetch(`/modules/${moduleId}`, { method: "PATCH", subdomain, body: input }),
+    mutationFn: ({ moduleId, input }: { moduleId: string; input: { title: string; description: string } }) => api.updateModule(moduleId, input),
     onSuccess: invalidateCurriculum,
   });
   const renameModuleMutation = useMutation({
-    mutationFn: ({ moduleId, title }: { moduleId: string; title: string }) => tenantFetch(`/modules/${moduleId}`, { method: "PATCH", subdomain, body: { title } }),
+    mutationFn: ({ moduleId, title }: { moduleId: string; title: string }) => api.updateModule(moduleId, { title }),
     onSuccess: invalidateCurriculum,
   });
   const setModuleStatusMutation = useMutation({
-    mutationFn: ({ moduleId, status }: { moduleId: string; status: ContentStatus }) =>
-      tenantFetch(`/modules/${moduleId}`, { method: "PATCH", subdomain, body: { status } }),
+    // Only ever invoked when `api.supportsItemStatusToggle` is true (the UI hides the toggle
+    // otherwise), which is exactly when `setModuleStatus` is guaranteed to be defined.
+    mutationFn: ({ moduleId, status }: { moduleId: string; status: ContentStatus }) => api.setModuleStatus!(moduleId, status),
     onSuccess: invalidateCurriculum,
   });
   const deleteModuleMutation = useMutation({
-    mutationFn: (moduleId: string) => tenantFetch(`/modules/${moduleId}`, { method: "DELETE", subdomain }),
+    mutationFn: (moduleId: string) => api.deleteModule(moduleId),
     onSuccess: () => {
       invalidateCurriculum();
       invalidateCourse();
     },
   });
   const setContentItemStatusMutation = useMutation({
-    mutationFn: ({ contentItemId, status }: { contentItemId: string; status: ContentStatus }) =>
-      tenantFetch(`/content-items/${contentItemId}`, { method: "PATCH", subdomain, body: { status } }),
+    // Same non-null rationale as `setModuleStatusMutation` above.
+    mutationFn: ({ contentItemId, status }: { contentItemId: string; status: ContentStatus }) => api.setContentItemStatus!(contentItemId, status),
     onSuccess: invalidateCurriculum,
   });
   const deleteContentItemMutation = useMutation({
-    mutationFn: (contentItemId: string) => tenantFetch(`/content-items/${contentItemId}`, { method: "DELETE", subdomain }),
+    mutationFn: (contentItemId: string) => api.deleteContentItem(contentItemId),
     onSuccess: invalidateCurriculum,
   });
   const reorderModuleContentItemsMutation = useMutation({
-    mutationFn: ({ moduleId, contentItemIds }: { moduleId: string; contentItemIds: string[] }) =>
-      tenantFetch(`/modules/${moduleId}/content-items/reorder`, { method: "POST", subdomain, body: { contentItemIds } }),
+    mutationFn: ({ moduleId, contentItemIds }: { moduleId: string; contentItemIds: string[] }) => api.reorderModuleContentItems(moduleId, contentItemIds),
     onError: invalidateCurriculum,
   });
   const moveContentItemMutation = useMutation({
-    mutationFn: ({ contentItemId, moduleId }: { contentItemId: string; moduleId: string | null }) =>
-      tenantFetch(`/content-items/${contentItemId}`, { method: "PATCH", subdomain, body: { moduleId } }),
+    mutationFn: ({ contentItemId, moduleId }: { contentItemId: string; moduleId: string | null }) => api.moveContentItem(contentItemId, moduleId),
     onSettled: invalidateCurriculum,
   });
   const reorderOutlineMutation = useMutation({
-    mutationFn: (orderedIds: string[]) => tenantFetch(`/courses/${courseId}/outline/reorder`, { method: "POST", subdomain, body: { orderedIds } }),
+    mutationFn: (orderedIds: string[]) => api.reorderOutline(courseId, orderedIds),
     onError: invalidateCurriculum,
   });
 
@@ -789,9 +795,12 @@ export default function CurriculumTab({ courseId, readOnly }: { courseId: string
         const newOrder = arrayMove(ids, oldIndex, dest.index);
         patchCurriculum((prev) => ({ ...prev, outlineOrder: newOrder }));
         reorderOutlineMutation.mutate(newOrder);
-      } else {
+      } else if (api.supportsStandaloneContentItems) {
         moveContentItemMutation.mutate({ contentItemId: activeId, moduleId: null });
       }
+      // No standalone items on the platform side — dropping a module-owned lesson onto another
+      // module's header (the only way to reach `dest.type === "outline"` from a module-sourced item)
+      // is simply a no-op there instead of erroring.
     } else if (sourceContainer.type === "module" && sourceContainer.moduleId === dest.moduleId) {
       const mod = findModule(dest.moduleId);
       if (!mod) return;
@@ -854,19 +863,21 @@ export default function CurriculumTab({ courseId, readOnly }: { courseId: string
                       setModuleModalOpen(true);
                     }}
                   />
-                  <LessonSubmenuItem
-                    active={addMenuStep === "lesson"}
-                    onToggle={() => setAddMenuStep((step) => (step === "lesson" ? "root" : "lesson"))}
-                    close={close}
-                    onPick={(type) => {
-                      openAddLessonForm(type, { courseId });
-                      setAddMenuStep("root");
-                    }}
-                    onAiPick={() => {
-                      setAiModalOpen(true);
-                      setAddMenuStep("root");
-                    }}
-                  />
+                  {api.supportsStandaloneContentItems && (
+                    <LessonSubmenuItem
+                      active={addMenuStep === "lesson"}
+                      onToggle={() => setAddMenuStep((step) => (step === "lesson" ? "root" : "lesson"))}
+                      close={close}
+                      onPick={(type) => {
+                        openAddLessonForm(type, { courseId });
+                        setAddMenuStep("root");
+                      }}
+                      onAiPick={() => {
+                        setAiModalOpen(true);
+                        setAddMenuStep("root");
+                      }}
+                    />
+                  )}
                 </>
               )}
             </Popover>
@@ -890,6 +901,7 @@ export default function CurriculumTab({ courseId, readOnly }: { courseId: string
                     status={entry.module.status}
                     contentItems={entry.module.contentItems ?? []}
                     readOnly={readOnly}
+                    showStatusToggle={api.supportsItemStatusToggle}
                     collapsed={collapsedModuleIds.has(entry.module.id)}
                     onToggleCollapse={() => toggleModuleCollapsed(entry.module.id)}
                     onRename={(title) => renameModuleMutation.mutate({ moduleId: entry.module.id, title })}
@@ -912,6 +924,7 @@ export default function CurriculumTab({ courseId, readOnly }: { courseId: string
                     key={entry.id}
                     item={entry.item}
                     readOnly={readOnly}
+                    showStatusToggle={api.supportsItemStatusToggle}
                     onToggleStatus={() =>
                       setContentItemStatusMutation.mutate({ contentItemId: entry.item.id, status: entry.item.status === "published" ? "draft" : "published" })
                     }

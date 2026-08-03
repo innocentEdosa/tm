@@ -20,6 +20,8 @@ import {
   Bell,
   Search,
   X,
+  Store,
+  ListChecks,
 } from "lucide-react";
 
 type IconComponent = React.ComponentType<{ className?: string }>;
@@ -43,6 +45,8 @@ const ICONS = {
   fileText: FileText,
   graduationCap: GraduationCap,
   clipboardList: ClipboardList,
+  store: Store,
+  listChecks: ListChecks,
 } satisfies Record<string, IconComponent>;
 
 export interface NavLinkItem {

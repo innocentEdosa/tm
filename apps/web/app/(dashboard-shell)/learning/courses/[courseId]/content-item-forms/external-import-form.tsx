@@ -3,8 +3,8 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Card, Input, Button } from "@tm/ui";
-import { tenantFetch, uploadFileToPresignedUrl } from "@/lib/tenant-api-client";
-import { useSubdomain } from "@/lib/subdomain-context";
+import { useCourseEditorApi } from "@/lib/course-editor-context";
+import { uploadFileToPresignedUrl } from "@/lib/course-editor-adapter";
 import { type ContentItemTarget, type ContentItem } from "@/lib/course-api-types";
 import { useAutoSaveContentItem, AutoSaveIndicator } from "./use-autosave-content-item";
 import { LessonDetailsSection, LessonResourcesSection, SectionHeading } from "./lesson-form-sections";
@@ -40,7 +40,7 @@ export default function ExternalImportForm({
   onCreated?: (id: string) => void;
   editingItem?: ContentItem;
 }) {
-  const subdomain = useSubdomain();
+  const api = useCourseEditorApi();
   const queryClient = useQueryClient();
   const [subChoice, setSubChoice] = useState<SubChoice>("url");
   const { status, savedItemId, scheduleSave } = useAutoSaveContentItem(courseId, target, onCreated, editingItem?.id);
@@ -61,7 +61,7 @@ export default function ExternalImportForm({
   }
 
   async function handleScormFileChange(event: React.ChangeEvent<HTMLInputElement>) {
-    if (!("moduleId" in target)) return;
+    if (!("moduleId" in target) || !api.getScormUploadUrl || !api.importScormPackage) return;
     const file = event.target.files?.[0];
     if (!file) return;
     setScormError(null);
@@ -71,18 +71,15 @@ export default function ExternalImportForm({
       // The anchor content item's own payload.url is never used once a real SCORM package is
       // imported onto it (import only cares about payload.sourceType === "scorm") — this is a
       // throwaway placeholder to satisfy the generic content-item route's payload validation.
-      const { data: anchor } = await tenantFetch<{ data: ContentItem }>(`/modules/${target.moduleId}/content-items`, {
-        method: "POST",
-        subdomain,
-        body: { type: "external_import", title: file.name.replace(/\.zip$/i, ""), payload: { url: "pending", sourceType: "scorm" } },
+      const anchor = await api.createContentItem(target, {
+        type: "external_import",
+        title: file.name.replace(/\.zip$/i, ""),
+        payload: { url: "pending", sourceType: "scorm" },
       });
-      const { data: upload } = await tenantFetch<{ data: { uploadUrl: string; storageKey: string } }>(
-        `/content-items/${anchor.id}/scorm/upload-url`,
-        { method: "POST", subdomain, body: { sizeBytes: file.size } },
-      );
+      const upload = await api.getScormUploadUrl(anchor.id, file.size);
       await uploadFileToPresignedUrl(upload.uploadUrl, file, "application/zip", setProgress);
-      await tenantFetch(`/content-items/${anchor.id}/scorm/import`, { method: "POST", subdomain, body: { storageKey: upload.storageKey } });
-      await queryClient.invalidateQueries({ queryKey: ["course-curriculum", courseId, subdomain] });
+      await api.importScormPackage(anchor.id, upload.storageKey);
+      await queryClient.invalidateQueries({ queryKey: ["course-curriculum", courseId, api.cacheScope] });
       onClose();
     } catch (err) {
       setScormError((err as Error).message);
@@ -92,7 +89,7 @@ export default function ExternalImportForm({
 
   return (
     <Card>
-      {!editingItem && "moduleId" in target && (
+      {!editingItem && "moduleId" in target && api.supportsScormImport && (
         <div className="mb-3 flex gap-2">
           <Button type="button" variant={subChoice === "url" ? "primary" : "outline"} size="sm" onClick={() => setSubChoice("url")}>
             External URL

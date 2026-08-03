@@ -2,8 +2,7 @@
 
 import { useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { tenantFetch } from "@/lib/tenant-api-client";
-import { useSubdomain } from "@/lib/subdomain-context";
+import { useCourseEditorApi } from "@/lib/course-editor-context";
 import type { ContentItemTarget, ContentItemPayload, ContentItemType } from "@/lib/course-api-types";
 
 export type AutoSaveStatus = "idle" | "saving" | "saved";
@@ -28,7 +27,7 @@ export interface AutoSaveContentItemInput {
  * one — every save goes straight to a PATCH from the start, with no create call.
  */
 export function useAutoSaveContentItem(courseId: string, target: ContentItemTarget, onCreated?: (id: string) => void, existingId?: string | null) {
-  const subdomain = useSubdomain();
+  const api = useCourseEditorApi();
   const queryClient = useQueryClient();
   const [savedItemId, setSavedItemId] = useState<string | null>(existingId ?? null);
   const [status, setStatus] = useState<AutoSaveStatus>(existingId ? "saved" : "idle");
@@ -42,27 +41,23 @@ export function useAutoSaveContentItem(courseId: string, target: ContentItemTarg
       const currentId = savedItemIdRef.current;
       try {
         if (currentId) {
-          await tenantFetch(`/content-items/${currentId}`, {
-            method: "PATCH",
-            subdomain,
-            body: { title: input.title, description: input.description ?? null, payload: input.payload },
-          });
+          await api.updateContentItem(currentId, { title: input.title, description: input.description ?? null, payload: input.payload });
         } else {
-          const path = "moduleId" in target ? `/modules/${target.moduleId}/content-items` : `/courses/${target.courseId}/content-items`;
-          const { data } = await tenantFetch<{ data: { id: string } }>(path, {
-            method: "POST",
-            subdomain,
-            body: { type: input.type, title: input.title, description: input.description ?? null, payload: input.payload },
+          const created = await api.createContentItem(target, {
+            type: input.type,
+            title: input.title,
+            description: input.description ?? null,
+            payload: input.payload,
           });
-          savedItemIdRef.current = data.id;
-          setSavedItemId(data.id);
+          savedItemIdRef.current = created.id;
+          setSavedItemId(created.id);
           // Lets the parent list hide this row while the form is still open editing it — otherwise the
           // freshly-created draft renders twice: once as a normal row above, once as this open form.
-          onCreated?.(data.id);
+          onCreated?.(created.id);
         }
         setStatus("saved");
-        queryClient.invalidateQueries({ queryKey: ["course-curriculum", courseId, subdomain] });
-        queryClient.invalidateQueries({ queryKey: ["course", courseId, subdomain] });
+        queryClient.invalidateQueries({ queryKey: ["course-curriculum", courseId, api.cacheScope] });
+        queryClient.invalidateQueries({ queryKey: ["course", courseId, api.cacheScope] });
       } catch {
         setStatus("idle");
       }

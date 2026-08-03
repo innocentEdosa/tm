@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -8,6 +8,8 @@ import { ArrowUp, ArrowDown, MoreHorizontal } from "lucide-react";
 import { PageHeader, Card, Badge, Modal, Button, Pagination } from "@tm/ui";
 import { tenantFetch } from "@/lib/tenant-api-client";
 import { SubdomainProvider, useSubdomain } from "@/lib/subdomain-context";
+import { CourseEditorApiProvider } from "@/lib/course-editor-context";
+import { tenantCourseEditorApi } from "@/lib/course-editor-adapter";
 import type { Course, CourseStatus } from "@/lib/course-api-types";
 import CreateCourseMenu from "./create-course-menu";
 
@@ -297,9 +299,12 @@ function CoursesListInner({ canManage }: { canManage: boolean }) {
  * training-needs-client.tsx's established table/RowActionsMenu/Pagination conventions.
  */
 export default function CoursesListClient({ canManage, subdomain }: { canManage: boolean; subdomain: string }) {
+  const api = useMemo(() => tenantCourseEditorApi(subdomain), [subdomain]);
   return (
     <SubdomainProvider subdomain={subdomain}>
-      <CoursesListInner canManage={canManage} />
+      <CourseEditorApiProvider api={api}>
+        <CoursesListInner canManage={canManage} />
+      </CourseEditorApiProvider>
     </SubdomainProvider>
   );
 }

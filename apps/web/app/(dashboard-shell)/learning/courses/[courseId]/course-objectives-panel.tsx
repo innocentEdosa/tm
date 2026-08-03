@@ -3,9 +3,7 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, RepeatableFieldList } from "@tm/ui";
-import { tenantFetch } from "@/lib/tenant-api-client";
-import { useSubdomain } from "@/lib/subdomain-context";
-import type { Course } from "@/lib/course-api-types";
+import { useCourseEditorApi } from "@/lib/course-editor-context";
 
 // Purely a starting suggestion for a blank course — neither list is required, and every row
 // (including these initial ones) can be removed.
@@ -26,15 +24,12 @@ function seedRequirements(values: string[]): string[] {
  * Its own independent "Save Changes", separate from Course Details — `PATCH .../courses/:id/objectives`.
  */
 export default function CourseObjectivesPanel({ courseId, readOnly }: { courseId: string; readOnly: boolean }) {
-  const subdomain = useSubdomain();
+  const api = useCourseEditorApi();
   const queryClient = useQueryClient();
 
   const courseQuery = useQuery({
-    queryKey: ["course", courseId, subdomain],
-    queryFn: async () => {
-      const { data } = await tenantFetch<{ data: Course }>(`/courses/${courseId}`, { subdomain });
-      return data;
-    },
+    queryKey: ["course", courseId, api.cacheScope],
+    queryFn: () => api.fetchCourse(courseId),
   });
   const course = courseQuery.data;
 
@@ -61,12 +56,8 @@ export default function CourseObjectivesPanel({ courseId, readOnly }: { courseId
     setSaved(false);
     setSaving(true);
     try {
-      await tenantFetch(`/courses/${courseId}/objectives`, {
-        method: "PATCH",
-        subdomain,
-        body: { learningObjectives: objectives, requirements },
-      });
-      await queryClient.invalidateQueries({ queryKey: ["course", courseId, subdomain] });
+      await api.updateObjectives(courseId, { learningObjectives: objectives, requirements });
+      await queryClient.invalidateQueries({ queryKey: ["course", courseId, api.cacheScope] });
       setError(null);
       setSaved(true);
     } catch (err) {

@@ -4,9 +4,8 @@ import { useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { File, Link2, Plus, Upload, X } from "lucide-react";
 import { Input, Button } from "@tm/ui";
-import { tenantFetch, uploadFileToPresignedUrl } from "@/lib/tenant-api-client";
-import { useSubdomain } from "@/lib/subdomain-context";
-import type { Attachment } from "@/lib/course-api-types";
+import { useCourseEditorApi } from "@/lib/course-editor-context";
+import { uploadFileToPresignedUrl } from "@/lib/course-editor-adapter";
 
 /** A section heading inside a lesson form — "Lesson Details" / "Lesson Content" / "Lesson Resources".
  * `first` drops the top margin for whichever section opens the form. */
@@ -122,14 +121,11 @@ function FileDropzone({ onFileSelected, disabled }: { onFileSelected: (file: Fil
  * the real presigned-upload-then-confirm flow; links insert directly (no storage involved).
  */
 export function LessonResourcesSection({ contentItemId }: { contentItemId: string | null }) {
-  const subdomain = useSubdomain();
+  const api = useCourseEditorApi();
   const queryClient = useQueryClient();
   const attachmentsQuery = useQuery({
-    queryKey: ["content-item-attachments", contentItemId, subdomain],
-    queryFn: async () => {
-      const { data } = await tenantFetch<{ data: Attachment[] }>(`/content-items/${contentItemId}/attachments`, { subdomain });
-      return data;
-    },
+    queryKey: ["content-item-attachments", contentItemId, api.cacheScope],
+    queryFn: () => api.fetchAttachments(contentItemId!),
     enabled: !!contentItemId,
   });
   const resources = attachmentsQuery.data ?? [];
@@ -154,7 +150,7 @@ export function LessonResourcesSection({ contentItemId }: { contentItemId: strin
   }
 
   function invalidate() {
-    queryClient.invalidateQueries({ queryKey: ["content-item-attachments", contentItemId, subdomain] });
+    queryClient.invalidateQueries({ queryKey: ["content-item-attachments", contentItemId, api.cacheScope] });
   }
 
   async function handleFileSelected(file: File) {
@@ -163,13 +159,9 @@ export function LessonResourcesSection({ contentItemId }: { contentItemId: strin
     setFileName(file.name);
     setFileProgress(0);
     try {
-      const { data: attachment } = await tenantFetch<{ data: { id: string; uploadUrl: string } }>(`/content-items/${contentItemId}/attachments`, {
-        method: "POST",
-        subdomain,
-        body: { fileName: file.name, contentType: file.type, sizeBytes: file.size },
-      });
+      const attachment = await api.createAttachmentUploadUrl(contentItemId, { fileName: file.name, contentType: file.type, sizeBytes: file.size });
       await uploadFileToPresignedUrl(attachment.uploadUrl, file, file.type, setFileProgress);
-      await tenantFetch(`/attachments/${attachment.id}/confirm`, { method: "POST", subdomain });
+      await api.confirmAttachment(contentItemId, attachment.id);
       invalidate();
       closeAddForm();
     } catch (err) {
@@ -179,13 +171,9 @@ export function LessonResourcesSection({ contentItemId }: { contentItemId: strin
   }
 
   async function handleAddLink() {
-    if (!contentItemId) return;
+    if (!contentItemId || !api.createAttachmentLink) return;
     try {
-      await tenantFetch(`/content-items/${contentItemId}/attachments`, {
-        method: "POST",
-        subdomain,
-        body: { kind: "link", fileName: linkTitle, url: linkUrl },
-      });
+      await api.createAttachmentLink(contentItemId, { fileName: linkTitle, url: linkUrl });
       invalidate();
       closeAddForm();
     } catch (err) {
@@ -194,7 +182,8 @@ export function LessonResourcesSection({ contentItemId }: { contentItemId: strin
   }
 
   async function handleRemove(attachmentId: string) {
-    await tenantFetch(`/attachments/${attachmentId}`, { method: "DELETE", subdomain });
+    if (!contentItemId) return;
+    await api.deleteAttachment(contentItemId, attachmentId);
     invalidate();
   }
 
@@ -234,7 +223,7 @@ export function LessonResourcesSection({ contentItemId }: { contentItemId: strin
                 </label>
                 <select id="resource-type" className="field-input" value={resourceType} onChange={(e) => setResourceType(e.target.value as "file" | "link")}>
                   <option value="file">{RESOURCE_TYPE_LABEL.file}</option>
-                  <option value="link">{RESOURCE_TYPE_LABEL.link}</option>
+                  {api.supportsResourceLinks && <option value="link">{RESOURCE_TYPE_LABEL.link}</option>}
                 </select>
               </div>
 

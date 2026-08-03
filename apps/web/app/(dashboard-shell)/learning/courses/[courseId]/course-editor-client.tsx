@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -8,6 +8,8 @@ import { MoreVertical } from "lucide-react";
 import { Card, Badge, Button, Modal, Popover } from "@tm/ui";
 import { tenantFetch } from "@/lib/tenant-api-client";
 import { SubdomainProvider, useSubdomain } from "@/lib/subdomain-context";
+import { CourseEditorApiProvider } from "@/lib/course-editor-context";
+import { tenantCourseEditorApi } from "@/lib/course-editor-adapter";
 import type { Course, CourseStatus, Curriculum } from "@/lib/course-api-types";
 import InformationTab from "./information-tab";
 import PerformanceShell from "./performance-shell";
@@ -212,9 +214,12 @@ export default function CourseEditorClient({
   currentUserEmail: string;
   subdomain: string;
 }) {
+  const api = useMemo(() => tenantCourseEditorApi(subdomain), [subdomain]);
   return (
     <SubdomainProvider subdomain={subdomain}>
-      <CourseEditorInner courseId={courseId} canManage={canManage} currentUserEmail={currentUserEmail} />
+      <CourseEditorApiProvider api={api}>
+        <CourseEditorInner courseId={courseId} canManage={canManage} currentUserEmail={currentUserEmail} />
+      </CourseEditorApiProvider>
     </SubdomainProvider>
   );
 }

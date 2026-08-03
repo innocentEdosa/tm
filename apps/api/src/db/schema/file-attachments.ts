@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, bigint, timestamp, index, check, unique } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, bigint, timestamp, index, check } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { tenants } from "./tenants";
 import { users } from "./users";
@@ -14,6 +14,11 @@ import { users } from "./users";
  * null) from a plain external link (`url` populated, storage columns null) — a lesson resource can be
  * either, and reusing one table/route surface for both avoids a second near-identical entity just for
  * links, which never touch R2 at all and are `status:'ready'` immediately on creation.
+ *
+ * `storage_key` was unique until spec 029 (Course Marketplace) dropped that constraint
+ * (`0102_drop_file_attachments_storage_key_unique.sql`) — a cloned tenant content item's attachment
+ * row legitimately shares its `storage_key` with the platform original's `platform_file_attachments`
+ * row, never re-uploading the underlying R2 object (spec 029 research.md §1).
  */
 export const fileAttachments = pgTable(
   "file_attachments",
@@ -41,7 +46,6 @@ export const fileAttachments = pgTable(
       table.entityType,
       table.entityId,
     ),
-    unique("file_attachments_storage_key_unique").on(table.storageKey),
     check("file_attachments_entity_type_check", sql`${table.entityType} in ('content_item', 'course', 'course_author')`),
     check("file_attachments_kind_check", sql`${table.kind} in ('file', 'link')`),
     check("file_attachments_status_check", sql`${table.status} in ('pending', 'ready')`),
