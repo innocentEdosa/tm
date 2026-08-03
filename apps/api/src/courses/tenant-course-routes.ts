@@ -1,7 +1,8 @@
 import type { FastifyPluginAsync } from "fastify";
 import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
+import type { Db } from "../db/client";
 import { requireTenantUserSession } from "../tenant-auth/require-tenant-user-session";
-import { requirePermission, requireAnyPermission, userHasAnyPermission } from "../permissions/require-permission";
+import { requirePermission, userHasAnyPermission } from "../permissions/require-permission";
 import { courses } from "../db/schema/courses";
 import { courseCategories } from "../db/schema/course-categories";
 import { courseModules, contentItems } from "../db/schema/course-content";
@@ -31,7 +32,7 @@ type CourseRow = typeof courses.$inferSelect;
  * them directly, a `'department'` row naming their own department, or a `'role'` row naming any
  * role they hold. Callers with `course.manage` never have this condition applied at all — course
  * admins always see every course regardless of who it's assigned to. */
-function buildAssignmentVisibilityCondition(userId: string) {
+export function buildAssignmentVisibilityCondition(userId: string) {
   return sql`(
     NOT EXISTS (SELECT 1 FROM course_assignments ca WHERE ca.course_id = ${courses.id})
     OR EXISTS (SELECT 1 FROM course_assignments ca WHERE ca.course_id = ${courses.id} AND ca.assignee_type = 'all')
@@ -47,6 +48,21 @@ function buildAssignmentVisibilityCondition(userId: string) {
       WHERE ca.course_id = ${courses.id} AND ca.assignee_type = 'role'
     )
   )`;
+}
+
+/** Every learner-facing course-detail route (curriculum, authors, progress, reviews — all now open
+ * to any authenticated tenant user, not just `course.view`/`course.manage` holders per "My Learning
+ * accessible by everyone") needs this same "can this caller actually see this course" check that
+ * `GET /tenant/courses/:courseId` already applies — `course.manage` always bypasses it; everyone
+ * else only sees a course per `buildAssignmentVisibilityCondition`. */
+export async function isCourseVisibleToCaller(tenantDb: Db, userId: string, courseId: string): Promise<boolean> {
+  const canManage = await userHasAnyPermission(tenantDb, userId, ["course.manage"]);
+  if (canManage) return true;
+  const [visible] = await tenantDb
+    .select({ id: courses.id })
+    .from(courses)
+    .where(and(eq(courses.id, courseId), buildAssignmentVisibilityCondition(userId)));
+  return !!visible;
 }
 
 interface CourseWriteBody {
@@ -183,7 +199,7 @@ const tenantCourseRoutes: FastifyPluginAsync = async (fastify) => {
     };
   }>(
     "/tenant/courses",
-    { preHandler: [requireTenantUserSession(), requireAnyPermission("course.view", "course.manage")] },
+    { preHandler: [requireTenantUserSession()] },
     async (request) => {
       const tenantId = request.user!.tenantId;
       const conditions = [eq(courses.tenantId, tenantId)];
@@ -234,7 +250,7 @@ const tenantCourseRoutes: FastifyPluginAsync = async (fastify) => {
   // "categories" is never captured as a course id.
   fastify.get(
     "/tenant/courses/categories",
-    { preHandler: [requireTenantUserSession(), requireAnyPermission("course.view", "course.manage")] },
+    { preHandler: [requireTenantUserSession()] },
     async (request) => {
       const rows = await request.tenantDb
         .select({ id: courseCategories.id, name: courseCategories.name })
@@ -247,7 +263,7 @@ const tenantCourseRoutes: FastifyPluginAsync = async (fastify) => {
   // GET /tenant/courses/:courseId — spec FR-004, contracts §GET by id.
   fastify.get<{ Params: { courseId: string } }>(
     "/tenant/courses/:courseId",
-    { preHandler: [requireTenantUserSession(), requireAnyPermission("course.view", "course.manage")] },
+    { preHandler: [requireTenantUserSession()] },
     async (request, reply) => {
       const [existing] = await request.tenantDb.select().from(courses).where(eq(courses.id, request.params.courseId));
       if (!existing) {

@@ -23,6 +23,11 @@ import {
   Store,
   ListChecks,
   LayoutGrid,
+  Award,
+  Target,
+  History,
+  BarChart3,
+  HelpCircle,
 } from "lucide-react";
 
 type IconComponent = React.ComponentType<{ className?: string }>;
@@ -49,6 +54,11 @@ const ICONS = {
   store: Store,
   listChecks: ListChecks,
   layoutGrid: LayoutGrid,
+  award: Award,
+  target: Target,
+  history: History,
+  barChart3: BarChart3,
+  helpCircle: HelpCircle,
 } satisfies Record<string, IconComponent>;
 
 export interface NavLinkItem {

@@ -1,18 +1,19 @@
 import type { FastifyPluginAsync } from "fastify";
 import { and, eq } from "drizzle-orm";
 import { requireTenantUserSession } from "../tenant-auth/require-tenant-user-session";
-import { requirePermission, requireAnyPermission } from "../permissions/require-permission";
+import { requirePermission } from "../permissions/require-permission";
 import { courses } from "../db/schema/courses";
 import { courseReviews } from "../db/schema/course-reviews";
 import { users } from "../db/schema/users";
+import { isCourseVisibleToCaller } from "./tenant-course-routes";
 
 type CourseReviewRow = typeof courseReviews.$inferSelect;
 
 /**
  * Course Reviews panel. Read + moderate (flag, respond to a review) are staff-side
- * (`course.manage`); the learner-facing "Leave a rating" flow (course player) submits through the
- * create/update route below, gated on the same `course.view`/`course.manage` any course route
- * already requires — no new permission keys anywhere in this file.
+ * (`course.manage`); the learner-facing routes (list, "mine", the "Leave a rating" create/update)
+ * are open to any authenticated tenant user ("My Learning accessible by everyone"), with per-course
+ * visibility enforced via `isCourseVisibleToCaller` instead of a permission key.
  */
 const tenantCourseReviewRoutes: FastifyPluginAsync = async (fastify) => {
   async function resolveCourse(tenantDb: typeof fastify.db, courseId: string) {
@@ -45,11 +46,14 @@ const tenantCourseReviewRoutes: FastifyPluginAsync = async (fastify) => {
   // GET /tenant/courses/:courseId/reviews
   fastify.get<{ Params: { courseId: string } }>(
     "/tenant/courses/:courseId/reviews",
-    { preHandler: [requireTenantUserSession(), requireAnyPermission("course.view", "course.manage")] },
+    { preHandler: [requireTenantUserSession()] },
     async (request, reply) => {
       const { courseId } = request.params;
       const course = await resolveCourse(request.tenantDb, courseId);
       if (!course) {
+        return reply.code(404).send({ success: false, message: "Not found" });
+      }
+      if (!(await isCourseVisibleToCaller(request.tenantDb, request.user!.id, courseId))) {
         return reply.code(404).send({ success: false, message: "Not found" });
       }
       const rows = await request.tenantDb.select().from(courseReviews).where(eq(courseReviews.courseId, courseId)).orderBy(courseReviews.createdAt);
@@ -62,11 +66,14 @@ const tenantCourseReviewRoutes: FastifyPluginAsync = async (fastify) => {
   // app (`tenant-progress-routes.ts`'s own progress rows) — never a client-supplied user id.
   fastify.get<{ Params: { courseId: string } }>(
     "/tenant/courses/:courseId/reviews/mine",
-    { preHandler: [requireTenantUserSession(), requireAnyPermission("course.view", "course.manage")] },
+    { preHandler: [requireTenantUserSession()] },
     async (request, reply) => {
       const { courseId } = request.params;
       const course = await resolveCourse(request.tenantDb, courseId);
       if (!course) {
+        return reply.code(404).send({ success: false, message: "Not found" });
+      }
+      if (!(await isCourseVisibleToCaller(request.tenantDb, request.user!.id, courseId))) {
         return reply.code(404).send({ success: false, message: "Not found" });
       }
       const [review] = await request.tenantDb
@@ -84,7 +91,7 @@ const tenantCourseReviewRoutes: FastifyPluginAsync = async (fastify) => {
   // never accepted from the request body.
   fastify.post<{ Params: { courseId: string }; Body: { rating?: number; reviewText?: string | null } }>(
     "/tenant/courses/:courseId/reviews",
-    { preHandler: [requireTenantUserSession(), requireAnyPermission("course.view", "course.manage")] },
+    { preHandler: [requireTenantUserSession()] },
     async (request, reply) => {
       const { courseId } = request.params;
       const { rating, reviewText } = request.body ?? {};
@@ -93,6 +100,9 @@ const tenantCourseReviewRoutes: FastifyPluginAsync = async (fastify) => {
       }
       const course = await resolveCourse(request.tenantDb, courseId);
       if (!course) {
+        return reply.code(404).send({ success: false, message: "Not found" });
+      }
+      if (!(await isCourseVisibleToCaller(request.tenantDb, request.user!.id, courseId))) {
         return reply.code(404).send({ success: false, message: "Not found" });
       }
 

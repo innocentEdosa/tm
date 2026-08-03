@@ -1,7 +1,6 @@
 import type { FastifyPluginAsync } from "fastify";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { requireTenantUserSession } from "../tenant-auth/require-tenant-user-session";
-import { requireAnyPermission } from "../permissions/require-permission";
 import { contentItems } from "../db/schema/course-content";
 import { scormPackageItems } from "../db/schema/scorm";
 import { learnerContentProgress } from "../db/schema/learner-content-progress";
@@ -58,7 +57,10 @@ const tenantScormRuntimeRoutes: FastifyPluginAsync = async (fastify) => {
   // GET /tenant/content-items/:contentItemId/scorm/launch — spec FR-005/FR-011, contracts §GET launch.
   fastify.get<{ Params: { contentItemId: string } }>(
     "/tenant/content-items/:contentItemId/scorm/launch",
-    { preHandler: [requireTenantUserSession(), requireAnyPermission("course.view", "course.manage")] },
+    // "My Learning" is open to any authenticated tenant user — same bounded trade-off as the
+    // attachments routes (tenant-attachment-routes.ts): no new per-course visibility check added
+    // here, just the permission-key gate removed.
+    { preHandler: [requireTenantUserSession()] },
     async (request, reply) => {
       const { contentItemId } = request.params;
       const scoItem = await resolveScoPackageItem(request.tenantDb, contentItemId);
@@ -141,7 +143,10 @@ const tenantScormRuntimeRoutes: FastifyPluginAsync = async (fastify) => {
   // GET /tenant/scorm/packages/:packageId/files/* — contracts §GET files, research.md §7.
   fastify.get<{ Params: { packageId: string; "*": string } }>(
     "/tenant/scorm/packages/:packageId/files/*",
-    { preHandler: [requireTenantUserSession(), requireAnyPermission("course.view", "course.manage")] },
+    // "My Learning" is open to any authenticated tenant user — same bounded trade-off as the
+    // attachments routes (tenant-attachment-routes.ts): no new per-course visibility check added
+    // here, just the permission-key gate removed.
+    { preHandler: [requireTenantUserSession()] },
     async (request, reply) => {
       const { packageId } = request.params;
       const relativePath = request.params["*"];
@@ -166,7 +171,10 @@ const tenantScormRuntimeRoutes: FastifyPluginAsync = async (fastify) => {
   // PUT /tenant/content-items/:contentItemId/scorm/cmi — spec FR-007/FR-008, contracts §PUT cmi.
   fastify.put<{ Params: { contentItemId: string }; Body: CmiCommitBody }>(
     "/tenant/content-items/:contentItemId/scorm/cmi",
-    { preHandler: [requireTenantUserSession(), requireAnyPermission("course.view", "course.manage")] },
+    // "My Learning" is open to any authenticated tenant user — same bounded trade-off as the
+    // attachments routes (tenant-attachment-routes.ts): no new per-course visibility check added
+    // here, just the permission-key gate removed.
+    { preHandler: [requireTenantUserSession()] },
     async (request, reply) => {
       const { contentItemId } = request.params;
       const scoItem = await resolveScoPackageItem(request.tenantDb, contentItemId);

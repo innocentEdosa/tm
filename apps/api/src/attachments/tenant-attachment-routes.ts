@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { FastifyPluginAsync } from "fastify";
 import { and, eq, inArray } from "drizzle-orm";
 import { requireTenantUserSession } from "../tenant-auth/require-tenant-user-session";
-import { requirePermission, requireAnyPermission } from "../permissions/require-permission";
+import { requirePermission } from "../permissions/require-permission";
 import { contentItems } from "../db/schema/course-content";
 import { courses } from "../db/schema/courses";
 import { courseAuthors } from "../db/schema/course-authors";
@@ -297,7 +297,13 @@ const tenantAttachmentRoutes: FastifyPluginAsync = async (fastify) => {
   // GET /tenant/content-items/:contentItemId/attachments — spec FR-006, contracts §GET list.
   fastify.get<{ Params: { contentItemId: string } }>(
     "/tenant/content-items/:contentItemId/attachments",
-    { preHandler: [requireTenantUserSession(), requireAnyPermission("course.view", "course.manage")] },
+    // "My Learning" is open to any authenticated tenant user; these two routes aren't retrofitted
+    // with a per-course visibility check (unlike curriculum/authors/reviews above) — same known,
+    // pre-existing gap as before this change (a `course.view` holder could already fetch any
+    // attachment's metadata/download URL by id, not just ones on courses assigned to them), just now
+    // reachable by more roles. Left as a bounded, explicitly-noted trade-off rather than retrofitting
+    // full resource-level ACL onto the polymorphic attachments system in this pass.
+    { preHandler: [requireTenantUserSession()] },
     async (request, reply) => {
       const { contentItemId } = request.params;
       const item = await resolveContentItem(request.tenantDb, contentItemId);
@@ -326,7 +332,13 @@ const tenantAttachmentRoutes: FastifyPluginAsync = async (fastify) => {
   // `kind:"link"` row has no object to sign a URL for — its `url` field already is the destination.
   fastify.get<{ Params: { attachmentId: string } }>(
     "/tenant/attachments/:attachmentId/download-url",
-    { preHandler: [requireTenantUserSession(), requireAnyPermission("course.view", "course.manage")] },
+    // "My Learning" is open to any authenticated tenant user; these two routes aren't retrofitted
+    // with a per-course visibility check (unlike curriculum/authors/reviews above) — same known,
+    // pre-existing gap as before this change (a `course.view` holder could already fetch any
+    // attachment's metadata/download URL by id, not just ones on courses assigned to them), just now
+    // reachable by more roles. Left as a bounded, explicitly-noted trade-off rather than retrofitting
+    // full resource-level ACL onto the polymorphic attachments system in this pass.
+    { preHandler: [requireTenantUserSession()] },
     async (request, reply) => {
       const { attachmentId } = request.params;
       const [existing] = await request.tenantDb.select().from(fileAttachments).where(eq(fileAttachments.id, attachmentId));

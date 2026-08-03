@@ -1,13 +1,14 @@
 import type { FastifyPluginAsync } from "fastify";
 import { and, eq, inArray, desc } from "drizzle-orm";
 import { requireTenantUserSession } from "../tenant-auth/require-tenant-user-session";
-import { requirePermission, requireAnyPermission } from "../permissions/require-permission";
+import { requirePermission } from "../permissions/require-permission";
 import { courses } from "../db/schema/courses";
 import { courseAuthors } from "../db/schema/course-authors";
 import { fileAttachments } from "../db/schema/file-attachments";
 import { users } from "../db/schema/users";
 import { deleteAllAttachmentsForEntity } from "../attachments/tenant-attachment-routes";
 import * as storage from "../storage/storage";
+import { isCourseVisibleToCaller } from "./tenant-course-routes";
 
 type CourseAuthorRow = typeof courseAuthors.$inferSelect;
 
@@ -75,11 +76,16 @@ const tenantCourseAuthorRoutes: FastifyPluginAsync = async (fastify) => {
   // GET /tenant/courses/:courseId/authors
   fastify.get<{ Params: { courseId: string } }>(
     "/tenant/courses/:courseId/authors",
-    { preHandler: [requireTenantUserSession(), requireAnyPermission("course.view", "course.manage")] },
+    { preHandler: [requireTenantUserSession()] },
     async (request, reply) => {
       const { courseId } = request.params;
       const course = await resolveCourse(request.tenantDb, courseId);
       if (!course) {
+        return reply.code(404).send({ success: false, message: "Not found" });
+      }
+      // Any authenticated tenant user may reach this route now ("My Learning" is open to everyone) —
+      // see `tenant-course-content-routes.ts`'s curriculum route for the identical reasoning.
+      if (!(await isCourseVisibleToCaller(request.tenantDb, request.user!.id, courseId))) {
         return reply.code(404).send({ success: false, message: "Not found" });
       }
       const rows = await request.tenantDb.select().from(courseAuthors).where(eq(courseAuthors.courseId, courseId)).orderBy(desc(courseAuthors.createdAt));
