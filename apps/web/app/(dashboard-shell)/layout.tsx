@@ -82,39 +82,105 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const canAccessCourses =
     session.permissions.includes("course.view") || session.permissions.includes("course.manage");
 
+  // "My Learning" — the learner-facing entry point (courses assigned to *me*, with my own progress),
+  // split out into its own top-level group, peer to "Learning" (the admin-facing catalog/management
+  // side) rather than nested under it. Unconditionally visible — accessible by everyone, not gated on
+  // `course.view`/`course.manage` (those stay "Learning"-only, below); the page and every API call it
+  // makes rely on assignment-based visibility, not a permission key, to decide what's actually shown.
+  navSections.push({
+    key: "my-learning",
+    entries: [
+      {
+        key: "my-learning",
+        icon: "graduationCap",
+        label: "My Learning",
+        children: [{ key: "my-courses", icon: "layoutGrid", label: "My Courses", href: "/learning/my-courses" }],
+      },
+    ],
+  });
+
   // "Learning" (Training Request spec, 014, renamed by spec 020) — a new top-level section, peer to
-  // "Administration" and "Settings" (plan.md Summary), holding today's one link. The old top-level
-  // disabled "Courses" placeholder (research.md §8) is now this section's "Courses" entry, live per
-  // spec 028 rather than a permanent "Soon" stub.
-  if (canAccessTna || canAccessCourses) {
-    const learningChildren: NavLinkItem[] = [];
-    if (canAccessCourses) {
-      // My Courses (courses assigned to *me*, with my own progress) is listed first — the
-      // learner-facing entry point — ahead of the admin-facing course catalog/management list.
-      learningChildren.push({ key: "my-courses", icon: "layoutGrid", label: "My Courses", href: "/learning/my-courses" });
-      learningChildren.push({ key: "courses", icon: "bookOpen", label: "Courses", href: "/learning/courses" });
-    }
-    if (canAccessTna) {
-      learningChildren.push({
-        key: "tna",
-        icon: "clipboardList",
-        label: "Training Requests",
-        href: "/learning/training-requests",
-      });
-    }
+  // "Administration" and "Settings" (plan.md Summary). The old top-level disabled "Courses"
+  // placeholder (research.md §8) is now this section's "Courses" entry, live per spec 028 rather than
+  // a permanent "Soon" stub. "Learning Program" and "Learning Resources" are new disabled "Soon"
+  // stubs until their own specs land, same convention as Training Plan's placeholders below.
+  if (canAccessCourses) {
     navSections.push({
       key: "learning",
       entries: [
         {
           key: "learning",
-          icon: "graduationCap",
+          icon: "bookOpen",
           label: "Learning",
-          children: learningChildren,
+          children: [
+            { key: "courses", icon: "bookOpen", label: "Courses", href: "/learning/courses" },
+            { key: "learning-program", icon: "graduationCap", label: "Learning Program", href: "/learning/learning-program", disabled: true, tag: "Soon" },
+            { key: "learning-resources", icon: "fileText", label: "Learning Resources", href: "/learning/learning-resources", disabled: true, tag: "Soon" },
+          ],
         },
       ],
     });
   }
 
+  // "Training Plan" — a new top-level group (its own section, peer to "Learning"/"Administration")
+  // holding the training-request workflow's 3-part IA: today only "Training Request" has a real page
+  // (the existing training-request/training-need feature — same backend under either name, only the
+  // nav label changed across specs 014/020); "Training Needs Analysis" and "Training Plan" are
+  // disabled "Coming soon" stubs until their own specs land, same convention as the pre-028 "Courses"
+  // placeholder above.
+  if (canAccessTna) {
+    navSections.push({
+      key: "training-plan",
+      entries: [
+        {
+          key: "training-plan",
+          icon: "clipboardList",
+          label: "Training Plan",
+          children: [
+            { key: "tna", icon: "fileText", label: "Training Needs Analysis", href: "/learning/training-needs-analysis", disabled: true, tag: "Soon" },
+            { key: "training-request", icon: "clipboardList", label: "Training Request", href: "/learning/training-requests" },
+            { key: "training-plan-item", icon: "bookOpen", label: "Training Plan", href: "/learning/training-plan", disabled: true, tag: "Soon" },
+          ],
+        },
+      ],
+    });
+  }
+
+  // "Skills Profile" — a new top-level group, unconditionally visible (no permission model exists
+  // for any of this yet — same reasoning as "Dashboard" itself never being gated). All 3 children are
+  // disabled "Coming soon" stubs, same convention as Training Plan's placeholders above.
+  navSections.push({
+    key: "skills-profile",
+    entries: [
+      {
+        key: "skills-profile",
+        icon: "award",
+        label: "Skills Profile",
+        children: [
+          { key: "learning-goals", icon: "target", label: "Learning Goals", href: "/learning/goals", disabled: true, tag: "Soon" },
+          { key: "learning-history", icon: "history", label: "Learning History", href: "/learning/history", disabled: true, tag: "Soon" },
+          { key: "reports-analytics", icon: "barChart3", label: "Reports & Analytics", href: "/learning/reports", disabled: true, tag: "Soon" },
+        ],
+      },
+    ],
+  });
+
+  // "Help & Support" — a flat top-level entry (no children), also unconditionally visible and
+  // disabled until it has a real destination, same reasoning as "Skills Profile" above.
+  navSections.push({
+    key: "help-support",
+    entries: [{ key: "help-support", icon: "helpCircle", label: "Help & Support", href: "/help", disabled: true, tag: "Soon" }],
+  });
+
+  // "Settings" (spec FR-011/FR-012, User Story 5) — a system-configuration concern, deliberately
+  // distinct from "Administration" (people/access). Pinned in the footer, above Log out, not part
+  // of the scrollable nav above. Authentication moved here from its own former footer entry; its
+  // route (/settings/authentication) is unchanged, so no redirect is needed (plan.md Summary).
+  const footerEntries: NavEntry[] = [];
+
+  // "Administration" — moved into the footer (pinned above Settings/Log out, alongside them) rather
+  // than the scrollable nav above, so it reads as account/workspace-level administration rather than
+  // a peer of the day-to-day Learning/Training Plan sections.
   if (canManageTeam || canViewDepartments || canManageRoles) {
     const administrationChildren: NavLinkItem[] = [];
     if (canManageTeam) {
@@ -140,24 +206,14 @@ export default async function DashboardLayout({ children }: { children: React.Re
       });
     }
 
-    navSections.push({
+    footerEntries.push({
       key: "administration",
-      entries: [
-        {
-          key: "administration",
-          icon: "settings",
-          label: "Administration",
-          children: administrationChildren,
-        },
-      ],
+      icon: "settings",
+      label: "Administration",
+      children: administrationChildren,
     });
   }
 
-  // "Settings" (spec FR-011/FR-012, User Story 5) — a system-configuration concern, deliberately
-  // distinct from "Administration" (people/access). Pinned in the footer, above Log out, not part
-  // of the scrollable nav above. Authentication moved here from its own former footer entry; its
-  // route (/settings/authentication) is unchanged, so no redirect is needed (plan.md Summary).
-  const footerEntries: NavEntry[] = [];
   if (canManageAuth || canManageForms) {
     const settingsChildren: NavLinkItem[] = [];
     if (canManageAuth) {

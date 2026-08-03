@@ -21,6 +21,11 @@ import {
   Search,
   X,
   LayoutGrid,
+  Award,
+  Target,
+  History,
+  BarChart3,
+  HelpCircle,
 } from "lucide-react";
 
 type IconComponent = React.ComponentType<{ className?: string }>;
@@ -45,6 +50,11 @@ const ICONS = {
   graduationCap: GraduationCap,
   clipboardList: ClipboardList,
   layoutGrid: LayoutGrid,
+  award: Award,
+  target: Target,
+  history: History,
+  barChart3: BarChart3,
+  helpCircle: HelpCircle,
 } satisfies Record<string, IconComponent>;
 
 export interface NavLinkItem {

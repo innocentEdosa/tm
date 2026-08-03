@@ -1,10 +1,11 @@
 import type { FastifyPluginAsync } from "fastify";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { requireTenantUserSession } from "../tenant-auth/require-tenant-user-session";
-import { requirePermission, requireAnyPermission } from "../permissions/require-permission";
+import { requirePermission } from "../permissions/require-permission";
 import { courses } from "../db/schema/courses";
 import { courseModules, contentItems } from "../db/schema/course-content";
 import { users } from "../db/schema/users";
+import { isCourseVisibleToCaller } from "../courses/tenant-course-routes";
 import { deleteAllAttachmentsForEntity } from "../attachments/tenant-attachment-routes";
 import { CONTENT_ITEM_TYPES, validateContentItemPayload, type ContentItemType } from "./content-item-payload-validation";
 
@@ -102,11 +103,18 @@ const tenantCourseContentRoutes: FastifyPluginAsync = async (fastify) => {
   // outline (a direct port of the mock UI's own `useMockCourseOutline`).
   fastify.get<{ Params: { courseId: string } }>(
     "/tenant/courses/:courseId/curriculum",
-    { preHandler: [requireTenantUserSession(), requireAnyPermission("course.view", "course.manage")] },
+    { preHandler: [requireTenantUserSession()] },
     async (request, reply) => {
       const { courseId } = request.params;
       const course = await resolveCourse(request.tenantDb, courseId);
       if (!course) {
+        return reply.code(404).send({ success: false, message: "Not found" });
+      }
+      // Any authenticated tenant user may reach this route now ("My Learning" is open to everyone),
+      // so course-level access is enforced here instead — same 404-for-absent shape as
+      // `GET /tenant/courses/:courseId` itself, so a learner outside the assigned audience can't
+      // distinguish "doesn't exist" from "not assigned to you".
+      if (!(await isCourseVisibleToCaller(request.tenantDb, request.user!.id, courseId))) {
         return reply.code(404).send({ success: false, message: "Not found" });
       }
 
