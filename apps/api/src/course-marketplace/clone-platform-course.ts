@@ -64,6 +64,7 @@ export async function clonePlatformCourseIntoTenant(
     .orderBy(platformCourseModules.position);
 
   const moduleIdMap = new Map<string, string>();
+  const outlineOrder: string[] = [];
   for (const pm of platformModules) {
     const [newModule] = await tenantDb
       .insert(courseModules)
@@ -73,10 +74,24 @@ export async function clonePlatformCourseIntoTenant(
         title: pm.title,
         description: pm.description,
         position: pm.position,
+        // Published, not the schema default "draft" — same reasoning as the course itself starting
+        // "active" above: the platform source was already published, so the clone must be
+        // immediately usable, not something the tenant has to separately publish module-by-module.
+        status: "published",
         createdByUserId,
       })
       .returning();
     moduleIdMap.set(pm.id, newModule.id);
+    outlineOrder.push(newModule.id);
+  }
+  // `courses.outlineOrder` (module ids + standalone content-item ids, spec 028) drives what
+  // `GET .../curriculum` renders — every other module-creation path appends to it, and platform
+  // content items are always module-scoped (never standalone), so only module ids belong here.
+  // Skipping this left every cloned course's outline empty — modules/content items existed in the
+  // DB but the editor rendered "No modules or lessons yet" (found in production use, spec 029
+  // follow-up).
+  if (outlineOrder.length > 0) {
+    await tenantDb.update(courses).set({ outlineOrder }).where(eq(courses.id, newCourse.id));
   }
 
   const platformItems = await tenantDb
@@ -100,6 +115,8 @@ export async function clonePlatformCourseIntoTenant(
         description: pi.description,
         payload: pi.payload,
         position: pi.position,
+        // Published, not the schema default "draft" — see the matching module-status comment above.
+        status: "published",
         createdByUserId,
       })
       .returning();

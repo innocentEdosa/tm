@@ -111,9 +111,22 @@ describe("course marketplace select — free course (spec 029 US4, FR-008/FR-009
       expect(curriculum.statusCode).toBe(200);
       // spec 028 changed this endpoint's response shape from a bare array to
       // { modules, standaloneContentItems, outlineOrder } — modules live under `.modules` now.
-      const modules = curriculum.json().data.modules as { contentItems: { id: string }[] }[];
+      const modules = curriculum.json().data.modules as { id: string; status: string; contentItems: { id: string; status: string }[] }[];
       expect(modules).toHaveLength(2);
       expect(modules[0].contentItems).toHaveLength(1);
+      // Regression (found in production use): clonePlatformCourseIntoTenant never appended the new
+      // module ids to courses.outlineOrder, so the editor's curriculum-tab.tsx — which renders
+      // strictly from outlineOrder, not from `.modules` directly — showed "No modules or lessons
+      // yet" for every cloned course even though the rows genuinely existed. `.modules` alone (the
+      // assertion above) can't catch this; only outlineOrder does.
+      const outlineOrder = curriculum.json().data.outlineOrder as string[];
+      expect(outlineOrder).toEqual(modules.map((m) => m.id));
+      // Modules/content items must clone as "published", not the schema default "draft" — same
+      // reasoning as the course itself starting "active": the platform source was already
+      // published, so the clone must be immediately usable, not draft content the tenant has to
+      // separately publish module-by-module.
+      expect(modules[0].status).toBe("published");
+      expect(modules[0].contentItems[0].status).toBe("published");
 
       const clonedItemId = modules[0].contentItems[0].id;
       const attachments = await server.inject({ method: "GET", url: `/tenant/content-items/${clonedItemId}/attachments`, headers: tenantHeaders });
