@@ -2,14 +2,17 @@ import { pgTable, uuid, text, integer, boolean, timestamp, index, check, type An
 import { sql } from "drizzle-orm";
 import { tenants } from "./tenants";
 import { courses } from "./courses";
+import { users } from "./users";
 
 /**
  * A tenant-scoped learner rating/review of a course (data-model addition for the course-editor
- * "Reviews" panel). Built as real, forward-compatible groundwork alongside this wiring pass — there is
- * no learner-facing review-submission surface anywhere in this app yet, so this table has no creation
- * endpoint and reads as empty until a future spec adds one. `reviewText` is nullable: a rating-only
- * entry counts toward the rating average but not the review count. `flagged` hides a review from any
- * future public-facing page without deleting it (moderation only).
+ * "Reviews" panel). `reviewText` is nullable: a rating-only entry counts toward the rating average but
+ * not the review count. `flagged` hides a review from any future public-facing page without deleting
+ * it (moderation only). `userId` is nullable — rows seeded directly (before the learner-facing
+ * "Leave a rating" flow existed) have no known author; every review the flow itself creates always
+ * sets it, and it's what "do I already have a review on this course" (edit-in-place vs. create) keys
+ * off, mirroring `learnerContentProgress.userId`'s own role as the real identity key rather than a
+ * display string like `learnerEmail`.
  */
 export const courseReviews = pgTable(
   "course_reviews",
@@ -21,6 +24,7 @@ export const courseReviews = pgTable(
     courseId: uuid("course_id")
       .notNull()
       .references((): AnyPgColumn => courses.id, { onDelete: "cascade" }),
+    userId: uuid("user_id").references(() => users.id),
     learnerName: text("learner_name").notNull(),
     learnerEmail: text("learner_email").notNull(),
     rating: integer("rating").notNull(),

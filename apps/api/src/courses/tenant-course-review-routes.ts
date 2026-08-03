@@ -1,5 +1,5 @@
 import type { FastifyPluginAsync } from "fastify";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { requireTenantUserSession } from "../tenant-auth/require-tenant-user-session";
 import { requirePermission, requireAnyPermission } from "../permissions/require-permission";
 import { courses } from "../db/schema/courses";
@@ -9,11 +9,10 @@ import { users } from "../db/schema/users";
 type CourseReviewRow = typeof courseReviews.$inferSelect;
 
 /**
- * Course Reviews panel — new schema/routes built as forward-compatible groundwork alongside the
- * course-authoring wiring pass (mirroring `courses.subcategory`'s own precedent): there is no
- * learner-facing review-submission surface anywhere in this app yet, so this table has no creation
- * endpoint and will read as an empty list until a future spec adds one. Read + moderate only (flag,
- * respond to a review). Reuses `course.view`/`course.manage` — no new permission keys.
+ * Course Reviews panel. Read + moderate (flag, respond to a review) are staff-side
+ * (`course.manage`); the learner-facing "Leave a rating" flow (course player) submits through the
+ * create/update route below, gated on the same `course.view`/`course.manage` any course route
+ * already requires — no new permission keys anywhere in this file.
  */
 const tenantCourseReviewRoutes: FastifyPluginAsync = async (fastify) => {
   async function resolveCourse(tenantDb: typeof fastify.db, courseId: string) {
@@ -55,6 +54,78 @@ const tenantCourseReviewRoutes: FastifyPluginAsync = async (fastify) => {
       }
       const rows = await request.tenantDb.select().from(courseReviews).where(eq(courseReviews.courseId, courseId)).orderBy(courseReviews.createdAt);
       return { success: true, data: rows.map(toResponseRow) };
+    },
+  );
+
+  // GET /tenant/courses/:courseId/reviews/mine — the caller's own review on this course, or null.
+  // Scoped to `request.user!.id` server-side, same convention as every other "mine" lookup in this
+  // app (`tenant-progress-routes.ts`'s own progress rows) — never a client-supplied user id.
+  fastify.get<{ Params: { courseId: string } }>(
+    "/tenant/courses/:courseId/reviews/mine",
+    { preHandler: [requireTenantUserSession(), requireAnyPermission("course.view", "course.manage")] },
+    async (request, reply) => {
+      const { courseId } = request.params;
+      const course = await resolveCourse(request.tenantDb, courseId);
+      if (!course) {
+        return reply.code(404).send({ success: false, message: "Not found" });
+      }
+      const [review] = await request.tenantDb
+        .select()
+        .from(courseReviews)
+        .where(and(eq(courseReviews.courseId, courseId), eq(courseReviews.userId, request.user!.id)));
+      return { success: true, data: review ? toResponseRow(review) : null };
+    },
+  );
+
+  // POST /tenant/courses/:courseId/reviews — the "Leave a rating" flow. Upserts on (courseId,
+  // userId): a learner gets exactly one review per course, editing it in place on a second submit
+  // (status flips to "updated") rather than accumulating duplicates. `learnerName`/`learnerEmail` are
+  // resolved server-side from `request.user!.id`, same as every other "self" write in this app —
+  // never accepted from the request body.
+  fastify.post<{ Params: { courseId: string }; Body: { rating?: number; reviewText?: string | null } }>(
+    "/tenant/courses/:courseId/reviews",
+    { preHandler: [requireTenantUserSession(), requireAnyPermission("course.view", "course.manage")] },
+    async (request, reply) => {
+      const { courseId } = request.params;
+      const { rating, reviewText } = request.body ?? {};
+      if (typeof rating !== "number" || !Number.isInteger(rating) || rating < 1 || rating > 5) {
+        return reply.code(400).send({ success: false, message: "rating must be an integer between 1 and 5" });
+      }
+      const course = await resolveCourse(request.tenantDb, courseId);
+      if (!course) {
+        return reply.code(404).send({ success: false, message: "Not found" });
+      }
+
+      const [author] = await request.tenantDb.select({ fullName: users.fullName, email: users.email }).from(users).where(eq(users.id, request.user!.id));
+      const trimmedText = reviewText?.trim() || null;
+
+      const [existing] = await request.tenantDb
+        .select({ id: courseReviews.id })
+        .from(courseReviews)
+        .where(and(eq(courseReviews.courseId, courseId), eq(courseReviews.userId, request.user!.id)));
+
+      if (existing) {
+        const [updated] = await request.tenantDb
+          .update(courseReviews)
+          .set({ rating, reviewText: trimmedText, status: "updated" })
+          .where(eq(courseReviews.id, existing.id))
+          .returning();
+        return reply.code(200).send({ success: true, data: toResponseRow(updated) });
+      }
+
+      const [created] = await request.tenantDb
+        .insert(courseReviews)
+        .values({
+          tenantId: request.user!.tenantId,
+          courseId,
+          userId: request.user!.id,
+          learnerName: author?.fullName ?? "Learner",
+          learnerEmail: author?.email ?? "",
+          rating,
+          reviewText: trimmedText,
+        })
+        .returning();
+      return reply.code(201).send({ success: true, data: toResponseRow(created) });
     },
   );
 

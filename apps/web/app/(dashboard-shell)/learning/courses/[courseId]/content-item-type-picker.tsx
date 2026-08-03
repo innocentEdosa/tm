@@ -16,7 +16,8 @@ export const TYPE_ICON: Record<ContentItemType, ReactNode> = {
   external_import: <UploadCloud className="h-4 w-4" />,
 };
 
-const TYPE_LABEL: Record<ContentItemType, string> = {
+/** Shared with the course player's curriculum sidebar. */
+export const TYPE_LABEL: Record<ContentItemType, string> = {
   video: "Video",
   article: "Article",
   live_class: "Live class",
