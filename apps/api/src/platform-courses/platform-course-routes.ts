@@ -8,7 +8,6 @@ import { getPlatformCourseCurriculum } from "./platform-course-curriculum";
 const DELIVERY_MODES = ["in_person", "virtual", "self_paced", "blended"] as const;
 const DURATION_UNITS = ["minutes", "hours", "days"] as const;
 const STATUSES = ["draft", "active", "archived"] as const;
-const DEFAULT_PAGE_SIZE = 20;
 
 /** Fields immutable once ≥1 fulfilled selection exists (data-model.md immutability rule; tasks.md
  * T038) — everything else (description, provider, cost, status) stays editable regardless. */

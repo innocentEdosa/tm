@@ -59,7 +59,7 @@ const tenantProgressRoutes: FastifyPluginAsync = async (fastify) => {
   // PUT /tenant/content-items/:contentItemId/progress — spec FR-001..FR-007/FR-017, contracts §PUT.
   fastify.put<{ Params: { contentItemId: string }; Body: ProgressUpdateBody }>(
     "/tenant/content-items/:contentItemId/progress",
-    { preHandler: [requireTenantUserSession(), requireAnyPermission("course.view", "course.manage")] },
+    { preHandler: [requireTenantUserSession()] },
     async (request, reply) => {
       const { contentItemId } = request.params;
       const body = request.body ?? {};

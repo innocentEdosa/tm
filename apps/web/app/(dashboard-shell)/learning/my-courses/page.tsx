@@ -5,19 +5,22 @@ import MyCoursesClient from "./my-courses-client";
 
 /**
  * My Courses — every course assigned to the signed-in user (directly, via department, via role, or
- * "everyone"), with their own progress and an upcoming-learnings panel. Mirrors
- * `learning/courses/page.tsx`'s exact session/permission-check pattern; the actual course list itself
- * is already assignment-filtered server-side (`GET /tenant/courses`), so this page does no filtering
- * of its own beyond the same `course.view`/`course.manage` gate every course route already requires.
+ * "everyone"), with their own progress and an upcoming-learnings panel. Open to any authenticated
+ * tenant user, not gated on `course.view`/`course.manage` — "My Learning" (the nav group this page
+ * lives under) is accessible by everyone; per-course visibility is enforced by the backend's own
+ * assignment-visibility check (`isCourseVisibleToCaller`), not a permission key. The admin-facing
+ * "Courses" catalog (`learning/courses/page.tsx`) still gates on those permissions.
  */
 export default async function MyCoursesPage() {
   const headerList = await headers();
   const subdomain = headerList.get("x-tenant-subdomain") ?? "";
   const session = await getTenantSession(subdomain);
-  const permissions = session.authenticated && !session.mustChangePassword ? session.permissions : [];
 
-  if (!permissions.includes("course.view") && !permissions.includes("course.manage")) {
-    redirect("/dashboard");
+  if (!session.authenticated) {
+    redirect("/tenant");
+  }
+  if (session.mustChangePassword) {
+    redirect("/set-password");
   }
 
   return <MyCoursesClient subdomain={subdomain} />;

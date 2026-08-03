@@ -268,10 +268,7 @@ select.field-input:not([multiple]) {
 }
 
 .shell-nav-section {
-  @apply flex flex-col gap-1.5 py-3;
-}
-.shell-nav-section:not(:first-child) {
-  @apply border-t border-sidebar-border;
+  @apply flex flex-col gap-1.5 py-1;
 }
 
 .shell-nav-item {
