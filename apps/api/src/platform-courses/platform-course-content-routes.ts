@@ -4,6 +4,7 @@ import { requireSuperAdminSession } from "../platform-auth/require-super-admin-s
 import { platformCourses, platformCourseModules, platformCourseContentItems } from "../db/schema/platform-courses";
 import { CONTENT_ITEM_TYPES, validateContentItemPayload, type ContentItemType } from "../course-content/content-item-payload-validation";
 import { platformCourseHasFulfilledSelection } from "../course-marketplace/platform-course-immutability";
+import { deleteAllAttachmentsForPlatformEntity } from "./platform-course-file-routes";
 
 type ModuleRow = typeof platformCourseModules.$inferSelect;
 type ContentItemRow = typeof platformCourseContentItems.$inferSelect;
@@ -148,7 +149,9 @@ const platformCourseContentRoutes: FastifyPluginAsync = async (fastify) => {
     },
   );
 
-  // DELETE /admin/platform-course-modules/:id — content items cascade via ON DELETE CASCADE.
+  // DELETE /admin/platform-course-modules/:id — content items cascade via ON DELETE CASCADE, but
+  // their attachments (no DB-level FK, polymorphic) must be explicitly cleaned up first — mirrors
+  // `tenant-course-content-routes.ts`'s own module-delete handler exactly.
   fastify.delete<{ Params: { id: string } }>(
     "/admin/platform-course-modules/:id",
     { preHandler: [requireSuperAdminSession] },
@@ -159,6 +162,14 @@ const platformCourseContentRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(404).send({ success: false, message: "Not found" });
       }
       if (await rejectIfImmutable(existing.platformCourseId, request, reply)) return;
+
+      const items = await fastify.db
+        .select({ id: platformCourseContentItems.id })
+        .from(platformCourseContentItems)
+        .where(eq(platformCourseContentItems.platformCourseModuleId, id));
+      for (const item of items) {
+        await deleteAllAttachmentsForPlatformEntity(fastify.db, "platform_content_item", item.id);
+      }
 
       await fastify.db.delete(platformCourseModules).where(eq(platformCourseModules.id, id));
       return reply.code(200).send({ success: true });
@@ -314,7 +325,8 @@ const platformCourseContentRoutes: FastifyPluginAsync = async (fastify) => {
     },
   );
 
-  // DELETE /admin/platform-course-content-items/:id
+  // DELETE /admin/platform-course-content-items/:id — attachments are explicitly cleaned up first
+  // (no DB-level FK, polymorphic), mirrors `tenant-course-content-routes.ts` exactly.
   fastify.delete<{ Params: { id: string } }>(
     "/admin/platform-course-content-items/:id",
     { preHandler: [requireSuperAdminSession] },
@@ -326,6 +338,7 @@ const platformCourseContentRoutes: FastifyPluginAsync = async (fastify) => {
       }
       if (await rejectIfImmutable(existing.platformCourseId, request, reply)) return;
 
+      await deleteAllAttachmentsForPlatformEntity(fastify.db, "platform_content_item", id);
       await fastify.db.delete(platformCourseContentItems).where(eq(platformCourseContentItems.id, id));
       return reply.code(200).send({ success: true });
     },

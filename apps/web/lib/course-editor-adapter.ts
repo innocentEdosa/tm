@@ -36,13 +36,15 @@ async function platformFetch<T>(path: string, init: { method?: "GET" | "POST" | 
  * mirroring this codebase's existing `useSubdomain()` context idiom.
  *
  * Capability flags (`supports*`) exist because `platform_courses` is deliberately a *simpler* schema
- * than tenant `courses` — no course image, no standalone (course-level, no-module) content items, no
- * per-module/per-item draft/published toggle (only the course-level draft/active/archived status,
- * spec 029 FR-002), no link-type lesson resources (only file uploads), and no real SCORM package
- * import yet (spec 029 tasks.md T021, deferred — the underlying `importPackage` isn't a pure
- * parse-then-write function, extracting one is a real refactor of shipped spec 027 code, not
- * undertaken here). Components check these flags to hide the corresponding UI affordance rather than
- * showing a control that would silently no-op or error against the platform backend.
+ * than tenant `courses` in a few specific ways — no standalone (course-level, no-module) content
+ * items, no per-module/per-item draft/published toggle (only the course-level draft/active/archived
+ * status, spec 029 FR-002), and no real SCORM package import yet (spec 029 tasks.md T021, deferred —
+ * the underlying `importPackage` isn't a pure parse-then-write function, extracting one is a real
+ * refactor of shipped spec 027 code, not undertaken here). Course image and link-type lesson
+ * resources *are* supported on both sides (UI-reuse follow-up) via `platform_file_attachments`'
+ * `platform_course` entity type and `kind` column, mirroring tenant `file_attachments` exactly.
+ * Components check the remaining flags to hide the corresponding UI affordance rather than showing a
+ * control that would silently no-op or error against the platform backend.
  */
 export interface CourseEditorApi {
   /** Distinguishes this adapter's React Query cache entries from the other mode's (was `subdomain`
@@ -304,11 +306,13 @@ function normalizeContentItem(c: RawPlatformContentItem): ContentItem {
   };
 }
 
-/** Raw shape `platform-course-routes.ts`'s `toResponse()` actually returns — `categoryName` is a
+/** Raw shape `platform-course-routes.ts`'s `toResponseRows()` actually returns — `categoryName` is a
  * plain string (no tenant category list to resolve an id/object against), and there's no
- * `subcategory`/`courseImageUrl`/`moduleCount` at all (spec 029's schema predates those spec-028
- * additions to tenant `courses`, and the "field parity" follow-up deliberately didn't add them —
- * see course-editor-adapter.ts's own doc comment). Normalized into the shared `Course` shape below. */
+ * `subcategory`/`moduleCount` at all (spec 029's schema predates spec 028's `subcategory` addition
+ * to tenant `courses`, and the "field parity" follow-up deliberately didn't add it — see
+ * course-editor-adapter.ts's own doc comment; `moduleCount` has no platform equivalent endpoint).
+ * `courseImageUrl` *is* present (UI-reuse follow-up). Normalized into the shared `Course` shape
+ * below. */
 interface RawPlatformCourse {
   id: string;
   title: string;
@@ -318,6 +322,7 @@ interface RawPlatformCourse {
   duration: { value: number; unit: string };
   provider: string | null;
   cost: number | null;
+  courseImageUrl: string | null;
   status: string;
   learningObjectives: string[];
   requirements: string[];
@@ -338,7 +343,7 @@ function normalizePlatformCourse(c: RawPlatformCourse): Course {
     subcategory: null,
     learningObjectives: c.learningObjectives,
     requirements: c.requirements,
-    courseImageUrl: null,
+    courseImageUrl: c.courseImageUrl,
     moduleCount: 0,
     status: c.status as Course["status"],
     createdBy: null,
@@ -351,13 +356,13 @@ function normalizePlatformCourse(c: RawPlatformCourse): Course {
 export function platformCourseEditorApi(): CourseEditorApi {
   return {
     cacheScope: "platform",
-    supportsCourseImage: false,
+    supportsCourseImage: true,
     supportsSubcategory: false,
     supportsAuthors: false,
     supportsCategoryList: false,
     supportsStandaloneContentItems: false,
     supportsItemStatusToggle: false,
-    supportsResourceLinks: false,
+    supportsResourceLinks: true,
     supportsScormImport: false,
 
     async createDraftCourse(input) {
@@ -381,6 +386,14 @@ export function platformCourseEditorApi(): CourseEditorApi {
     async updateObjectives(courseId, body) {
       const { data } = await platformFetch<{ data: RawPlatformCourse }>(`/admin/platform-courses/${courseId}/objectives`, { method: "PATCH", body });
       return normalizePlatformCourse(data);
+    },
+    async uploadCourseImage(courseId, file) {
+      const { data: attachment } = await platformFetch<{ data: { id: string; uploadUrl: string } }>(`/admin/platform-courses/${courseId}/image`, {
+        method: "POST",
+        body: { fileName: file.name, contentType: file.type, sizeBytes: file.size },
+      });
+      await uploadFileToPresignedUrl(attachment.uploadUrl, file, file.type);
+      await platformFetch(`/admin/platform-file-attachments/${attachment.id}/confirm`, { method: "POST" });
     },
 
     async fetchCurriculum(courseId) {
@@ -433,22 +446,36 @@ export function platformCourseEditorApi(): CourseEditorApi {
 
     async fetchAttachments(contentItemId) {
       const { data } = await platformFetch<{
-        data: { id: string; fileName: string; contentType: string | null; sizeBytes: number | null; status: "pending" | "ready"; createdAt: string }[];
+        data: {
+          id: string;
+          kind: "file" | "link";
+          fileName: string;
+          contentType: string | null;
+          sizeBytes: number | null;
+          url: string | null;
+          status: "pending" | "ready";
+          createdAt: string;
+        }[];
       }>(`/admin/platform-course-content-items/${contentItemId}/attachments`);
-      return data.map((row) => ({ ...row, kind: "file" as const, url: null, createdBy: null }));
+      return data.map((row) => ({ ...row, createdBy: null }));
     },
     async createAttachmentUploadUrl(contentItemId, meta) {
-      const { data } = await platformFetch<{ data: { id: string; uploadUrl: string } }>(`/admin/platform-course-content-items/${contentItemId}/attachments/upload-url`, {
+      const { data } = await platformFetch<{ data: { id: string; uploadUrl: string } }>(`/admin/platform-course-content-items/${contentItemId}/attachments`, {
         method: "POST",
         body: meta,
       });
       return data;
     },
-    async confirmAttachment(contentItemId, attachmentId) {
-      await platformFetch(`/admin/platform-course-content-items/${contentItemId}/attachments/${attachmentId}/confirm`, { method: "POST" });
+    // Confirm/download-url/delete are generic (entity-agnostic) on the platform side — shared by a
+    // course image and a content-item attachment alike, mirroring tenant-attachment-routes.ts.
+    async confirmAttachment(_contentItemId, attachmentId) {
+      await platformFetch(`/admin/platform-file-attachments/${attachmentId}/confirm`, { method: "POST" });
     },
-    async deleteAttachment(contentItemId, attachmentId) {
-      await platformFetch(`/admin/platform-course-content-items/${contentItemId}/attachments/${attachmentId}`, { method: "DELETE" });
+    async createAttachmentLink(contentItemId, body) {
+      await platformFetch(`/admin/platform-course-content-items/${contentItemId}/attachments`, { method: "POST", body: { kind: "link", ...body } });
+    },
+    async deleteAttachment(_contentItemId, attachmentId) {
+      await platformFetch(`/admin/platform-file-attachments/${attachmentId}`, { method: "DELETE" });
     },
   };
 }

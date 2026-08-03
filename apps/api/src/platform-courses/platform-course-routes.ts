@@ -1,14 +1,15 @@
 import type { FastifyPluginAsync } from "fastify";
-import { and, desc, eq, ne, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { requireSuperAdminSession } from "../platform-auth/require-super-admin-session";
-import { platformCourses } from "../db/schema/platform-courses";
+import { platformCourses, platformFileAttachments } from "../db/schema/platform-courses";
 import { platformCourseHasFulfilledSelection } from "../course-marketplace/platform-course-immutability";
 import { getPlatformCourseCurriculum } from "./platform-course-curriculum";
+import type { Db } from "../db/client";
+import * as storage from "../storage/storage";
 
 const DELIVERY_MODES = ["in_person", "virtual", "self_paced", "blended"] as const;
 const DURATION_UNITS = ["minutes", "hours", "days"] as const;
 const STATUSES = ["draft", "active", "archived"] as const;
-const DEFAULT_PAGE_SIZE = 20;
 
 /** Fields immutable once ≥1 fulfilled selection exists (data-model.md immutability rule; tasks.md
  * T038) — everything else (description, provider, cost, status) stays editable regardless. */
@@ -48,8 +49,43 @@ function validateFields(body: PlatformCourseWriteBody): { code: number; message:
   return null;
 }
 
-function toResponse(row: typeof platformCourses.$inferSelect) {
-  return {
+/** Batch-resolves each course's current image (if any) to a fresh presigned download URL —
+ * `platform_file_attachments` rows never store a stable public URL, so this is computed at read
+ * time, mirroring `tenant-course-routes.ts`'s own `toResponseRows` exactly. */
+async function toResponseRows(db: Db, rows: (typeof platformCourses.$inferSelect)[]) {
+  const courseIds = rows.map((r) => r.id);
+  const imageAttachments =
+    courseIds.length > 0
+      ? await db
+          .select({ entityId: platformFileAttachments.entityId, storageKey: platformFileAttachments.storageKey, createdAt: platformFileAttachments.createdAt })
+          .from(platformFileAttachments)
+          .where(
+            and(
+              eq(platformFileAttachments.entityType, "platform_course"),
+              inArray(platformFileAttachments.entityId, courseIds),
+              eq(platformFileAttachments.status, "ready"),
+            ),
+          )
+          .orderBy(desc(platformFileAttachments.createdAt))
+      : [];
+  // First occurrence per course id wins (rows are already ordered newest-first) — a course only
+  // ever has one "current" image (uploading a new one deletes the prior attachment).
+  const latestImageKeyByCourseId = new Map<string, string>();
+  for (const a of imageAttachments) {
+    if (!latestImageKeyByCourseId.has(a.entityId) && a.storageKey) {
+      latestImageKeyByCourseId.set(a.entityId, a.storageKey);
+    }
+  }
+  const imageUrlByCourseId = new Map<string, string>();
+  if (latestImageKeyByCourseId.size > 0 && storage.isStorageConfigured()) {
+    await Promise.all(
+      Array.from(latestImageKeyByCourseId.entries()).map(async ([courseId, key]) => {
+        imageUrlByCourseId.set(courseId, await storage.createPresignedDownloadUrl(key));
+      }),
+    );
+  }
+
+  return rows.map((row) => ({
     id: row.id,
     title: row.title,
     description: row.description,
@@ -58,6 +94,7 @@ function toResponse(row: typeof platformCourses.$inferSelect) {
     duration: { value: Number(row.durationValue), unit: row.durationUnit },
     provider: row.provider,
     cost: row.cost === null ? null : Number(row.cost),
+    courseImageUrl: imageUrlByCourseId.get(row.id) ?? null,
     status: row.status,
     learningObjectives: row.learningObjectives,
     requirements: row.requirements,
@@ -65,7 +102,7 @@ function toResponse(row: typeof platformCourses.$inferSelect) {
     createdAt: row.createdAt,
     updatedBySuperAdminId: row.updatedBySuperAdminId,
     updatedAt: row.updatedAt,
-  };
+  }));
 }
 
 /** contracts/platform-course-authoring-api.md §platform-courses. Every route requires
@@ -112,7 +149,8 @@ const platformCourseRoutes: FastifyPluginAsync = async (fastify) => {
         })
         .returning();
 
-      return reply.code(201).send({ success: true, data: toResponse(created) });
+      const [data] = await toResponseRows(fastify.db, [created]);
+      return reply.code(201).send({ success: true, data });
     },
   );
 
@@ -163,7 +201,8 @@ const platformCourseRoutes: FastifyPluginAsync = async (fastify) => {
         .where(eq(platformCourses.id, id))
         .returning();
 
-      return reply.code(200).send({ success: true, data: toResponse(updated) });
+      const [data] = await toResponseRows(fastify.db, [updated]);
+      return reply.code(200).send({ success: true, data });
     },
   );
 
@@ -195,7 +234,8 @@ const platformCourseRoutes: FastifyPluginAsync = async (fastify) => {
         .where(eq(platformCourses.id, id))
         .returning();
 
-      return reply.code(200).send({ success: true, data: toResponse(updated) });
+      const [data] = await toResponseRows(fastify.db, [updated]);
+      return reply.code(200).send({ success: true, data });
     },
   );
 
@@ -225,7 +265,8 @@ const platformCourseRoutes: FastifyPluginAsync = async (fastify) => {
       .where(and(...conditions))
       .orderBy(desc(platformCourses.createdAt));
 
-    return { success: true, data: rows.map(toResponse) };
+    const data = await toResponseRows(fastify.db, rows);
+    return { success: true, data };
   });
 
   // GET /admin/platform-courses/:id — spec FR-002, contracts §GET detail.
@@ -238,7 +279,8 @@ const platformCourseRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(404).send({ success: false, message: "Not found" });
       }
       const curriculum = await getPlatformCourseCurriculum(fastify.db, existing.id);
-      return { success: true, data: { ...toResponse(existing), modules: curriculum } };
+      const [data] = await toResponseRows(fastify.db, [existing]);
+      return { success: true, data: { ...data, modules: curriculum } };
     },
   );
 };
