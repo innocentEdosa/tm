@@ -1,2 +1,0 @@
-ALTER TABLE "platform_courses" ADD COLUMN "learning_objectives" text[] DEFAULT '{}' NOT NULL;--> statement-breakpoint
-ALTER TABLE "platform_courses" ADD COLUMN "requirements" text[] DEFAULT '{}' NOT NULL;

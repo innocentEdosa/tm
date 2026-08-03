@@ -1,4 +1,4 @@
--- RLS for marketplace_selections, kept as its own migration (separate from schema-creation 0101),
+-- RLS for marketplace_selections, kept as its own migration (separate from schema-creation 0102),
 -- matching this codebase's established convention for brand-new tables. Two policies from the start
 -- (research.md §3 of spec 029): the standard tenant_isolation policy (hardened NULLIF(...) cast,
 -- mirrors 0080_rls_file_attachments.sql) so a tenant's own request.tenantDb only ever sees its own

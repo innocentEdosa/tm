@@ -25,7 +25,7 @@ function toSummary(row: typeof platformCourses.$inferSelect, alreadySelected: bo
  * `requirePermission("course.manage")` (spec Clarifications — reused, no new permission key).
  * Platform-catalog reads go through `fastify.db` (no `tenant_id` to scope on those tables);
  * `marketplace_selections` reads/writes go through `request.tenantDb` (RLS-scoped to the caller's own
- * tenant) — `marketplace_selections` has `FORCE ROW LEVEL SECURITY` (0102_rls_marketplace_selections.sql),
+ * tenant) — `marketplace_selections` has `FORCE ROW LEVEL SECURITY` (0103_rls_marketplace_selections.sql),
  * so a `fastify.db` query here would silently return zero rows (no `app.tenant_id` GUC set on that
  * pool), the same class of bug T038 already found and fixed for the immutability guard. */
 const tenantMarketplaceRoutes: FastifyPluginAsync = async (fastify) => {

@@ -104,6 +104,24 @@ export function buildCourseOutline(curriculum: Curriculum): CourseOutlineEntry[]
   return entries;
 }
 
+/** Flattens a curriculum's modules + standalone lessons into one ordered `ContentItem[]` — the same
+ * real display/playback order `buildCourseOutline` produces, just with each module's own children
+ * expanded inline instead of left nested. Shared by the My Courses card (progress %, "next lesson")
+ * and the course player (curriculum sidebar, prev/next navigation) — anywhere that needs a single
+ * flat sequence of every content item a learner will encounter. */
+export function flattenCourseOutline(curriculum: Curriculum): ContentItem[] {
+  const outline = buildCourseOutline(curriculum);
+  const items: ContentItem[] = [];
+  for (const entry of outline) {
+    if (entry.kind === "lesson") {
+      items.push(entry.item);
+    } else {
+      items.push(...(entry.module.contentItems ?? []));
+    }
+  }
+  return items;
+}
+
 export interface Attachment {
   id: string;
   kind: "file" | "link";

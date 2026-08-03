@@ -156,11 +156,15 @@ const tenantProgressRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(404).send({ success: false, message: "Not found" });
       }
 
+      // `courseModules` is only joined for ordering, never for filtering (the `contentItems.courseId`
+      // condition below already scopes this to the course on its own) — a standalone (module-less)
+      // lesson has `contentItems.moduleId IS NULL`, so this must be a `leftJoin`. An `innerJoin` here
+      // silently dropped every standalone lesson's progress from the response.
       const rows = await request.tenantDb
         .select({ progress: learnerContentProgress })
         .from(learnerContentProgress)
         .innerJoin(contentItems, eq(contentItems.id, learnerContentProgress.contentItemId))
-        .innerJoin(courseModules, eq(courseModules.id, contentItems.moduleId))
+        .leftJoin(courseModules, eq(courseModules.id, contentItems.moduleId))
         .where(and(eq(learnerContentProgress.userId, request.user!.id), eq(contentItems.courseId, courseId)))
         .orderBy(courseModules.position, contentItems.position);
 
@@ -179,11 +183,13 @@ const tenantProgressRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(404).send({ success: false, message: "Not found" });
       }
 
+      // Same `leftJoin` fix as the single-learner route above — this list must include standalone
+      // lessons' progress too, not just module-scoped lessons.
       const rows = await request.tenantDb
         .select({ progress: learnerContentProgress, learner: { id: users.id, fullName: users.fullName, email: users.email } })
         .from(learnerContentProgress)
         .innerJoin(contentItems, eq(contentItems.id, learnerContentProgress.contentItemId))
-        .innerJoin(courseModules, eq(courseModules.id, contentItems.moduleId))
+        .leftJoin(courseModules, eq(courseModules.id, contentItems.moduleId))
         .innerJoin(users, eq(users.id, learnerContentProgress.userId))
         .where(eq(contentItems.courseId, courseId))
         .orderBy(courseModules.position, contentItems.position, users.fullName);

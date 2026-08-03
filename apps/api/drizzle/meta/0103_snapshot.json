@@ -1,6 +1,6 @@
 {
-  "id": "af7ec359-909f-40c1-b015-21d8df32d80b",
-  "prevId": "d74c0af8-9bac-4ef3-bb6b-a21392194ed3",
+  "id": "7c086919-2c10-4de0-88a3-408731859727",
+  "prevId": "9a285a66-8ea1-4ace-8b20-4243a9cd279b",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1019,6 +1019,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
         "learner_name": {
           "name": "learner_name",
           "type": "text",
@@ -1132,6 +1138,19 @@
           ],
           "onUpdate": "no action",
           "onDelete": "cascade"
+        },
+        "course_reviews_user_id_users_id_fk": {
+          "name": "course_reviews_user_id_users_id_fk",
+          "tableFrom": "course_reviews",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "tableTo": "users",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -3218,6 +3237,20 @@
           "primaryKey": false,
           "notNull": true,
           "default": "'draft'"
+        },
+        "learning_objectives": {
+          "name": "learning_objectives",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'"
+        },
+        "requirements": {
+          "name": "requirements",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'"
         },
         "created_by_super_admin_id": {
           "name": "created_by_super_admin_id",

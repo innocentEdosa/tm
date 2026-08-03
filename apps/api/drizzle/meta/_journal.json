@@ -711,29 +711,29 @@
     {
       "idx": 101,
       "version": "7",
-      "when": 1785734127388,
-      "tag": "0101_platform_course_tables",
+      "when": 1785733250904,
+      "tag": "0101_stale_nicolaos",
       "breakpoints": true
     },
     {
       "idx": 102,
       "version": "7",
-      "when": 1785734149042,
-      "tag": "0102_rls_marketplace_selections",
+      "when": 1785742229808,
+      "tag": "0102_platform_course_tables",
       "breakpoints": true
     },
     {
       "idx": 103,
       "version": "7",
-      "when": 1785734174792,
-      "tag": "0103_lock_platform_course_grants",
+      "when": 1785742257327,
+      "tag": "0103_rls_marketplace_selections",
       "breakpoints": true
     },
     {
       "idx": 104,
       "version": "7",
-      "when": 1785737674306,
-      "tag": "0104_platform_courses_objectives_requirements",
+      "when": 1785742258596,
+      "tag": "0104_lock_platform_course_grants",
       "breakpoints": true
     }
   ]

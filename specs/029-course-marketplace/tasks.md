@@ -53,6 +53,11 @@ of these existing first.
 > (T006), `0103_lock_platform_course_grants.sql` (T007). SQL content is unchanged from what's
 > described above; only the file numbers, journal `idx`, and snapshot chain moved. T009's applied-
 > migration verification will need to be re-run against these new file names before this branch ships.
+>
+> **Renumbered again merging into `main-course-marketplace`**: master had since landed a further
+> commit claiming `0101` (`0101_stale_nicolaos.sql`, unrelated `course_reviews` column). Shifted one
+> more slot to `0102_platform_course_tables.sql`, `0103_rls_marketplace_selections.sql`,
+> `0104_lock_platform_course_grants.sql` — same content, same reasoning as above.
 - [x] T009 Applied all pending migrations (`pnpm db:migrate`) and confirmed all five new tables, the `marketplace_selections` RLS policies (both `tenant_isolation` and `super_admin_full_access`), the `tm_app` grants (20 rows: 5 tables × 4 privileges), and the dropped `file_attachments` constraint (0 rows) via `psql` (depends on T006, T007, T008)
 - [x] T010 [P] Implemented `withTenantConnection(pool, tenantId, fn)` in `apps/api/src/db/with-tenant-connection.ts` per research.md §4
 - [x] T011 [P] Implemented `platformCourseHasFulfilledSelection(db, platformCourseId)` in `apps/api/src/course-marketplace/platform-course-immutability.ts`

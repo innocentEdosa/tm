@@ -52,6 +52,8 @@ CREATE TABLE "platform_courses" (
 	"provider" text,
 	"cost" numeric(12, 2),
 	"status" text DEFAULT 'draft' NOT NULL,
+	"learning_objectives" text[] DEFAULT '{}' NOT NULL,
+	"requirements" text[] DEFAULT '{}' NOT NULL,
 	"created_by_super_admin_id" uuid,
 	"updated_by_super_admin_id" uuid,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,

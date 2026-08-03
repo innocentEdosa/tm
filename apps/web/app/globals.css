@@ -85,6 +85,30 @@
   @apply border-red-400 focus:border-red-400 focus:ring-red-400/10;
 }
 
+/* One shared chevron for every `<select class="field-input">` in the app, instead of repeating a
+   manual `appearance-none` + positioned `ChevronDown` icon at each call site. Excludes `[multiple]`
+   selects — those render as list boxes (no dropdown arrow) in every browser, so a chevron there
+   would point at nothing. */
+select.field-input:not([multiple]) {
+  @apply appearance-none bg-no-repeat pr-10;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-position: right 0.75rem center;
+  background-size: 1rem 1rem;
+}
+
+/* Read-only rendering of Tiptap-authored HTML (course article lessons) — mirrors the same tag
+   styling `RichTextEditor`'s own editing surface applies, minus the toolbar, so authored content
+   looks the same whether it's being written or read. */
+.rich-text-content p { margin: 0 0 0.75em; }
+.rich-text-content p:last-child { margin-bottom: 0; }
+.rich-text-content ul { list-style: disc; padding-left: 1.25rem; margin: 0 0 0.75em; }
+.rich-text-content ol { list-style: decimal; padding-left: 1.25rem; margin: 0 0 0.75em; }
+.rich-text-content blockquote { border-left: 2px solid var(--color-border); padding-left: 0.75rem; font-style: italic; margin: 0 0 0.75em; }
+.rich-text-content pre { background: #f1f5f9; border-radius: 0.25rem; padding: 0.5rem; font-size: 0.875rem; overflow-x: auto; margin: 0 0 0.75em; }
+.rich-text-content a { color: var(--color-cta); text-decoration: underline; }
+.rich-text-content h2 { font-size: 1.25rem; font-weight: 600; margin: 0.75em 0 0.5em; }
+.rich-text-content h3 { font-size: 1.1rem; font-weight: 600; margin: 0.75em 0 0.5em; }
+
 .field-error {
   @apply mt-1.5 text-sm text-red-600;
 }
@@ -390,14 +414,14 @@
 }
 
 .shell-content {
-  @apply flex-1 overflow-y-auto bg-surface px-10 py-10;
+  @apply flex-1 overflow-y-auto bg-surface px-10 pt-6 pb-10;
 }
 
 .shell-page-header {
   @apply mb-6;
 }
 .shell-page-header-title {
-  @apply font-heading text-3xl font-bold tracking-tight text-primary;
+  @apply font-heading text-xl font-bold tracking-tight text-primary;
 }
 .shell-page-header-subtitle {
   @apply mt-1.5 text-sm text-slate-600;

@@ -22,6 +22,7 @@ import {
   X,
   Store,
   ListChecks,
+  LayoutGrid,
 } from "lucide-react";
 
 type IconComponent = React.ComponentType<{ className?: string }>;
@@ -47,6 +48,7 @@ const ICONS = {
   clipboardList: ClipboardList,
   store: Store,
   listChecks: ListChecks,
+  layoutGrid: LayoutGrid,
 } satisfies Record<string, IconComponent>;
 
 export interface NavLinkItem {
@@ -117,6 +119,11 @@ function entryIsActive(entry: NavEntry, pathname: string): boolean {
   }
   return !entry.disabled && isActiveHref(pathname, entry.href);
 }
+
+// Hidden for now (not removed — flip this back to re-enable). The topbar's own search doesn't
+// search anything real yet; the empty `<div />` fallback below keeps the actions group right-
+// aligned in the same `justify-between` row it already used, rather than switching layouts.
+const SHOW_TOPBAR_SEARCH = false;
 
 /**
  * Shared desktop shell (Desktop Shell Visual Language spec) — a single fixed-width sidebar (brand
@@ -278,28 +285,32 @@ export function AppShell({
 
       <div className="shell-main">
         <header className="shell-topbar">
-          <form className="shell-topbar-search" role="search" onSubmit={handleSearchSubmit}>
-            <input
-              type="search"
-              className="shell-topbar-search-input"
-              placeholder={topbar?.searchPlaceholder ?? "Search"}
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-            />
-            {searchQuery.length > 0 && (
-              <button
-                type="button"
-                className="shell-topbar-search-clear-btn"
-                aria-label="Clear search"
-                onClick={() => setSearchQuery("")}
-              >
-                <X className="h-3.5 w-3.5" />
+          {SHOW_TOPBAR_SEARCH ? (
+            <form className="shell-topbar-search" role="search" onSubmit={handleSearchSubmit}>
+              <input
+                type="search"
+                className="shell-topbar-search-input"
+                placeholder={topbar?.searchPlaceholder ?? "Search"}
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+              />
+              {searchQuery.length > 0 && (
+                <button
+                  type="button"
+                  className="shell-topbar-search-clear-btn"
+                  aria-label="Clear search"
+                  onClick={() => setSearchQuery("")}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+              <button type="submit" className="shell-topbar-search-btn" aria-label="Search">
+                <Search className="h-3.5 w-3.5" />
               </button>
-            )}
-            <button type="submit" className="shell-topbar-search-btn" aria-label="Search">
-              <Search className="h-3.5 w-3.5" />
-            </button>
-          </form>
+            </form>
+          ) : (
+            <div />
+          )}
 
           <div className="shell-topbar-actions">
             <button

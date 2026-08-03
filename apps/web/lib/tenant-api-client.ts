@@ -1,3 +1,5 @@
+import type { Attachment } from "./course-api-types";
+
 export const TENANT_API_BASE = "/tenant-api/tenant";
 
 interface TenantFetchOptions {
@@ -57,4 +59,19 @@ export function uploadFileToPresignedUrl(uploadUrl: string, file: File | Blob, c
     xhr.onerror = () => reject(new Error("Upload failed"));
     xhr.send(file);
   });
+}
+
+/**
+ * Opens an attachment in a new tab — a `link` kind just opens its stored URL directly, a `file` kind
+ * needs a freshly-minted presigned GET first (`download-url`, tenant-attachment-routes.ts). Shared by
+ * every place a learner can click a resource to view/download it (course player content pane and
+ * curriculum sidebar).
+ */
+export async function openAttachment(resource: Attachment, subdomain: string): Promise<void> {
+  if (resource.kind === "link") {
+    if (resource.url) window.open(resource.url, "_blank", "noopener,noreferrer");
+    return;
+  }
+  const { data } = await tenantFetch<{ data: { downloadUrl: string } }>(`/attachments/${resource.id}/download-url`, { subdomain });
+  window.open(data.downloadUrl, "_blank", "noopener,noreferrer");
 }
