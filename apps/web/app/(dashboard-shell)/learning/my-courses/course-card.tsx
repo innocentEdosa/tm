@@ -2,6 +2,7 @@
 
 import { BookOpen } from "lucide-react";
 import { Badge, StarRating, type BadgeProps } from "@tm/ui";
+import { sanitizeRichText } from "@/lib/sanitize-rich-text";
 import type { CourseCardData, MyCourseStatus } from "./types";
 
 const STATUS_LABEL: Record<MyCourseStatus, string> = {
@@ -20,16 +21,9 @@ const ACTION_LABEL: Record<MyCourseStatus, string> = {
   completed: "Review",
 };
 
-/** Course descriptions are stored as rich-text HTML (the editor's own Tiptap `RichTextEditor`) —
- * no consumer renders that HTML anywhere yet, so this strips tags down to a plain-text preview
- * rather than being the first place in the app to `dangerouslySetInnerHTML` untrusted-shaped markup. */
-function stripHtml(html: string): string {
-  return html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
-}
-
 export default function CourseCard({ data, onSelect }: { data: CourseCardData; onSelect: () => void }) {
   const { course, percent, totalItems, completedItems, status, teacherName, rating } = data;
-  const description = course.description ? stripHtml(course.description) : null;
+  const description = course.description ? sanitizeRichText(course.description) : null;
 
   return (
     <div
@@ -58,9 +52,11 @@ export default function CourseCard({ data, onSelect }: { data: CourseCardData; o
       <div className="flex flex-1 flex-col gap-2 p-4">
         <h3 className="line-clamp-2 font-heading text-base font-bold text-primary">{course.title}</h3>
         {teacherName && <p className="text-sm text-secondary">{teacherName}</p>}
-        <p className="line-clamp-2 text-sm text-muted">
-          {description ?? <span className="italic text-slate-400">No description available.</span>}
-        </p>
+        {description ? (
+          <div className="rich-text-content line-clamp-2 text-sm text-muted" dangerouslySetInnerHTML={{ __html: description }} />
+        ) : (
+          <p className="line-clamp-2 text-sm italic text-slate-400">No description available.</p>
+        )}
 
         <div className="flex items-center gap-1.5 text-sm">
           <StarRating value={rating?.average ?? 0} />

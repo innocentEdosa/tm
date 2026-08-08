@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { tenants } from "./tenants";
 import { courses } from "./courses";
 import { users } from "./users";
+import { platformCourseModules, platformCourseContentItems } from "./platform-courses";
 
 /**
  * A tenant-scoped, ordered section within exactly one course (data-model.md `course_modules`).
@@ -27,6 +28,14 @@ export const courseModules = pgTable(
      * draft/published while its course is still active, matching the course-editor UI's per-module
      * publish toggle. */
     status: text("status").notNull().default("draft"),
+    // Course Marketplace Updates (spec 032) — set at clone time and re-set on every "apply update"
+    // for a module that originated from a platform course; NULL for a tenant-authored module. Lets
+    // applyPlatformCourseUpdateToTenant match this row to its platform counterpart across edits
+    // (research.md §4) instead of matching by title/position, which can both change.
+    sourcePlatformCourseModuleId: uuid("source_platform_course_module_id").references(
+      (): AnyPgColumn => platformCourseModules.id,
+      { onDelete: "set null" },
+    ),
     createdByUserId: uuid("created_by_user_id").references((): AnyPgColumn => users.id, {
       onDelete: "set null",
     }),
@@ -38,6 +47,7 @@ export const courseModules = pgTable(
   },
   (table) => [
     index("course_modules_tenant_id_course_id_idx").on(table.tenantId, table.courseId),
+    index("course_modules_source_platform_course_module_id_idx").on(table.sourcePlatformCourseModuleId),
     check("course_modules_status_check", sql`${table.status} in ('draft', 'published')`),
   ],
 );
@@ -70,6 +80,16 @@ export const contentItems = pgTable(
     /** Independent of the parent course's own status — a lesson can be draft/published while its
      * course is active, matching the course-editor UI's per-lesson publish toggle. */
     status: text("status").notNull().default("draft"),
+    // Course Marketplace Updates (spec 032) — same purpose as course_modules'
+    // sourcePlatformCourseModuleId above, one level down. This is the column that makes "keep
+    // progress, update content" possible: learner_content_progress.content_item_id has no FK by
+    // design (learner-content-progress.ts), so as long as a content item that persists across a
+    // platform edit keeps this same tenant-side row id, existing progress rows keep resolving with
+    // zero extra work (research.md §4).
+    sourcePlatformCourseContentItemId: uuid("source_platform_course_content_item_id").references(
+      (): AnyPgColumn => platformCourseContentItems.id,
+      { onDelete: "set null" },
+    ),
     createdByUserId: uuid("created_by_user_id").references((): AnyPgColumn => users.id, {
       onDelete: "set null",
     }),
@@ -82,6 +102,7 @@ export const contentItems = pgTable(
   (table) => [
     index("content_items_tenant_id_course_id_idx").on(table.tenantId, table.courseId),
     index("content_items_tenant_id_module_id_idx").on(table.tenantId, table.moduleId),
+    index("content_items_source_platform_course_content_item_id_idx").on(table.sourcePlatformCourseContentItemId),
     check(
       "content_items_type_check",
       sql`${table.type} in ('video', 'article', 'live_class', 'test', 'assignment', 'external_import')`,

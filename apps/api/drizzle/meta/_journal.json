@@ -742,6 +742,13 @@
       "when": 1785750719919,
       "tag": "0105_platform_file_attachments_course_and_link_kind",
       "breakpoints": true
+    },
+    {
+      "idx": 106,
+      "version": "7",
+      "when": 1785858934461,
+      "tag": "0106_course_marketplace_updates",
+      "breakpoints": true
     }
   ]
 }

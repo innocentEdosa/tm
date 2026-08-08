@@ -2,18 +2,14 @@ import type { FastifyPluginAsync } from "fastify";
 import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { requireSuperAdminSession } from "../platform-auth/require-super-admin-session";
 import { platformCourses, platformFileAttachments } from "../db/schema/platform-courses";
-import { platformCourseHasFulfilledSelection } from "../course-marketplace/platform-course-immutability";
 import { getPlatformCourseCurriculum } from "./platform-course-curriculum";
+import { recordPlatformCourseChange } from "../course-marketplace/record-platform-course-change";
 import type { Db } from "../db/client";
 import * as storage from "../storage/storage";
 
 const DELIVERY_MODES = ["in_person", "virtual", "self_paced", "blended"] as const;
 const DURATION_UNITS = ["minutes", "hours", "days"] as const;
 const STATUSES = ["draft", "active", "archived"] as const;
-
-/** Fields immutable once ≥1 fulfilled selection exists (data-model.md immutability rule; tasks.md
- * T038) — everything else (description, provider, cost, status) stays editable regardless. */
-const IMMUTABLE_ONCE_CLONED_FIELDS = ["title", "categoryName", "deliveryMode", "duration"] as const;
 
 type DeliveryMode = (typeof DELIVERY_MODES)[number];
 type DurationUnit = (typeof DURATION_UNITS)[number];
@@ -155,8 +151,11 @@ const platformCourseRoutes: FastifyPluginAsync = async (fastify) => {
   );
 
   // PATCH /admin/platform-courses/:id — spec FR-002, contracts §PATCH. `status` accepts any of its
-  // three enum values directly, no restricted transition graph (mirrors spec 023). Rejects 409 if the
-  // request touches an immutable-once-cloned field on a course with ≥1 fulfilled selection.
+  // three enum values directly, no restricted transition graph (mirrors spec 023). Course Marketplace
+  // Updates (spec 032) removed the prior "frozen once cloned" 409 for title/category/deliveryMode/
+  // duration — every field is editable regardless of clone state; the edit instead bumps the
+  // platform course's version and (if any tenant has a fulfilled clone) queues a notification, via
+  // `recordPlatformCourseChange`.
   fastify.patch<{ Params: { id: string }; Body: PlatformCourseWriteBody }>(
     "/admin/platform-courses/:id",
     { preHandler: [requireSuperAdminSession] },
@@ -171,16 +170,6 @@ const platformCourseRoutes: FastifyPluginAsync = async (fastify) => {
       const validation = validateFields(body);
       if (validation) {
         return reply.code(validation.code).send({ success: false, message: validation.message });
-      }
-
-      const touchesImmutableField = IMMUTABLE_ONCE_CLONED_FIELDS.some(
-        (field) => (body as Record<string, unknown>)[field] !== undefined,
-      );
-      if (touchesImmutableField && (await platformCourseHasFulfilledSelection(request.superAdminDb!, id))) {
-        return reply.code(409).send({
-          success: false,
-          message: "This platform course has already been selected by a tenant; title/category/deliveryMode/duration are frozen",
-        });
       }
 
       const [updated] = await fastify.db
@@ -201,6 +190,8 @@ const platformCourseRoutes: FastifyPluginAsync = async (fastify) => {
         .where(eq(platformCourses.id, id))
         .returning();
 
+      await recordPlatformCourseChange(request.superAdminDb!, fastify.pg.pool, id, request.superAdmin!.id);
+
       const [data] = await toResponseRows(fastify.db, [updated]);
       return reply.code(200).send({ success: true, data });
     },
@@ -209,8 +200,8 @@ const platformCourseRoutes: FastifyPluginAsync = async (fastify) => {
   // PATCH /admin/platform-courses/:id/objectives — mirrors tenant-course-routes.ts's
   // `PATCH /tenant/courses/:courseId/objectives` exactly (same validation, same drop-blank-entries
   // behavior), so the shared Course Objectives panel can be reused unmodified for platform-course
-  // authoring. Not an immutable-once-cloned field (not in IMMUTABLE_ONCE_CLONED_FIELDS) — objectives
-  // are informational, not part of the frozen curriculum contract.
+  // authoring. Bumps version/notifies like every other content-affecting edit (spec 032) — objectives
+  // are informational but still something a tenant might want to know changed.
   fastify.patch<{ Params: { id: string }; Body: { learningObjectives?: unknown; requirements?: unknown } }>(
     "/admin/platform-courses/:id/objectives",
     { preHandler: [requireSuperAdminSession] },
@@ -233,6 +224,8 @@ const platformCourseRoutes: FastifyPluginAsync = async (fastify) => {
         .set({ learningObjectives, requirements, updatedBySuperAdminId: request.superAdmin!.id, updatedAt: new Date() })
         .where(eq(platformCourses.id, id))
         .returning();
+
+      await recordPlatformCourseChange(request.superAdminDb!, fastify.pg.pool, id, request.superAdmin!.id);
 
       const [data] = await toResponseRows(fastify.db, [updated]);
       return reply.code(200).send({ success: true, data });

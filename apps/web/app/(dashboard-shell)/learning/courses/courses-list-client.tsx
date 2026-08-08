@@ -248,10 +248,13 @@ function CoursesListInner({ canManage }: { canManage: boolean }) {
                   <td className="truncate px-4 py-3 text-sm text-secondary">{course.category?.name ?? "Uncategorized"}</td>
                   <td className="px-4 py-3 text-sm text-secondary">{course.moduleCount}</td>
                   <td className="px-4 py-3 text-sm">
-                    <Badge variant={STATUS_BADGE_VARIANT[course.status]}>
-                      <span className={`mr-1.5 inline-block h-1.5 w-1.5 rounded-full ${STATUS_DOT[course.status]}`} />
-                      {STATUS_LABEL[course.status]}
-                    </Badge>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <Badge variant={STATUS_BADGE_VARIANT[course.status]}>
+                        <span className={`mr-1.5 inline-block h-1.5 w-1.5 rounded-full ${STATUS_DOT[course.status]}`} />
+                        {STATUS_LABEL[course.status]}
+                      </Badge>
+                      {course.updateAvailable && <Badge variant="warning">Update available</Badge>}
+                    </div>
                   </td>
                   <td className="px-4 py-3 text-sm text-secondary">{formatDate(course.createdAt)}</td>
                   {canManage && (

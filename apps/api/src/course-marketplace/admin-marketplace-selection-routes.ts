@@ -89,6 +89,10 @@ const adminMarketplaceSelectionRoutes: FastifyPluginAsync = async (fastify) => {
         clonePlatformCourseIntoTenant(tenantDb, selection.tenantId, selection.platformCourseId, selection.requestedByUserId),
       );
 
+      // Course Marketplace Updates (spec 032) — the platform course's version *at the moment of this
+      // clone*, same reasoning as the free-course immediate-select path (tenant-marketplace-routes.ts).
+      const [platformCourse] = await fastify.db.select({ version: platformCourses.version }).from(platformCourses).where(eq(platformCourses.id, selection.platformCourseId));
+
       const [updated] = await request.superAdminDb!
         .update(marketplaceSelections)
         .set({
@@ -97,6 +101,7 @@ const adminMarketplaceSelectionRoutes: FastifyPluginAsync = async (fastify) => {
           resolvedBySuperAdminId: request.superAdmin!.id,
           resolvedAt: new Date(),
           updatedAt: new Date(),
+          appliedPlatformCourseVersion: platformCourse?.version ?? 1,
         })
         .where(eq(marketplaceSelections.id, id))
         .returning();

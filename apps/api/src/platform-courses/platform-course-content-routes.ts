@@ -3,8 +3,9 @@ import { eq } from "drizzle-orm";
 import { requireSuperAdminSession } from "../platform-auth/require-super-admin-session";
 import { platformCourses, platformCourseModules, platformCourseContentItems } from "../db/schema/platform-courses";
 import { CONTENT_ITEM_TYPES, validateContentItemPayload, type ContentItemType } from "../course-content/content-item-payload-validation";
-import { platformCourseHasFulfilledSelection } from "../course-marketplace/platform-course-immutability";
 import { deleteAllAttachmentsForPlatformEntity } from "./platform-course-file-routes";
+import { recordPlatformCourseChange } from "../course-marketplace/record-platform-course-change";
+import { platformCourseHasFulfilledSelection } from "../course-marketplace/platform-course-immutability";
 
 type ModuleRow = typeof platformCourseModules.$inferSelect;
 type ContentItemRow = typeof platformCourseContentItems.$inferSelect;
@@ -58,27 +59,15 @@ function toContentItemRow(c: ContentItemRow) {
 
 /** contracts/platform-course-authoring-api.md §modules/§content-items. Mirrors
  * `tenant-course-content-routes.ts` exactly (spec 024's tenant equivalent) but against the
- * `platform_*` tables via `fastify.db` (no RLS/`tenant_id`), gated by `requireSuperAdminSession`, with
- * an added FR-013 immutability guard (`platformCourseHasFulfilledSelection`) on every edit/delete. */
+ * `platform_*` tables via `fastify.db` (no RLS/`tenant_id`), gated by `requireSuperAdminSession`.
+ * Course Marketplace Updates (spec 032) removed the prior FR-013 "frozen once cloned" guard on every
+ * route below — every route now instead calls `recordPlatformCourseChange` after its write commits,
+ * bumping the owning platform course's version and queuing a tenant notification if it has any
+ * fulfilled clone. */
 const platformCourseContentRoutes: FastifyPluginAsync = async (fastify) => {
   async function resolvePlatformCourse(id: string) {
     const [course] = await fastify.db.select({ id: platformCourses.id }).from(platformCourses).where(eq(platformCourses.id, id));
     return course ?? null;
-  }
-
-  async function rejectIfImmutable(
-    platformCourseId: string,
-    request: import("fastify").FastifyRequest,
-    reply: import("fastify").FastifyReply,
-  ): Promise<boolean> {
-    if (await platformCourseHasFulfilledSelection(request.superAdminDb!, platformCourseId)) {
-      reply.code(409).send({
-        success: false,
-        message: "This platform course has already been selected by a tenant; its curriculum is frozen",
-      });
-      return true;
-    }
-    return false;
   }
 
   // POST /admin/platform-courses/:id/modules — mirrors spec 024 FR-001, append-only.
@@ -95,7 +84,6 @@ const platformCourseContentRoutes: FastifyPluginAsync = async (fastify) => {
       if (!course) {
         return reply.code(404).send({ success: false, message: "Not found" });
       }
-      if (await rejectIfImmutable(platformCourseId, request, reply)) return;
 
       const existing = await fastify.db
         .select({ id: platformCourseModules.id })
@@ -113,6 +101,8 @@ const platformCourseContentRoutes: FastifyPluginAsync = async (fastify) => {
         })
         .returning();
 
+      await recordPlatformCourseChange(request.superAdminDb!, fastify.pg.pool, platformCourseId, request.superAdmin!.id);
+
       return reply.code(201).send({ success: true, data: toModuleRow(created, []) });
     },
   );
@@ -127,7 +117,6 @@ const platformCourseContentRoutes: FastifyPluginAsync = async (fastify) => {
       if (!existing) {
         return reply.code(404).send({ success: false, message: "Not found" });
       }
-      if (await rejectIfImmutable(existing.platformCourseId, request, reply)) return;
 
       const body = request.body ?? {};
       if (body.title !== undefined && !body.title.trim()) {
@@ -145,6 +134,8 @@ const platformCourseContentRoutes: FastifyPluginAsync = async (fastify) => {
         .where(eq(platformCourseModules.id, id))
         .returning();
 
+      await recordPlatformCourseChange(request.superAdminDb!, fastify.pg.pool, existing.platformCourseId, request.superAdmin!.id);
+
       return reply.code(200).send({ success: true, data: toModuleRow(updated) });
     },
   );
@@ -161,17 +152,18 @@ const platformCourseContentRoutes: FastifyPluginAsync = async (fastify) => {
       if (!existing) {
         return reply.code(404).send({ success: false, message: "Not found" });
       }
-      if (await rejectIfImmutable(existing.platformCourseId, request, reply)) return;
 
+      const preserveObjects = await platformCourseHasFulfilledSelection(request.superAdminDb!, existing.platformCourseId);
       const items = await fastify.db
         .select({ id: platformCourseContentItems.id })
         .from(platformCourseContentItems)
         .where(eq(platformCourseContentItems.platformCourseModuleId, id));
       for (const item of items) {
-        await deleteAllAttachmentsForPlatformEntity(fastify.db, "platform_content_item", item.id);
+        await deleteAllAttachmentsForPlatformEntity(fastify.db, "platform_content_item", item.id, preserveObjects);
       }
 
       await fastify.db.delete(platformCourseModules).where(eq(platformCourseModules.id, id));
+      await recordPlatformCourseChange(request.superAdminDb!, fastify.pg.pool, existing.platformCourseId, request.superAdmin!.id);
       return reply.code(200).send({ success: true });
     },
   );
@@ -186,7 +178,6 @@ const platformCourseContentRoutes: FastifyPluginAsync = async (fastify) => {
       if (!course) {
         return reply.code(404).send({ success: false, message: "Not found" });
       }
-      if (await rejectIfImmutable(platformCourseId, request, reply)) return;
 
       const submitted = request.body?.moduleIds ?? [];
       const current = await fastify.db
@@ -204,6 +195,8 @@ const platformCourseContentRoutes: FastifyPluginAsync = async (fastify) => {
       for (let i = 0; i < submitted.length; i++) {
         await fastify.db.update(platformCourseModules).set({ position: i }).where(eq(platformCourseModules.id, submitted[i]));
       }
+
+      await recordPlatformCourseChange(request.superAdminDb!, fastify.pg.pool, platformCourseId, request.superAdmin!.id);
 
       const reordered = await fastify.db
         .select()
@@ -236,7 +229,6 @@ const platformCourseContentRoutes: FastifyPluginAsync = async (fastify) => {
       if (!module) {
         return reply.code(404).send({ success: false, message: "Not found" });
       }
-      if (await rejectIfImmutable(module.platformCourseId, request, reply)) return;
 
       const existing = await fastify.db
         .select({ id: platformCourseContentItems.id })
@@ -257,6 +249,8 @@ const platformCourseContentRoutes: FastifyPluginAsync = async (fastify) => {
         })
         .returning();
 
+      await recordPlatformCourseChange(request.superAdminDb!, fastify.pg.pool, module.platformCourseId, request.superAdmin!.id);
+
       return reply.code(201).send({ success: true, data: toContentItemRow(created) });
     },
   );
@@ -271,7 +265,6 @@ const platformCourseContentRoutes: FastifyPluginAsync = async (fastify) => {
       if (!existing) {
         return reply.code(404).send({ success: false, message: "Not found" });
       }
-      if (await rejectIfImmutable(existing.platformCourseId, request, reply)) return;
 
       const body = request.body ?? {};
       if (body.type !== undefined) {
@@ -321,6 +314,8 @@ const platformCourseContentRoutes: FastifyPluginAsync = async (fastify) => {
         .where(eq(platformCourseContentItems.id, id))
         .returning();
 
+      await recordPlatformCourseChange(request.superAdminDb!, fastify.pg.pool, existing.platformCourseId, request.superAdmin!.id);
+
       return reply.code(200).send({ success: true, data: toContentItemRow(updated) });
     },
   );
@@ -336,10 +331,11 @@ const platformCourseContentRoutes: FastifyPluginAsync = async (fastify) => {
       if (!existing) {
         return reply.code(404).send({ success: false, message: "Not found" });
       }
-      if (await rejectIfImmutable(existing.platformCourseId, request, reply)) return;
 
-      await deleteAllAttachmentsForPlatformEntity(fastify.db, "platform_content_item", id);
+      const preserveObjects = await platformCourseHasFulfilledSelection(request.superAdminDb!, existing.platformCourseId);
+      await deleteAllAttachmentsForPlatformEntity(fastify.db, "platform_content_item", id, preserveObjects);
       await fastify.db.delete(platformCourseContentItems).where(eq(platformCourseContentItems.id, id));
+      await recordPlatformCourseChange(request.superAdminDb!, fastify.pg.pool, existing.platformCourseId, request.superAdmin!.id);
       return reply.code(200).send({ success: true });
     },
   );
@@ -354,7 +350,6 @@ const platformCourseContentRoutes: FastifyPluginAsync = async (fastify) => {
       if (!module) {
         return reply.code(404).send({ success: false, message: "Not found" });
       }
-      if (await rejectIfImmutable(module.platformCourseId, request, reply)) return;
 
       const submitted = request.body?.contentItemIds ?? [];
       const current = await fastify.db
@@ -372,6 +367,8 @@ const platformCourseContentRoutes: FastifyPluginAsync = async (fastify) => {
       for (let i = 0; i < submitted.length; i++) {
         await fastify.db.update(platformCourseContentItems).set({ position: i }).where(eq(platformCourseContentItems.id, submitted[i]));
       }
+
+      await recordPlatformCourseChange(request.superAdminDb!, fastify.pg.pool, module.platformCourseId, request.superAdmin!.id);
 
       const reordered = await fastify.db
         .select()

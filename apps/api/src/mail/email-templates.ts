@@ -199,3 +199,24 @@ export function buildPasswordResetEmail(input: PasswordResetEmailInput): EmailTe
 
   return { subject: "Reset your TM password", text, html };
 }
+
+export interface CourseUpdateAvailableEmailInput {
+  courseTitle: string;
+  manageUrl: string;
+}
+
+/** Course Marketplace Updates (spec 032) — sent to every `course.manage` holder on a tenant when the
+ * platform course they cloned has been edited since (research.md §8). */
+export function buildCourseUpdateAvailableEmail(input: CourseUpdateAvailableEmailInput): EmailTemplateResult {
+  const heading = `An update is available for ${input.courseTitle}`;
+  const blocks: EmailBlock[] = [
+    paragraph(
+      `<strong>${escapeHtml(input.courseTitle)}</strong> has been updated since you added it to your organization's course catalog. Review the update and choose to apply it or keep your current version.`,
+    ),
+    ctaButton(input.manageUrl, "Review update"),
+  ];
+  const footerNote = "Your course stays exactly as it is until you choose to apply the update — nothing changes automatically.";
+  const { html, text } = renderShell(heading, blocks, footerNote);
+
+  return { subject: `Update available: ${input.courseTitle}`, text, html };
+}

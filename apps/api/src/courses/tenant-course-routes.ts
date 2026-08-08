@@ -10,6 +10,7 @@ import { courseAuthors } from "../db/schema/course-authors";
 import { courseReviews } from "../db/schema/course-reviews";
 import { fileAttachments } from "../db/schema/file-attachments";
 import { users } from "../db/schema/users";
+import { marketplaceSelections, platformCourses } from "../db/schema/platform-courses";
 import { resolveOrCreateCourseCategory } from "./course-category-resolution";
 import { deleteAllAttachmentsForEntity } from "../attachments/tenant-attachment-routes";
 import * as storage from "../storage/storage";
@@ -99,15 +100,15 @@ function validateFields(body: CourseWriteBody): { code: number; message: string 
   return null;
 }
 
-/** contracts/course-management-api.md. All routes operate through `request.tenantDb` (RLS-scoped)
- * — no route ever takes or trusts a client-supplied tenant id. */
-const tenantCourseRoutes: FastifyPluginAsync = async (fastify) => {
-  /** Batch-joins category name and creator/updater full names for a page of course rows — mirrors
-   * `tenant-department-routes.ts`'s `userById` Map pattern for manager/assistantManager. Also
-   * batch-resolves each course's current image (if any) to a fresh presigned download URL —
-   * `file_attachments` rows never store a stable public URL, so this is computed at read time, the
-   * same way the SCORM launch route computes `entryPointUrl` server-side. */
-  async function toResponseRows(tenantDb: typeof fastify.db, rows: CourseRow[]) {
+/** Batch-joins category name and creator/updater full names for a page of course rows — mirrors
+ * `tenant-department-routes.ts`'s `userById` Map pattern for manager/assistantManager. Also
+ * batch-resolves each course's current image (if any) to a fresh presigned download URL —
+ * `file_attachments` rows never store a stable public URL, so this is computed at read time, the
+ * same way the SCORM launch route computes `entryPointUrl` server-side. Exported (not just used
+ * internally by this plugin's own routes) so the Course Marketplace Updates apply/dismiss routes
+ * (tenant-marketplace-routes.ts) can return a course in the exact same shape as `GET
+ * /tenant/courses/:courseId` without duplicating this join logic (contracts §apply/§dismiss). */
+export async function toResponseRows(tenantDb: Db, rows: CourseRow[]) {
     const categoryIds = Array.from(new Set(rows.map((r) => r.categoryId)));
     const categoryRows =
       categoryIds.length > 0
@@ -165,6 +166,31 @@ const tenantCourseRoutes: FastifyPluginAsync = async (fastify) => {
       );
     }
 
+    // Course Marketplace Updates (spec 032) — "update available" for a course cloned from the
+    // marketplace, per the derived-state formula in data-model.md. A tenant-authored course (no
+    // fulfilled selection referencing it) is simply never in this map, so `updateAvailable` defaults
+    // to `false` below.
+    const marketplaceRows =
+      courseIds.length > 0
+        ? await tenantDb
+            .select({
+              clonedCourseId: marketplaceSelections.clonedCourseId,
+              appliedPlatformCourseVersion: marketplaceSelections.appliedPlatformCourseVersion,
+              dismissedPlatformCourseVersion: marketplaceSelections.dismissedPlatformCourseVersion,
+              platformCourseVersion: platformCourses.version,
+            })
+            .from(marketplaceSelections)
+            .innerJoin(platformCourses, eq(platformCourses.id, marketplaceSelections.platformCourseId))
+            .where(and(eq(marketplaceSelections.status, "fulfilled"), inArray(marketplaceSelections.clonedCourseId, courseIds)))
+        : [];
+    const updateAvailableByCourseId = new Map<string, boolean>();
+    for (const m of marketplaceRows) {
+      if (!m.clonedCourseId) continue;
+      const available =
+        m.platformCourseVersion > m.appliedPlatformCourseVersion && m.dismissedPlatformCourseVersion !== m.platformCourseVersion;
+      updateAvailableByCourseId.set(m.clonedCourseId, available);
+    }
+
     return rows.map((r) => ({
       id: r.id,
       title: r.title,
@@ -179,14 +205,18 @@ const tenantCourseRoutes: FastifyPluginAsync = async (fastify) => {
       requirements: r.requirements,
       courseImageUrl: imageUrlByCourseId.get(r.id) ?? null,
       moduleCount: moduleCountByCourseId.get(r.id) ?? 0,
+      updateAvailable: updateAvailableByCourseId.get(r.id) ?? false,
       status: r.status,
       createdBy: r.createdByUserId ? (userById.get(r.createdByUserId) ?? null) : null,
       createdAt: r.createdAt,
       updatedBy: r.updatedByUserId ? (userById.get(r.updatedByUserId) ?? null) : null,
       updatedAt: r.updatedAt,
     }));
-  }
+}
 
+/** contracts/course-management-api.md. All routes operate through `request.tenantDb` (RLS-scoped)
+ * — no route ever takes or trusts a client-supplied tenant id. */
+const tenantCourseRoutes: FastifyPluginAsync = async (fastify) => {
   // GET /tenant/courses — spec FR-002/FR-003, contracts §GET list.
   fastify.get<{
     Querystring: {

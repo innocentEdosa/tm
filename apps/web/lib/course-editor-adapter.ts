@@ -65,6 +65,9 @@ export interface CourseEditorApi {
   supportsItemStatusToggle: boolean;
   supportsResourceLinks: boolean;
   supportsScormImport: boolean;
+  /** Course Marketplace Updates — only a tenant's own cloned course can have an available update to
+   * apply/dismiss; a platform course is the marketplace source itself, never a clone of one. */
+  supportsMarketplaceUpdate: boolean;
 
   /** Creates a minimal draft (title + placeholder metadata), the "Create a course" popover's
    * "Create manually"/SCORM-quick-create flows — the rest of the course is filled in on the editor
@@ -85,6 +88,10 @@ export interface CourseEditorApi {
   updateObjectives(courseId: string, body: { learningObjectives: string[]; requirements: string[] }): Promise<Course>;
   /** Only called when `supportsCourseImage` is true. */
   uploadCourseImage?(courseId: string, file: File): Promise<void>;
+  /** Only called when `supportsMarketplaceUpdate` is true. */
+  applyMarketplaceUpdate?(courseId: string): Promise<Course>;
+  /** Only called when `supportsMarketplaceUpdate` is true. */
+  dismissMarketplaceUpdate?(courseId: string): Promise<Course>;
 
   fetchCurriculum(courseId: string): Promise<Curriculum>;
   createModule(courseId: string, input: { title: string; description: string }): Promise<CourseModule>;
@@ -139,6 +146,7 @@ export function tenantCourseEditorApi(subdomain: string): CourseEditorApi {
     supportsItemStatusToggle: true,
     supportsResourceLinks: true,
     supportsScormImport: true,
+    supportsMarketplaceUpdate: true,
 
     async createDraftCourse(input) {
       const { data } = await tenantFetch<{ data: { id: string } }>("/courses", {
@@ -168,6 +176,14 @@ export function tenantCourseEditorApi(subdomain: string): CourseEditorApi {
       });
       await uploadFileToPresignedUrl(attachment.uploadUrl, file, file.type);
       await tenantFetch(`/attachments/${attachment.id}/confirm`, { method: "POST", subdomain });
+    },
+    async applyMarketplaceUpdate(courseId) {
+      const { data } = await tenantFetch<{ data: Course }>(`/courses/${courseId}/marketplace-update/apply`, { method: "POST", subdomain });
+      return data;
+    },
+    async dismissMarketplaceUpdate(courseId) {
+      const { data } = await tenantFetch<{ data: Course }>(`/courses/${courseId}/marketplace-update/dismiss`, { method: "POST", subdomain });
+      return data;
     },
 
     async fetchCurriculum(courseId) {
@@ -345,6 +361,9 @@ function normalizePlatformCourse(c: RawPlatformCourse): Course {
     requirements: c.requirements,
     courseImageUrl: c.courseImageUrl,
     moduleCount: 0,
+    // A platform course is the marketplace source itself, never a clone of one — "update available"
+    // is a tenant-clone concept only (course-api-types.ts).
+    updateAvailable: false,
     status: c.status as Course["status"],
     createdBy: null,
     createdAt: c.createdAt,
@@ -364,6 +383,7 @@ export function platformCourseEditorApi(): CourseEditorApi {
     supportsItemStatusToggle: false,
     supportsResourceLinks: true,
     supportsScormImport: false,
+    supportsMarketplaceUpdate: false,
 
     async createDraftCourse(input) {
       const { data } = await platformFetch<{ data: { id: string } }>("/admin/platform-courses", {

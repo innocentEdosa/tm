@@ -46,6 +46,11 @@ export const platformCourses = pgTable(
     // unmodified for platform-course authoring (spec 029 UI-reuse follow-up).
     learningObjectives: text("learning_objectives").array().notNull().default([]),
     requirements: text("requirements").array().notNull().default([]),
+    // Course Marketplace Updates (spec 032) — incremented on every content-affecting write once
+    // IMMUTABLE_ONCE_CLONED_FIELDS/rejectIfImmutable no longer block edits. Compared against each
+    // marketplace_selections row's appliedPlatformCourseVersion to drive the tenant-facing
+    // "update available" indicator (data-model.md).
+    version: integer("version").notNull().default(1),
     createdBySuperAdminId: uuid("created_by_super_admin_id").references(() => superAdmins.id, {
       onDelete: "set null",
     }),
@@ -197,6 +202,14 @@ export const marketplaceSelections = pgTable(
       onDelete: "set null",
     }),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    // Course Marketplace Updates (spec 032) — which platform course version this tenant's clone
+    // currently reflects, which version it was last emailed about, and which version it last
+    // explicitly dismissed. Only meaningful on a `fulfilled` row; left at defaults otherwise
+    // (data-model.md). Compared against `platformCourses.version` at read time — never a stored
+    // boolean — to derive the "update available" state (research.md §5).
+    appliedPlatformCourseVersion: integer("applied_platform_course_version").notNull().default(1),
+    notifiedPlatformCourseVersion: integer("notified_platform_course_version"),
+    dismissedPlatformCourseVersion: integer("dismissed_platform_course_version"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

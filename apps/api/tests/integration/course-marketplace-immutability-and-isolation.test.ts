@@ -30,12 +30,12 @@ async function seedTenantWithCourseManage(): Promise<{ headers: Headers; tenantI
   return { headers: { "x-test-user-id": userId, "x-test-tenant-id": tenantId }, tenantId };
 }
 
-describe("course marketplace immutability + cross-tenant isolation (spec 029 SC-007, Polish T038/T039)", () => {
+describe("course marketplace cross-tenant isolation (spec 029 SC-007, Polish T038/T039) + editing after clone (spec 032 US1)", () => {
   afterAll(async () => {
     await closeTestPool();
   });
 
-  it("rejects editing a platform course's immutable fields once a tenant has cloned it, but metadata-only fields still edit", async () => {
+  it("allows editing a platform course's title/category/deliveryMode/duration after a tenant has cloned it, and bumps its version", async () => {
     const { cookieHeader } = await seedSuperAdminSession();
     const adminHeaders = { cookie: cookieHeader };
     const { headers: tenantHeaders } = await seedTenantWithCourseManage();
@@ -45,27 +45,35 @@ describe("course marketplace immutability + cross-tenant isolation (spec 029 SC-
       const { courseId } = await createActiveFreePlatformCourse(server, adminHeaders);
       await server.inject({ method: "POST", url: `/tenant/course-marketplace/${courseId}/select`, headers: tenantHeaders });
 
+      // version isn't in the Super Admin response body (contracts §Super Admin routes) — read it
+      // straight from the DB instead, before and after, so this test doesn't hardcode how many prior
+      // mutations createActiveFreePlatformCourse's own setup already bumped it by.
+      const { withSuperAdminTransaction } = await import("../helpers/pg");
+      const readVersion = () =>
+        withSuperAdminTransaction(async (client) => {
+          const result = await client.query<{ version: number }>(`SELECT version FROM platform_courses WHERE id = $1`, [courseId]);
+          return result.rows[0].version;
+        });
+      const versionBefore = await readVersion();
+
       const editTitle = await server.inject({
         method: "PATCH",
         url: `/admin/platform-courses/${courseId}`,
         headers: adminHeaders,
         payload: { title: "New Title" },
       });
-      expect(editTitle.statusCode).toBe(409);
+      expect(editTitle.statusCode).toBe(200);
+      expect(editTitle.json().data.title).toBe("New Title");
 
-      const editDescription = await server.inject({
-        method: "PATCH",
-        url: `/admin/platform-courses/${courseId}`,
-        headers: adminHeaders,
-        payload: { description: "Still editable" },
-      });
-      expect(editDescription.statusCode).toBe(200);
+      const detail = await server.inject({ method: "GET", url: `/admin/platform-courses/${courseId}`, headers: adminHeaders });
+      expect(await readVersion()).toBe(versionBefore + 1);
+      expect(detail.statusCode).toBe(200);
     } finally {
       await server.close();
     }
   });
 
-  it("rejects module/content-item edit and delete once ≥1 fulfilled selection exists", async () => {
+  it("allows module/content-item create, edit, and delete once ≥1 fulfilled selection exists", async () => {
     const { cookieHeader } = await seedSuperAdminSession();
     const adminHeaders = { cookie: cookieHeader };
     const { headers: tenantHeaders } = await seedTenantWithCourseManage();
@@ -79,9 +87,9 @@ describe("course marketplace immutability + cross-tenant isolation (spec 029 SC-
         method: "POST",
         url: `/admin/platform-courses/${courseId}/modules`,
         headers: adminHeaders,
-        payload: { title: "Should be blocked" },
+        payload: { title: "No longer blocked" },
       });
-      expect(newModule.statusCode).toBe(409);
+      expect(newModule.statusCode).toBe(201);
 
       const editModule = await server.inject({
         method: "PATCH",
@@ -89,10 +97,10 @@ describe("course marketplace immutability + cross-tenant isolation (spec 029 SC-
         headers: adminHeaders,
         payload: { title: "Renamed" },
       });
-      expect(editModule.statusCode).toBe(409);
+      expect(editModule.statusCode).toBe(200);
 
       const deleteModule = await server.inject({ method: "DELETE", url: `/admin/platform-course-modules/${moduleId}`, headers: adminHeaders });
-      expect(deleteModule.statusCode).toBe(409);
+      expect(deleteModule.statusCode).toBe(200);
     } finally {
       await server.close();
     }

@@ -8,7 +8,7 @@ import { MoreVertical } from "lucide-react";
 import { Card, Badge, Button, Modal, Popover } from "@tm/ui";
 import { tenantFetch } from "@/lib/tenant-api-client";
 import { SubdomainProvider, useSubdomain } from "@/lib/subdomain-context";
-import { CourseEditorApiProvider } from "@/lib/course-editor-context";
+import { CourseEditorApiProvider, useCourseEditorApi } from "@/lib/course-editor-context";
 import { tenantCourseEditorApi } from "@/lib/course-editor-adapter";
 import type { Course, CourseStatus, Curriculum } from "@/lib/course-api-types";
 import InformationTab from "./information-tab";
@@ -43,6 +43,7 @@ function CourseEditorInner({ courseId, canManage, currentUserEmail }: { courseId
   const subdomain = useSubdomain();
   const router = useRouter();
   const queryClient = useQueryClient();
+  const api = useCourseEditorApi();
 
   const courseQuery = useQuery({
     queryKey: ["course", courseId, subdomain],
@@ -75,6 +76,21 @@ function CourseEditorInner({ courseId, canManage, currentUserEmail }: { courseId
     onSuccess: () => router.push("/learning/courses"),
     onError: (err: Error) => setDeleteError(err.message),
   });
+  const applyUpdateMutation = useMutation({
+    mutationFn: () => api.applyMarketplaceUpdate!(courseId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["course", courseId, subdomain] });
+      queryClient.invalidateQueries({ queryKey: ["course-curriculum", courseId, subdomain] });
+      queryClient.invalidateQueries({ queryKey: ["courses", subdomain] });
+    },
+  });
+  const dismissUpdateMutation = useMutation({
+    mutationFn: () => api.dismissMarketplaceUpdate!(courseId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["course", courseId, subdomain] });
+      queryClient.invalidateQueries({ queryKey: ["courses", subdomain] });
+    },
+  });
 
   const course = courseQuery.data;
   if (!course) {
@@ -97,6 +113,7 @@ function CourseEditorInner({ courseId, canManage, currentUserEmail }: { courseId
           <div className="flex items-center gap-2">
             <h1 className="text-2xl font-bold text-primary">{course.title}</h1>
             <Badge variant={STATUS_BADGE_VARIANT[course.status]}>{STATUS_LABEL[course.status]}</Badge>
+            {course.updateAvailable && <Badge variant="warning">Update available</Badge>}
           </div>
           {(moduleCount > 0 || lessonCount > 0) && (
             <p className="mt-1 text-sm text-muted">
@@ -110,6 +127,16 @@ function CourseEditorInner({ courseId, canManage, currentUserEmail }: { courseId
           )}
         </div>
         <div className="flex items-center gap-2">
+          {canManage && course.updateAvailable && (
+            <>
+              <Button variant="outline" onClick={() => dismissUpdateMutation.mutate()} isLoading={dismissUpdateMutation.isPending}>
+                Dismiss update
+              </Button>
+              <Button onClick={() => applyUpdateMutation.mutate()} isLoading={applyUpdateMutation.isPending}>
+                Apply update
+              </Button>
+            </>
+          )}
           {canManage && (
             <Popover
               align="end"

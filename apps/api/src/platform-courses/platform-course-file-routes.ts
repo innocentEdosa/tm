@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
-import type { FastifyPluginAsync, FastifyRequest, FastifyReply } from "fastify";
+import type { FastifyPluginAsync } from "fastify";
 import { and, eq } from "drizzle-orm";
 import { requireSuperAdminSession } from "../platform-auth/require-super-admin-session";
 import { platformCourses, platformCourseContentItems, platformFileAttachments } from "../db/schema/platform-courses";
 import { validateAgainstAllowlist } from "../attachments/attachment-allowlist";
 import { platformCourseHasFulfilledSelection } from "../course-marketplace/platform-course-immutability";
+import { recordPlatformCourseChange } from "../course-marketplace/record-platform-course-change";
 import type { Db } from "../db/client";
 import * as storage from "../storage/storage";
 
@@ -21,20 +22,32 @@ interface CreateAttachmentBody {
 }
 
 /**
- * Deletes every attachment belonging to a given platform entity — both the R2 objects and the
- * rows — in one call. Mirrors `tenant-attachment-routes.ts`'s `deleteAllAttachmentsForEntity`
- * exactly. Used for course-image replacement (a course only ever has one current image) and
- * content-item/module delete cascades (platform-course-content-routes.ts).
+ * Deletes every attachment row belonging to a given platform entity, and — unless `preserveObjects`
+ * is `true` — their underlying R2 objects too. Mirrors `tenant-attachment-routes.ts`'s
+ * `deleteAllAttachmentsForEntity` shape, extended (Course Marketplace Updates, spec 032, research.md
+ * §3) with `preserveObjects`: once a platform course has ≥1 fulfilled selection, any tenant clone's
+ * `file_attachments` row may still reference one of these objects by its `storage_key` — deleting the
+ * object out from under it would silently break a file for a tenant who hasn't accepted an update yet
+ * (FR-002). Callers pass `preserveObjects = await platformCourseHasFulfilledSelection(...)`. The row
+ * itself is always deleted regardless — only the R2 object is ever preserved; harmless, since the
+ * tenant's own `file_attachments` row is a fully independent copy with no FK back to this one.
  */
-export async function deleteAllAttachmentsForPlatformEntity(db: Db, entityType: string, entityId: string): Promise<void> {
+export async function deleteAllAttachmentsForPlatformEntity(
+  db: Db,
+  entityType: string,
+  entityId: string,
+  preserveObjects: boolean,
+): Promise<void> {
   const rows = await db
     .select({ id: platformFileAttachments.id, storageKey: platformFileAttachments.storageKey })
     .from(platformFileAttachments)
     .where(and(eq(platformFileAttachments.entityType, entityType), eq(platformFileAttachments.entityId, entityId)));
 
-  for (const row of rows) {
-    if (row.storageKey) {
-      await storage.deleteObject(row.storageKey);
+  if (!preserveObjects) {
+    for (const row of rows) {
+      if (row.storageKey) {
+        await storage.deleteObject(row.storageKey);
+      }
     }
   }
   if (rows.length > 0) {
@@ -47,10 +60,11 @@ export async function deleteAllAttachmentsForPlatformEntity(db: Db, entityType: 
 /** contracts/platform-course-authoring-api.md §attachments. Mirrors `tenant-attachment-routes.ts`
  * (spec 025, extended by spec 028's `kind:"link"`/course-image addition) against
  * `platform_file_attachments` — reuses the same fixed, platform-wide upload allowlist and
- * `StorageClient` unmodified (research.md §6). Every mutating route rejects `409` once the owning
- * platform course has ≥1 `fulfilled` selection (FR-013) — extended to cover the course image too,
- * now that `clonePlatformCourseIntoTenant` also clones it (a tenant's copy must never
- * unexpectedly change underneath it, the same rationale as content). */
+ * `StorageClient` unmodified (research.md §6). Course Marketplace Updates (spec 032) removed the
+ * prior FR-013 "frozen once cloned" 409 on every route below — edits are always allowed, but
+ * replacing/deleting a file on a course with ≥1 fulfilled selection preserves the underlying R2
+ * object rather than deleting it (research.md §3), and every route that lands real (not just
+ * pending-upload) content calls `recordPlatformCourseChange` to bump the version and notify. */
 const platformCourseFileRoutes: FastifyPluginAsync = async (fastify) => {
   function toResponseRow(row: PlatformFileAttachmentRow) {
     return {
@@ -84,17 +98,6 @@ const platformCourseFileRoutes: FastifyPluginAsync = async (fastify) => {
     return null;
   }
 
-  async function rejectIfImmutable(platformCourseId: string, request: FastifyRequest, reply: FastifyReply): Promise<boolean> {
-    if (await platformCourseHasFulfilledSelection(request.superAdminDb!, platformCourseId)) {
-      reply.code(409).send({
-        success: false,
-        message: "This platform course has already been selected by a tenant; its files are frozen",
-      });
-      return true;
-    }
-    return false;
-  }
-
   // POST /admin/platform-courses/:id/image — course-image upload, mirroring
   // `tenant-attachment-routes.ts`'s `POST /tenant/courses/:courseId/image` exactly. A course only
   // ever has one current image — any prior one is deleted first (R2 object + row).
@@ -115,14 +118,14 @@ const platformCourseFileRoutes: FastifyPluginAsync = async (fastify) => {
       if (!course) {
         return reply.code(404).send({ success: false, message: "Not found" });
       }
-      if (await rejectIfImmutable(courseId, request, reply)) return;
 
       const validation = validateAgainstAllowlist("course", body.contentType, body.sizeBytes);
       if (validation.error) {
         return reply.code(422).send({ success: false, message: validation.error });
       }
 
-      await deleteAllAttachmentsForPlatformEntity(fastify.db, "platform_course", courseId);
+      const preserveObjects = await platformCourseHasFulfilledSelection(request.superAdminDb!, courseId);
+      await deleteAllAttachmentsForPlatformEntity(fastify.db, "platform_course", courseId, preserveObjects);
 
       const attachmentId = randomUUID();
       const storageKey = `platform/course/${courseId}/${attachmentId}/${body.fileName.trim()}`;
@@ -162,7 +165,6 @@ const platformCourseFileRoutes: FastifyPluginAsync = async (fastify) => {
       if (!item) {
         return reply.code(404).send({ success: false, message: "Not found" });
       }
-      if (await rejectIfImmutable(item.platformCourseId, request, reply)) return;
 
       if (body.kind === "link") {
         if (!body.fileName?.trim() || !body.url?.trim()) {
@@ -180,6 +182,7 @@ const platformCourseFileRoutes: FastifyPluginAsync = async (fastify) => {
             createdBySuperAdminId: request.superAdmin!.id,
           })
           .returning();
+        await recordPlatformCourseChange(request.superAdminDb!, fastify.pg.pool, item.platformCourseId, request.superAdmin!.id);
         return reply.code(201).send({ success: true, data: toResponseRow(created) });
       }
 
@@ -247,6 +250,11 @@ const platformCourseFileRoutes: FastifyPluginAsync = async (fastify) => {
         .where(eq(platformFileAttachments.id, attachmentId))
         .returning();
 
+      const owningCourseId = await resolveOwningPlatformCourseId(updated.entityType, updated.entityId);
+      if (owningCourseId) {
+        await recordPlatformCourseChange(request.superAdminDb!, fastify.pg.pool, owningCourseId, request.superAdmin!.id);
+      }
+
       return reply.code(200).send({ success: true, data: toResponseRow(updated) });
     },
   );
@@ -312,12 +320,15 @@ const platformCourseFileRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const owningCourseId = await resolveOwningPlatformCourseId(existing.entityType, existing.entityId);
-      if (owningCourseId && (await rejectIfImmutable(owningCourseId, request, reply))) return;
+      const preserveObjects = owningCourseId ? await platformCourseHasFulfilledSelection(request.superAdminDb!, owningCourseId) : false;
 
-      if (existing.storageKey) {
+      if (existing.storageKey && !preserveObjects) {
         await storage.deleteObject(existing.storageKey);
       }
       await fastify.db.delete(platformFileAttachments).where(eq(platformFileAttachments.id, attachmentId));
+      if (owningCourseId) {
+        await recordPlatformCourseChange(request.superAdminDb!, fastify.pg.pool, owningCourseId, request.superAdmin!.id);
+      }
       return reply.code(200).send({ success: true });
     },
   );

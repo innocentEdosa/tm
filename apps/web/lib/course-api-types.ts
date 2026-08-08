@@ -32,6 +32,11 @@ export interface Course {
   requirements: string[];
   courseImageUrl: string | null;
   moduleCount: number;
+  /** Course Marketplace Updates — true when this course was cloned from a platform-marketplace
+   * course whose Super Admin source has since been edited past the version this clone reflects, and
+   * the tenant hasn't already dismissed that specific version. Always false for a tenant-authored
+   * course. */
+  updateAvailable: boolean;
   status: CourseStatus;
   createdBy: UserRef | null;
   createdAt: string;
