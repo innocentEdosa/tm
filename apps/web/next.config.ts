@@ -5,6 +5,15 @@ const API_ORIGIN = process.env.API_ORIGIN ?? "http://localhost:3001";
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  // Lets next/image optimize presigned R2 download/thumbnail URLs (course images, existing-file
+  // picker thumbnails) instead of falling back to a plain `<img>`. Wildcarded rather than pinned to
+  // one account/bucket — R2's domain suffix is fixed across every Cloudflare account, but the
+  // account-id/bucket-name subdomain prefix (`R2_ACCOUNT_ID`/`R2_BUCKET_NAME`) varies per environment
+  // (dev/staging/production). The URL's query string (presigned signature/expiry) is irrelevant to
+  // this match — only scheme+hostname are checked.
+  images: {
+    remotePatterns: [{ protocol: "https", hostname: "*.r2.cloudflarestorage.com" }],
+  },
   // Next infers the monorepo root by walking up for lockfiles; this repo also has a stray lockfile
   // one level above the actual workspace root (pnpm-workspace.yaml lives here), which made Next guess
   // wrong and warn on every build. Pinning it explicitly also keeps `output: "standalone"`'s file

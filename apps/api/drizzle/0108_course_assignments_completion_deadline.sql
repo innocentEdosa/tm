@@ -1,0 +1,1 @@
+ALTER TABLE "course_assignments" ADD COLUMN "completion_deadline" date;

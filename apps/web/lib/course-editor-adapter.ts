@@ -9,6 +9,7 @@ import type {
   ContentStatus,
   CourseModule,
   Curriculum,
+  TenantFile,
 } from "@/lib/course-api-types";
 
 const PLATFORM_API_BASE = "/platform-api";
@@ -68,6 +69,11 @@ export interface CourseEditorApi {
   /** Course Marketplace Updates — only a tenant's own cloned course can have an available update to
    * apply/dismiss; a platform course is the marketplace source itself, never a clone of one. */
   supportsMarketplaceUpdate: boolean;
+  /** Course Creation File Manager — browsing/reusing files already uploaded elsewhere in the tenant.
+   * Tenant-only: there's no cross-course "platform file library" concept or backend route for it (a
+   * platform course's few attachments are cloned wholesale by `clone-platform-course.ts`, not picked
+   * one-by-one by a Super Admin the way a tenant admin picks among their own tenant's files). */
+  supportsFileManager: boolean;
 
   /** Creates a minimal draft (title + placeholder metadata), the "Create a course" popover's
    * "Create manually"/SCORM-quick-create flows — the rest of the course is filled in on the editor
@@ -125,6 +131,20 @@ export interface CourseEditorApi {
   createAttachmentLink?(contentItemId: string, body: { fileName: string; url: string }): Promise<void>;
   deleteAttachment(contentItemId: string, attachmentId: string): Promise<void>;
 
+  /** Only called when `supportsFileManager` is true. Every `kind:"file"`, `status:"ready"` attachment
+   * belonging to the tenant, deduped by underlying storage object (a file already reused across
+   * several lessons appears once, not once per reference) — shared by the Course Creation File
+   * Manager's picker list and the course-image picker's gallery (filtered to images client-side). */
+  fetchTenantFiles?(): Promise<TenantFile[]>;
+  /** Only called when `supportsFileManager` is true. Attaches an existing tenant file (by its
+   * attachment id, as returned from `fetchTenantFiles`) to another content item — no re-upload, no
+   * new storage object, just a new row referencing the same underlying file. */
+  reuseAttachment?(contentItemId: string, sourceAttachmentId: string): Promise<Attachment>;
+  /** Only called when `supportsFileManager` is true. Attaches an existing tenant image (by its
+   * attachment id, as returned from `fetchTenantFiles`) as this course's image — no re-upload, no new
+   * storage object, same "delete any prior image first" behavior as `uploadCourseImage`. */
+  reuseCourseImage?(courseId: string, sourceAttachmentId: string): Promise<void>;
+
   /** Only called when `supportsScormImport` is true. */
   getScormUploadUrl?(contentItemId: string, sizeBytes: number): Promise<{ uploadUrl: string; storageKey: string }>;
   importScormPackage?(contentItemId: string, storageKey: string): Promise<void>;
@@ -147,6 +167,7 @@ export function tenantCourseEditorApi(subdomain: string): CourseEditorApi {
     supportsResourceLinks: true,
     supportsScormImport: true,
     supportsMarketplaceUpdate: true,
+    supportsFileManager: true,
 
     async createDraftCourse(input) {
       const { data } = await tenantFetch<{ data: { id: string } }>("/courses", {
@@ -176,6 +197,9 @@ export function tenantCourseEditorApi(subdomain: string): CourseEditorApi {
       });
       await uploadFileToPresignedUrl(attachment.uploadUrl, file, file.type);
       await tenantFetch(`/attachments/${attachment.id}/confirm`, { method: "POST", subdomain });
+    },
+    async reuseCourseImage(courseId, sourceAttachmentId) {
+      await tenantFetch(`/courses/${courseId}/image/reuse`, { method: "POST", subdomain, body: { sourceAttachmentId } });
     },
     async applyMarketplaceUpdate(courseId) {
       const { data } = await tenantFetch<{ data: Course }>(`/courses/${courseId}/marketplace-update/apply`, { method: "POST", subdomain });
@@ -252,6 +276,19 @@ export function tenantCourseEditorApi(subdomain: string): CourseEditorApi {
     },
     async deleteAttachment(_contentItemId, attachmentId) {
       await tenantFetch(`/attachments/${attachmentId}`, { method: "DELETE", subdomain });
+    },
+
+    async fetchTenantFiles() {
+      const { data } = await tenantFetch<{ data: TenantFile[] }>("/files", { subdomain });
+      return data;
+    },
+    async reuseAttachment(contentItemId, sourceAttachmentId) {
+      const { data } = await tenantFetch<{ data: Attachment }>(`/content-items/${contentItemId}/attachments/reuse`, {
+        method: "POST",
+        subdomain,
+        body: { sourceAttachmentId },
+      });
+      return data;
     },
 
     async getScormUploadUrl(contentItemId, sizeBytes) {
@@ -364,6 +401,10 @@ function normalizePlatformCourse(c: RawPlatformCourse): Course {
     // A platform course is the marketplace source itself, never a clone of one — "update available"
     // is a tenant-clone concept only (course-api-types.ts).
     updateAvailable: false,
+    // Course Assignment Deadlines is a tenant-course-assignment concept only — platform courses have
+    // no `course_assignments` rows/audience of their own (a Super Admin author isn't "assigned" one).
+    myStartsAt: null,
+    myCompletionDeadline: null,
     status: c.status as Course["status"],
     createdBy: null,
     createdAt: c.createdAt,
@@ -384,6 +425,7 @@ export function platformCourseEditorApi(): CourseEditorApi {
     supportsResourceLinks: true,
     supportsScormImport: false,
     supportsMarketplaceUpdate: false,
+    supportsFileManager: false,
 
     async createDraftCourse(input) {
       const { data } = await platformFetch<{ data: { id: string } }>("/admin/platform-courses", {

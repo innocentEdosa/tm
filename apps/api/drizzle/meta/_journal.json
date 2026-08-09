@@ -749,6 +749,20 @@
       "when": 1785858934461,
       "tag": "0106_course_marketplace_updates",
       "breakpoints": true
+    },
+    {
+      "idx": 107,
+      "version": "7",
+      "when": 1786223086991,
+      "tag": "0107_course_assignments_deadline",
+      "breakpoints": true
+    },
+    {
+      "idx": 108,
+      "version": "7",
+      "when": 1786255881086,
+      "tag": "0108_course_assignments_completion_deadline",
+      "breakpoints": true
     }
   ]
 }

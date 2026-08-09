@@ -91,12 +91,17 @@ const tenantDepartmentRoutes: FastifyPluginAsync = async (fastify) => {
     },
   );
 
-  // GET /tenant/users?search= — research.md §10. Exists solely to back the Manager/Assistant
-  // Manager pickers, needed whenever creating or editing a department — gated by the legacy
-  // superset or either of the two granular keys that actually use it (Granular Permissions
-  // addendum), not a general user-directory permission. Also readable by `course.manage`, which
-  // needs the same search to back the course-assignment picker's user target.
-  fastify.get<{ Querystring: { search?: string } }>(
+  // GET /tenant/users?search=&page=&pageSize= — research.md §10. Exists solely to back the
+  // Manager/Assistant Manager pickers, needed whenever creating or editing a department — gated by
+  // the legacy superset or either of the two granular keys that actually use it (Granular
+  // Permissions addendum), not a general user-directory permission. Also readable by `course.manage`,
+  // which needs it to back the Course Assignment audience builder's Users tab — `search` used to be
+  // required (400 without it), fine for a type-to-search autocomplete but not for "browse everyone,
+  // paginated" (the audience builder's actual need); now optional, returning every user ordered by
+  // name when omitted, unchanged (still filtered, still un-paginated in effect) when given, so neither
+  // existing caller (PersonPicker here and in department-settings-client.tsx, both always non-empty)
+  // sees any behavior change — they simply get one new, ignorable `pagination` field alongside `data`.
+  fastify.get<{ Querystring: { search?: string; page?: string; pageSize?: string } }>(
     "/tenant/users",
     {
       preHandler: [
@@ -104,18 +109,22 @@ const tenantDepartmentRoutes: FastifyPluginAsync = async (fastify) => {
         requireAnyPermission("department.manage", "department.create", "department.edit", "course.manage"),
       ],
     },
-    async (request, reply) => {
+    async (request) => {
       const search = request.query.search?.trim();
-      if (!search) {
-        return reply.code(400).send({ success: false, message: "search is required" });
-      }
-      const pattern = `%${search}%`;
+      const page = Math.max(1, parseInt(request.query.page ?? "1", 10) || 1);
+      const pageSize = Math.max(1, Math.min(100, parseInt(request.query.pageSize ?? "", 10) || 20));
+      const condition = search ? or(sql`${users.fullName} ILIKE ${`%${search}%`}`, sql`${users.email} ILIKE ${`%${search}%`}`) : undefined;
+
+      const [{ count: total }] = await request.tenantDb.select({ count: sql<number>`count(*)::int` }).from(users).where(condition);
       const rows = await request.tenantDb
         .select({ id: users.id, fullName: users.fullName, email: users.email })
         .from(users)
-        .where(or(sql`${users.fullName} ILIKE ${pattern}`, sql`${users.email} ILIKE ${pattern}`));
+        .where(condition)
+        .orderBy(users.fullName)
+        .limit(pageSize)
+        .offset((page - 1) * pageSize);
 
-      return { success: true, data: rows };
+      return { success: true, data: rows, pagination: { page, pageSize, total } };
     },
   );
 

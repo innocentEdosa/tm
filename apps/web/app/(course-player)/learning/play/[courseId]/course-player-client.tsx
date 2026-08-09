@@ -64,7 +64,7 @@ function CoursePlayerInner({ courseId, initialContentItemId }: { courseId: strin
   const myReviewQuery = useQuery({
     queryKey: ["player-my-review", courseId, subdomain],
     queryFn: async () => {
-      const { data } = await tenantFetch<{ data: CourseReview | null }>(`/courses/${courseId}/reviews/mine`, { subdomain });
+      const { data } = await tenantFetch<{ data: CourseReview | null }>(`/courses/${courseId}/reviews/mine?asLearner=true`, { subdomain });
       return data;
     },
   });
@@ -72,7 +72,7 @@ function CoursePlayerInner({ courseId, initialContentItemId }: { courseId: strin
   const courseQuery = useQuery({
     queryKey: ["player-course", courseId, subdomain],
     queryFn: async () => {
-      const { data } = await tenantFetch<{ data: Course }>(`/courses/${courseId}`, { subdomain });
+      const { data } = await tenantFetch<{ data: Course }>(`/courses/${courseId}?asLearner=true`, { subdomain });
       return data;
     },
   });
@@ -80,7 +80,7 @@ function CoursePlayerInner({ courseId, initialContentItemId }: { courseId: strin
   const curriculumQuery = useQuery({
     queryKey: ["player-curriculum", courseId, subdomain],
     queryFn: async () => {
-      const { data } = await tenantFetch<{ data: Curriculum }>(`/courses/${courseId}/curriculum`, { subdomain });
+      const { data } = await tenantFetch<{ data: Curriculum }>(`/courses/${courseId}/curriculum?asLearner=true`, { subdomain });
       return data;
     },
   });

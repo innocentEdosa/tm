@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, timestamp, index, uniqueIndex, check, type AnyPgColumn } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, timestamp, date, index, uniqueIndex, check, type AnyPgColumn } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { tenants } from "./tenants";
 import { courses } from "./courses";
@@ -19,6 +19,26 @@ export type AssigneeType = (typeof ASSIGNEE_TYPES)[number];
  * `courseId` cascades: assignment rows are meaningless once their course is gone, unlike
  * `course_modules`/`content_items`, which the course routes clean up explicitly because that FK is
  * `restrict`.
+ *
+ * `startsAt`/`completionDeadline` (Course Assignment Deadlines, and its Audience Builder follow-up)
+ * both belong to the *assignment row*, never the course itself — a course has no single date of its
+ * own; each assignment path to it can carry its own pair. Two distinct, independent concepts: `starts_at`
+ * is when access to the course *begins* for whoever's reached through this row (`null` = immediately);
+ * `completion_deadline` is when the course is *due* for them (`null` = no due date). Originally a single
+ * `deadline` column meant only "starts at" — renamed to `starts_at` (migration `0108`) once
+ * `completion_deadline` was added alongside it, so two genuinely different dates never share one
+ * ambiguous name. For `'all'`/`'department'`/`'role'` these are shared by everyone reached through
+ * that row; for `'user'` this table already has exactly one row per individually-assigned user, so the
+ * same two columns double as that user's own dates with no extra table needed. Both nullable: optional
+ * (an assignment doesn't require either), and every row from before either column existed reads as
+ * `null` — no backfill needed. Plain `date` (day-only, no time/timezone component) rather than
+ * `timestamp with time zone` (unlike every other timestamp in this schema) — a date like "September
+ * 30" names a calendar day, not an instant; storing it as a timestamptz risks the classic
+ * off-by-one-day display bug in a negative-UTC-offset browser. Precedence when a caller is reachable
+ * through more than one assignment row at once (e.g. their department *and* their role) is resolved
+ * at read time by `resolveDeadlinesForCaller` (tenant-course-routes.ts) — the earliest non-null value
+ * among every row that applies to them wins, for each column independently, never a "most specific
+ * type" rule.
  */
 export const courseAssignments = pgTable(
   "course_assignments",
@@ -34,6 +54,13 @@ export const courseAssignments = pgTable(
     userId: uuid("user_id").references((): AnyPgColumn => users.id, { onDelete: "cascade" }),
     departmentId: uuid("department_id").references((): AnyPgColumn => departments.id, { onDelete: "cascade" }),
     roleId: uuid("role_id").references((): AnyPgColumn => roles.id, { onDelete: "cascade" }),
+    // Physical column name is still literally `deadline` (unchanged since the original migration) —
+    // only the Drizzle-ORM-level TS property is renamed to `startsAt`. Keeps this a pure additive
+    // migration (just `ADD COLUMN completion_deadline`) instead of a real `RENAME COLUMN`, which
+    // `drizzle-kit generate` can only resolve via an interactive prompt this non-interactive
+    // environment can't answer.
+    startsAt: date("deadline"),
+    completionDeadline: date("completion_deadline"),
     createdByUserId: uuid("created_by_user_id").references((): AnyPgColumn => users.id, {
       onDelete: "set null",
     }),

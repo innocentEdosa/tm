@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Upload } from "lucide-react";
 import { Input, Button } from "@tm/ui";
 import { useCourseEditorApi } from "@/lib/course-editor-context";
 import type { Course, DeliveryMode, DurationUnit } from "@/lib/course-api-types";
 import CategoryCombobox from "../category-combobox";
+import CourseImageField from "./course-image-field";
 
 // Tiptap/ProseMirror is one of the heaviest deps in @tm/ui and is only exercised by this one
 // description field — code-split it rather than paying for it in every course-editor page load.
@@ -48,7 +48,6 @@ function FieldLabel({ children, htmlFor, required }: { children: React.ReactNode
 export default function CourseDetailsPanel({ courseId, readOnly }: { courseId: string; readOnly: boolean }) {
   const api = useCourseEditorApi();
   const queryClient = useQueryClient();
-  const imageInputRef = useRef<HTMLInputElement>(null);
 
   const courseQuery = useQuery({
     queryKey: ["course", courseId, api.cacheScope],
@@ -97,6 +96,9 @@ export default function CourseDetailsPanel({ courseId, readOnly }: { courseId: s
     try {
       await api.uploadCourseImage(courseId, file);
       await queryClient.invalidateQueries({ queryKey: ["course", courseId, api.cacheScope] });
+      // Course Creation File Manager's gallery (course-image-field.tsx) shares this cache key —
+      // without this, a freshly-uploaded image wouldn't show up there until something else refetches it.
+      queryClient.invalidateQueries({ queryKey: ["tenant-files", api.cacheScope] });
     } catch (err) {
       setImageError((err as Error).message);
     } finally {
@@ -237,59 +239,14 @@ export default function CourseDetailsPanel({ courseId, readOnly }: { courseId: s
           {api.supportsCourseImage && (
           <div>
             <FieldLabel>Course image</FieldLabel>
-            {imageError && <p className="banner-error mb-2">{imageError}</p>}
-            <input
-              ref={imageInputRef}
-              type="file"
-              accept=".jpeg,.jpg,.png,.gif,.webp"
-              className="hidden"
-              onChange={(e) => handleImageFile(e.target.files?.[0])}
+            <CourseImageField
+              courseId={courseId}
+              readOnly={readOnly}
+              courseImageUrl={courseImageUrl}
+              onUpload={handleImageFile}
+              uploading={uploadingImage}
+              error={imageError}
             />
-            {courseImageUrl ? (
-              <div className="flex items-stretch gap-4">
-                {/* eslint-disable-next-line @next/next/no-img-element -- remote/presigned URL, no next/image domain config for it */}
-                <img src={courseImageUrl} alt="Course" className="h-32 w-52 shrink-0 rounded-lg border border-border object-cover" />
-                <button
-                  type="button"
-                  onClick={() => imageInputRef.current?.click()}
-                  onDragOver={(e) => e.preventDefault()}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    handleImageFile(e.dataTransfer.files?.[0]);
-                  }}
-                  disabled={uploadingImage}
-                  className="flex flex-1 cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-white px-6 py-4 text-center hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  <span className="flex h-9 w-9 items-center justify-center rounded-full border border-border text-secondary">
-                    <Upload className="h-4 w-4" />
-                  </span>
-                  <p className="text-sm text-secondary">
-                    <span className="font-semibold underline">{uploadingImage ? "Uploading…" : "Change"}</span> {!uploadingImage && "or drag and drop"}
-                  </p>
-                  <p className="text-xs text-muted">Recommended .jpeg, .jpg, .png, or .webp</p>
-                </button>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => imageInputRef.current?.click()}
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  handleImageFile(e.dataTransfer.files?.[0]);
-                }}
-                disabled={uploadingImage}
-                className="flex w-full cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-white px-6 py-10 text-center hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <span className="flex h-9 w-9 items-center justify-center rounded-full border border-border text-secondary">
-                  <Upload className="h-4 w-4" />
-                </span>
-                <p className="text-sm text-secondary">
-                  <span className="font-semibold underline">{uploadingImage ? "Uploading…" : "Click to upload"}</span> {!uploadingImage && "or drag and drop"}
-                </p>
-                <p className="text-xs text-muted">Recommended .jpeg, .jpg, .png, or .webp</p>
-              </button>
-            )}
           </div>
           )}
         </fieldset>
