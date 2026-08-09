@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyPluginAsync } from "fastify";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { requireTenantUserSession } from "../tenant-auth/require-tenant-user-session";
 import { requirePermission } from "../permissions/require-permission";
 import { contentItems } from "../db/schema/course-content";
 import { courses } from "../db/schema/courses";
 import { courseAuthors } from "../db/schema/course-authors";
 import { fileAttachments } from "../db/schema/file-attachments";
+import { platformFileAttachments } from "../db/schema/platform-courses";
 import { users } from "../db/schema/users";
 import { validateAgainstAllowlist } from "./attachment-allowlist";
 import * as storage from "../storage/storage";
@@ -28,12 +29,94 @@ interface CreateAttachmentBody {
 }
 
 /**
- * data-model.md / research.md §9. Deletes every attachment belonging to a given entity — both the R2
- * objects and the rows — in one call. Wired into content-item, course-author, and course delete
- * (which also cascades through its content items). Trusts its caller to have already checked
- * permission — this function has no `request`/user context of its own to check against. A `link`-kind
- * row has no `storageKey` (nothing was ever uploaded to R2 for it) — only `file`-kind rows need a
- * `deleteObject` call.
+ * File reuse (Course Creation File Manager) means a `storage_key` can now legitimately be referenced
+ * by more than one `file_attachments` row — and, via `clone-platform-course.ts`, a tenant row can
+ * already share its `storage_key` with a `platform_file_attachments` row the platform (and every
+ * other tenant that cloned the same course) still owns. Deleting an R2 object out from under a
+ * reference that's still live would silently break whatever else points at it, so every deletion path
+ * must check for *other* referrers first — this is that check, shared by both the bulk
+ * (`deleteAllAttachmentsForEntity`) and single-attachment (`DELETE /tenant/attachments/:id`) delete
+ * paths below.
+ *
+ * `request.tenantDb` already runs the whole request inside one transaction (`tenant-context.ts`), so
+ * "delete the row(s), then check what's left" is naturally atomic *within this request*. Across
+ * concurrent requests deleting different rows that share the same key, though, two transactions could
+ * each see the other's row as still present (not yet committed) and both conclude "still referenced" —
+ * safe (just a harmless leaked object), but the opposite race — both concluding "I'm the last
+ * reference" while the other is still mid-flight — is the one that must never happen. A
+ * `pg_advisory_xact_lock` keyed on the storage key serializes exactly that: the second deleter blocks
+ * until the first's transaction fully commits (or rolls back), so its own count query always sees a
+ * fully-settled view. No new infrastructure — this is a built-in Postgres primitive, auto-released at
+ * end of transaction.
+ *
+ * Only counts `file_attachments` rows *this tenant can see* (RLS-scoped, matching every other query in
+ * this file) plus any `platform_file_attachments` row (unrestricted, no RLS) — it can't see another
+ * tenant's own `file_attachments` rows referencing the same platform-sourced key. In practice that gap
+ * only matters if the platform's own attachment row was itself deleted while ≥2 tenants still
+ * reference the object; documented as a known residual gap rather than solved here (would need a
+ * cross-tenant, RLS-bypassing query — out of scope for this pass).
+ */
+async function deleteObjectIfUnreferenced(tenantDb: Db, storageKey: string): Promise<void> {
+  await tenantDb.execute(sql`select pg_advisory_xact_lock(hashtext(${storageKey}))`);
+
+  const [tenantRef] = await tenantDb
+    .select({ id: fileAttachments.id })
+    .from(fileAttachments)
+    .where(eq(fileAttachments.storageKey, storageKey))
+    .limit(1);
+  if (tenantRef) return;
+
+  const [platformRef] = await tenantDb
+    .select({ id: platformFileAttachments.id })
+    .from(platformFileAttachments)
+    .where(eq(platformFileAttachments.storageKey, storageKey))
+    .limit(1);
+  if (platformRef) return;
+
+  await storage.deleteObject(storageKey);
+}
+
+type ReuseResolution =
+  | { ok: true; source: FileAttachmentRow }
+  | { ok: false; status: number; message: string };
+
+/**
+ * Shared validation for every "reuse an existing tenant file" endpoint (Course Creation File Manager,
+ * course-image picker) — resolves `sourceAttachmentId` via `tenantDb` (RLS-scoped, so a cross-tenant
+ * id already matches no row) with an explicit `tenantId` check as defense-in-depth, then confirms it's
+ * a `kind:"file"`, `status:"ready"` row. A caller needing a stricter allowlist than what the source was
+ * originally validated against (e.g. reusing into a course image, `attachment-allowlist.ts`'s tightest
+ * entry) runs `validateAgainstAllowlist` itself afterward — every allowlist in this codebase is either
+ * equal to or a strict subset of `content_item`'s (the most permissive: same image types plus PDF, a
+ * larger size cap), so nothing already valid for `course`/`course_author` can ever fail reuse *into* a
+ * content item.
+ */
+async function resolveReusableSourceFile(
+  tenantDb: Db,
+  tenantId: string,
+  sourceAttachmentId: string,
+): Promise<ReuseResolution> {
+  const [source] = await tenantDb.select().from(fileAttachments).where(eq(fileAttachments.id, sourceAttachmentId));
+  if (!source || source.tenantId !== tenantId) {
+    return { ok: false, status: 404, message: "Not found" };
+  }
+  if (source.kind !== "file" || !source.storageKey) {
+    return { ok: false, status: 422, message: "Only uploaded files can be reused" };
+  }
+  if (source.status !== "ready") {
+    return { ok: false, status: 422, message: "Only a ready attachment can be reused" };
+  }
+  return { ok: true, source };
+}
+
+/**
+ * data-model.md / research.md §9. Deletes every attachment belonging to a given entity — the rows
+ * always, their underlying R2 objects only once no other attachment (tenant or platform) still
+ * references the same `storage_key` (see `deleteObjectIfUnreferenced` above). Wired into
+ * content-item, course-author, and course delete (which also cascades through its content items).
+ * Trusts its caller to have already checked permission — this function has no `request`/user context
+ * of its own to check against. A `link`-kind row has no `storageKey` (nothing was ever uploaded to R2
+ * for it) — only `file`-kind rows need a `deleteObject` call.
  */
 export async function deleteAllAttachmentsForEntity(
   tenantDb: Db,
@@ -45,13 +128,13 @@ export async function deleteAllAttachmentsForEntity(
     .from(fileAttachments)
     .where(and(eq(fileAttachments.entityType, entityType), eq(fileAttachments.entityId, entityId)));
 
-  for (const row of rows) {
-    if (row.storageKey) {
-      await storage.deleteObject(row.storageKey);
-    }
-  }
-  if (rows.length > 0) {
-    await tenantDb.delete(fileAttachments).where(inArray(fileAttachments.id, rows.map((r) => r.id)));
+  if (rows.length === 0) return;
+
+  await tenantDb.delete(fileAttachments).where(inArray(fileAttachments.id, rows.map((r) => r.id)));
+
+  const uniqueStorageKeys = [...new Set(rows.map((r) => r.storageKey).filter((key): key is string => !!key))];
+  for (const key of uniqueStorageKeys) {
+    await deleteObjectIfUnreferenced(tenantDb, key);
   }
 }
 
@@ -352,7 +435,9 @@ const tenantAttachmentRoutes: FastifyPluginAsync = async (fastify) => {
   );
 
   // DELETE /tenant/attachments/:attachmentId — spec FR-008, contracts §DELETE. A `kind:"link"` row has
-  // no R2 object to delete — just the row.
+  // no R2 object to delete — just the row. Row is deleted first, then the object is only deleted if no
+  // other attachment (tenant or platform) still references the same `storage_key` — see
+  // `deleteObjectIfUnreferenced`.
   fastify.delete<{ Params: { attachmentId: string } }>(
     "/tenant/attachments/:attachmentId",
     { preHandler: [requireTenantUserSession(), requirePermission("course.manage")] },
@@ -363,11 +448,156 @@ const tenantAttachmentRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(404).send({ success: false, message: "Not found" });
       }
 
-      if (existing.storageKey) {
-        await storage.deleteObject(existing.storageKey);
-      }
       await request.tenantDb.delete(fileAttachments).where(eq(fileAttachments.id, attachmentId));
+      if (existing.storageKey) {
+        await deleteObjectIfUnreferenced(request.tenantDb, existing.storageKey);
+      }
       return reply.code(200).send({ success: true });
+    },
+  );
+
+  // GET /tenant/files — Course Creation File Manager + course-image picker. Lists every ready,
+  // `kind:"file"` attachment belonging to the tenant (RLS-scoped — same convention as every other
+  // route in this file, no explicit tenant filter needed), deduped by `storage_key` so a file already
+  // reused across multiple entities (via the reuse routes above) appears once, not once per reference.
+  // `link`-kind rows are excluded — reusing a link is just re-entering its URL via the normal create
+  // route; there's no upload to dedupe. The response `id` (the oldest attachment row for that storage
+  // key) is what the reuse routes above expect as `sourceAttachmentId`. Every image row also carries a
+  // presigned `thumbnailUrl` (the course-image picker's gallery grid) — cheap to compute even for
+  // callers that don't render it (`createPresignedDownloadUrl` is local HMAC signing, no R2 round
+  // trip), so it's unconditional rather than opt-in via a query param.
+  fastify.get(
+    "/tenant/files",
+    // Scoped to course.manage (not just requireTenantUserSession(), unlike the per-entity list route
+    // above) — this is a tenant-wide listing, a broader disclosure than one entity's attachments, so
+    // it's kept to the same role that can already create/delete attachments.
+    { preHandler: [requireTenantUserSession(), requirePermission("course.manage")] },
+    async (request) => {
+      const rows = await request.tenantDb
+        .select()
+        .from(fileAttachments)
+        .where(and(eq(fileAttachments.kind, "file"), eq(fileAttachments.status, "ready")))
+        .orderBy(fileAttachments.createdAt);
+
+      const byStorageKey = new Map<string, FileAttachmentRow>();
+      for (const row of rows) {
+        if (row.storageKey && !byStorageKey.has(row.storageKey)) {
+          byStorageKey.set(row.storageKey, row);
+        }
+      }
+      const deduped = [...byStorageKey.values()].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+
+      const storageConfigured = storage.isStorageConfigured();
+      const data = await Promise.all(
+        deduped.map(async (r) => {
+          const base = await toResponseRow(request.tenantDb, r);
+          const isImage = r.contentType?.startsWith("image/") ?? false;
+          const thumbnailUrl = isImage && r.storageKey && storageConfigured ? await storage.createPresignedDownloadUrl(r.storageKey) : null;
+          return { ...base, thumbnailUrl };
+        }),
+      );
+      return { success: true, data };
+    },
+  );
+
+  // POST /tenant/content-items/:contentItemId/attachments/reuse — Course Creation File Manager.
+  // Attaches an *existing* tenant file to another content item without a presigned-upload round trip
+  // or any new R2 object: copies `storageKey`/`fileName`/`contentType`/`sizeBytes` from the source row
+  // into a brand-new `file_attachments` row, `status:'ready'` immediately. Mirrors exactly what
+  // `clone-platform-course.ts` already does when cloning a platform attachment into a tenant.
+  fastify.post<{ Params: { contentItemId: string }; Body: { sourceAttachmentId?: string } }>(
+    "/tenant/content-items/:contentItemId/attachments/reuse",
+    { preHandler: [requireTenantUserSession(), requirePermission("course.manage")] },
+    async (request, reply) => {
+      const { contentItemId } = request.params;
+      const sourceAttachmentId = request.body?.sourceAttachmentId?.trim();
+      if (!sourceAttachmentId) {
+        return reply.code(400).send({ success: false, message: "sourceAttachmentId is required" });
+      }
+
+      const item = await resolveContentItem(request.tenantDb, contentItemId);
+      if (!item) {
+        return reply.code(404).send({ success: false, message: "Not found" });
+      }
+
+      const resolution = await resolveReusableSourceFile(request.tenantDb, request.user!.tenantId, sourceAttachmentId);
+      if (!resolution.ok) {
+        return reply.code(resolution.status).send({ success: false, message: resolution.message });
+      }
+      const { source } = resolution;
+
+      const [created] = await request.tenantDb
+        .insert(fileAttachments)
+        .values({
+          tenantId: request.user!.tenantId,
+          entityType: "content_item",
+          entityId: contentItemId,
+          kind: "file",
+          fileName: source.fileName,
+          contentType: source.contentType,
+          sizeBytes: source.sizeBytes,
+          storageKey: source.storageKey,
+          status: "ready",
+          createdByUserId: request.user!.id,
+        })
+        .returning();
+
+      return reply.code(201).send({ success: true, data: await toResponseRow(request.tenantDb, created) });
+    },
+  );
+
+  // POST /tenant/courses/:courseId/image/reuse — Course Details' course-image picker. Attaches an
+  // existing tenant image as this course's image, mirroring `POST /tenant/courses/:courseId/image`'s
+  // "delete any prior image first, a course only ever has one current image" behavior, but skipping
+  // the presigned-upload round trip and R2 object entirely — same shared-storage-key pattern as the
+  // content-item reuse route above. Re-validates against the `course` allowlist (image-only, 5 MB
+  // cap) even though the source was already validated once at its original upload — it may have been
+  // uploaded under a more permissive allowlist (e.g. `content_item`'s 25 MB/PDF-inclusive one).
+  fastify.post<{ Params: { courseId: string }; Body: { sourceAttachmentId?: string } }>(
+    "/tenant/courses/:courseId/image/reuse",
+    { preHandler: [requireTenantUserSession(), requirePermission("course.manage")] },
+    async (request, reply) => {
+      const { courseId } = request.params;
+      const sourceAttachmentId = request.body?.sourceAttachmentId?.trim();
+      if (!sourceAttachmentId) {
+        return reply.code(400).send({ success: false, message: "sourceAttachmentId is required" });
+      }
+
+      const [course] = await request.tenantDb.select({ id: courses.id }).from(courses).where(eq(courses.id, courseId));
+      if (!course) {
+        return reply.code(404).send({ success: false, message: "Not found" });
+      }
+
+      const resolution = await resolveReusableSourceFile(request.tenantDb, request.user!.tenantId, sourceAttachmentId);
+      if (!resolution.ok) {
+        return reply.code(resolution.status).send({ success: false, message: resolution.message });
+      }
+      const { source } = resolution;
+
+      const validation = validateAgainstAllowlist("course", source.contentType!, source.sizeBytes!);
+      if (validation.error) {
+        return reply.code(422).send({ success: false, message: validation.error });
+      }
+
+      await deleteAllAttachmentsForEntity(request.tenantDb, "course", courseId);
+
+      const [created] = await request.tenantDb
+        .insert(fileAttachments)
+        .values({
+          tenantId: request.user!.tenantId,
+          entityType: "course",
+          entityId: courseId,
+          kind: "file",
+          fileName: source.fileName,
+          contentType: source.contentType,
+          sizeBytes: source.sizeBytes,
+          storageKey: source.storageKey,
+          status: "ready",
+          createdByUserId: request.user!.id,
+        })
+        .returning();
+
+      return reply.code(201).send({ success: true, data: await toResponseRow(request.tenantDb, created) });
     },
   );
 };

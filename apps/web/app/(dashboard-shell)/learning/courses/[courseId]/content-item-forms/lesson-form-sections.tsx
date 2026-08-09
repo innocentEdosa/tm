@@ -6,6 +6,9 @@ import { File, Link2, Plus, Upload, X } from "lucide-react";
 import { Input, Button } from "@tm/ui";
 import { useCourseEditorApi } from "@/lib/course-editor-context";
 import { uploadFileToPresignedUrl } from "@/lib/course-editor-adapter";
+import type { TenantFile } from "@/lib/course-api-types";
+import { CONTENT_ITEM_RESOURCE_CONTENT_TYPES } from "@/lib/file-format";
+import ExistingFilePicker from "../existing-file-picker";
 
 /** A section heading inside a lesson form — "Lesson Details" / "Lesson Content" / "Lesson Resources".
  * `first` drops the top margin for whichever section opens the form. */
@@ -137,6 +140,12 @@ export function LessonResourcesSection({ contentItemId }: { contentItemId: strin
   const [fileName, setFileName] = useState<string | null>(null);
   const [fileProgress, setFileProgress] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [reusingId, setReusingId] = useState<string | null>(null);
+  // Separate from `error` above (deliberately) — the drawer's overlay covers the rest of this
+  // section while open, so an error from a failed reuse must render *inside* the drawer (where it's
+  // actually visible), not into the outer banner sitting behind it.
+  const [reuseError, setReuseError] = useState<string | null>(null);
   const uploading = fileProgress !== null && fileProgress < 100;
 
   function closeAddForm() {
@@ -163,6 +172,9 @@ export function LessonResourcesSection({ contentItemId }: { contentItemId: strin
       await uploadFileToPresignedUrl(attachment.uploadUrl, file, file.type, setFileProgress);
       await api.confirmAttachment(contentItemId, attachment.id);
       invalidate();
+      // ExistingFilePicker shares this cache key — without this, a freshly-uploaded file wouldn't show
+      // up there until something else refetches it.
+      queryClient.invalidateQueries({ queryKey: ["tenant-files", api.cacheScope] });
       closeAddForm();
     } catch (err) {
       setError((err as Error).message);
@@ -178,6 +190,22 @@ export function LessonResourcesSection({ contentItemId }: { contentItemId: strin
       closeAddForm();
     } catch (err) {
       setError((err as Error).message);
+    }
+  }
+
+  async function handleUseExisting(file: TenantFile) {
+    if (!contentItemId || !api.reuseAttachment) return;
+    setReuseError(null);
+    setReusingId(file.id);
+    try {
+      await api.reuseAttachment(contentItemId, file.id);
+      invalidate();
+      setPickerOpen(false);
+      closeAddForm();
+    } catch (err) {
+      setReuseError((err as Error).message);
+    } finally {
+      setReusingId(null);
     }
   }
 
@@ -238,6 +266,16 @@ export function LessonResourcesSection({ contentItemId }: { contentItemId: strin
                       </div>
                     </div>
                   )}
+                  {api.supportsFileManager && (
+                    <button
+                      type="button"
+                      className="flex w-fit cursor-pointer items-center gap-1 text-sm font-medium text-primary hover:underline"
+                      onClick={() => setPickerOpen(true)}
+                    >
+                      <File className="h-4 w-4" />
+                      Or choose from existing files
+                    </button>
+                  )}
                 </>
               ) : (
                 <>
@@ -258,6 +296,16 @@ export function LessonResourcesSection({ contentItemId }: { contentItemId: strin
               </div>
             </div>
           )}
+
+          <ExistingFilePicker
+            open={pickerOpen}
+            onClose={() => setPickerOpen(false)}
+            title="Choose an existing file"
+            allowedContentTypes={CONTENT_ITEM_RESOURCE_CONTENT_TYPES}
+            onUse={handleUseExisting}
+            usingId={reusingId}
+            error={reuseError}
+          />
         </div>
       )}
     </>

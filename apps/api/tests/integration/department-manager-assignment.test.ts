@@ -85,7 +85,7 @@ describe("department Manager / Assistant Manager assignment (spec FR-019/FR-020/
     }
   });
 
-  it("GET /tenant/users requires a non-empty search and is gated by department.manage", async () => {
+  it("GET /tenant/users allows an empty search (paginated browse-all, Course Assignment audience builder) and is gated by department.manage", async () => {
     const tenantId = randomUUID();
     await seedTenant(tenantId);
     const managerAdminId = randomUUID();
@@ -100,7 +100,8 @@ describe("department Manager / Assistant Manager assignment (spec FR-019/FR-020/
         url: "/tenant/users",
         headers: { "x-test-user-id": managerAdminId, "x-test-tenant-id": tenantId },
       });
-      expect(noSearch.statusCode).toBe(400);
+      expect(noSearch.statusCode).toBe(200);
+      expect(noSearch.json().pagination).toBeDefined();
 
       const withSearch = await server.inject({
         method: "GET",

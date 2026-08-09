@@ -37,6 +37,14 @@ export interface Course {
    * the tenant hasn't already dismissed that specific version. Always false for a tenant-authored
    * course. */
   updateAvailable: boolean;
+  /** Course Assignment Deadlines — the *current caller's own* resolved dates for this course
+   * (`YYYY-MM-DD`, or `null` if none applies to them), never course-level properties: a course has no
+   * single date, only its assignments do (Course Settings' Assignment tab). `myStartsAt` is when the
+   * caller's access begins; `myCompletionDeadline` is when the course is due for them. Each is
+   * resolved server-side independently, as the earliest date among every assignment path that reaches
+   * this caller (their department, their role, an individual assignment, or "Everyone"). */
+  myStartsAt: string | null;
+  myCompletionDeadline: string | null;
   status: CourseStatus;
   createdBy: UserRef | null;
   createdAt: string;
@@ -137,6 +145,13 @@ export interface Attachment {
   status: "pending" | "ready";
   createdBy: UserRef | null;
   createdAt: string;
+}
+
+/** `GET /tenant/files`'s response row (Course Creation File Manager / course-image picker) — every
+ * tenant file, deduped by underlying storage object, each carrying a presigned `thumbnailUrl` when
+ * it's an image (null otherwise, e.g. a PDF lesson resource). */
+export interface TenantFile extends Attachment {
+  thumbnailUrl: string | null;
 }
 
 export interface CourseAuthor {

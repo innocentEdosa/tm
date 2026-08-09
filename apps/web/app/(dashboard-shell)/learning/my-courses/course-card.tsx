@@ -1,9 +1,22 @@
 "use client";
 
-import { BookOpen } from "lucide-react";
+import { BookOpen, CalendarClock } from "lucide-react";
 import { Badge, StarRating, type BadgeProps } from "@tm/ui";
 import { sanitizeRichText } from "@/lib/sanitize-rich-text";
 import type { CourseCardData, MyCourseStatus } from "./types";
+
+/** `myCompletionDeadline` is a `YYYY-MM-DD` date-only string — parsing it with the platform default
+ * timezone (`new Date("2026-08-11")` is UTC midnight) and then formatting in the viewer's local
+ * timezone can roll it back a day west of UTC, so this pins both the parse and the format to UTC. */
+function formatDueDate(date: string): string {
+  const [year, month, day] = date.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day)).toLocaleDateString(undefined, {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
 
 const STATUS_LABEL: Record<MyCourseStatus, string> = {
   not_started: "Not Started",
@@ -24,6 +37,7 @@ const ACTION_LABEL: Record<MyCourseStatus, string> = {
 export default function CourseCard({ data, onSelect }: { data: CourseCardData; onSelect: () => void }) {
   const { course, percent, totalItems, completedItems, status, teacherName, rating } = data;
   const description = course.description ? sanitizeRichText(course.description) : null;
+  const isOverdue = status !== "completed" && !!course.myCompletionDeadline && course.myCompletionDeadline < new Date().toISOString().slice(0, 10);
 
   return (
     <div
@@ -74,6 +88,13 @@ export default function CourseCard({ data, onSelect }: { data: CourseCardData; o
           {course.category && <Badge variant="accent">{course.category.name}</Badge>}
           <Badge variant={STATUS_VARIANT[status]}>{STATUS_LABEL[status]}</Badge>
         </div>
+
+        {course.myCompletionDeadline && (
+          <p className={`flex items-center gap-1.5 text-xs ${isOverdue ? "font-medium text-red-600" : "text-secondary"}`}>
+            <CalendarClock className="h-3.5 w-3.5 shrink-0" />
+            {isOverdue ? "Overdue — was due" : "Due"} {formatDueDate(course.myCompletionDeadline)}
+          </p>
+        )}
 
         <div className="mt-auto flex flex-col gap-2 pt-2">
           <div className="flex items-center justify-between text-xs text-muted">

@@ -5,7 +5,7 @@ import { requirePermission } from "../permissions/require-permission";
 import { courses } from "../db/schema/courses";
 import { courseModules, contentItems } from "../db/schema/course-content";
 import { users } from "../db/schema/users";
-import { isCourseVisibleToCaller } from "../courses/tenant-course-routes";
+import { isCourseVisibleToCaller, wantsLearnerView } from "../courses/tenant-course-routes";
 import { deleteAllAttachmentsForEntity } from "../attachments/tenant-attachment-routes";
 import { CONTENT_ITEM_TYPES, validateContentItemPayload, type ContentItemType } from "./content-item-payload-validation";
 
@@ -101,7 +101,7 @@ const tenantCourseContentRoutes: FastifyPluginAsync = async (fastify) => {
   // also return standalone (module-less) content items and the course's outlineOrder — the frontend
   // combines `modules` + `standaloneContentItems` using `outlineOrder` to render one interleaved
   // outline (a direct port of the mock UI's own `useMockCourseOutline`).
-  fastify.get<{ Params: { courseId: string } }>(
+  fastify.get<{ Params: { courseId: string }; Querystring: { asLearner?: string } }>(
     "/tenant/courses/:courseId/curriculum",
     { preHandler: [requireTenantUserSession()] },
     async (request, reply) => {
@@ -114,7 +114,7 @@ const tenantCourseContentRoutes: FastifyPluginAsync = async (fastify) => {
       // so course-level access is enforced here instead — same 404-for-absent shape as
       // `GET /tenant/courses/:courseId` itself, so a learner outside the assigned audience can't
       // distinguish "doesn't exist" from "not assigned to you".
-      if (!(await isCourseVisibleToCaller(request.tenantDb, request.user!.id, courseId))) {
+      if (!(await isCourseVisibleToCaller(request.tenantDb, request.user!.id, courseId, { asLearner: wantsLearnerView(request.query) }))) {
         return reply.code(404).send({ success: false, message: "Not found" });
       }
 

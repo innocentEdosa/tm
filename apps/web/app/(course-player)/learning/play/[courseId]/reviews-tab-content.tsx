@@ -83,7 +83,7 @@ export default function ReviewsTabContent({ courseId }: { courseId: string }) {
   const { data: reviews, isError } = useQuery({
     queryKey: ["player-reviews", courseId, subdomain],
     queryFn: async () => {
-      const { data } = await tenantFetch<{ data: CourseReview[] }>(`/courses/${courseId}/reviews`, { subdomain });
+      const { data } = await tenantFetch<{ data: CourseReview[] }>(`/courses/${courseId}/reviews?asLearner=true`, { subdomain });
       return data;
     },
   });
@@ -157,7 +157,7 @@ export default function ReviewsTabContent({ courseId }: { courseId: string }) {
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           <div className="relative flex-1">
             <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input type="search" className="field-input pl-9" placeholder="Search reviews" value={search} onChange={(e) => setSearch(e.target.value)} />
+            <input type="search" className="field-input !pl-9" placeholder="Search reviews" value={search} onChange={(e) => setSearch(e.target.value)} />
           </div>
           <div>
             <label className="field-label sm:sr-only" htmlFor="reviews-rating-filter">

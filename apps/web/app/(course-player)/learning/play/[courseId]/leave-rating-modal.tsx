@@ -55,7 +55,7 @@ export default function LeaveRatingModal({
 
   const submit = useMutation({
     mutationFn: async () => {
-      await tenantFetch(`/courses/${courseId}/reviews`, { method: "POST", subdomain, body: { rating, reviewText: text || null } });
+      await tenantFetch(`/courses/${courseId}/reviews?asLearner=true`, { method: "POST", subdomain, body: { rating, reviewText: text || null } });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["player-reviews", courseId, subdomain] });

@@ -5,7 +5,7 @@ import { requirePermission } from "../permissions/require-permission";
 import { courses } from "../db/schema/courses";
 import { courseReviews } from "../db/schema/course-reviews";
 import { users } from "../db/schema/users";
-import { isCourseVisibleToCaller } from "./tenant-course-routes";
+import { isCourseVisibleToCaller, wantsLearnerView } from "./tenant-course-routes";
 
 type CourseReviewRow = typeof courseReviews.$inferSelect;
 
@@ -44,7 +44,7 @@ const tenantCourseReviewRoutes: FastifyPluginAsync = async (fastify) => {
   }
 
   // GET /tenant/courses/:courseId/reviews
-  fastify.get<{ Params: { courseId: string } }>(
+  fastify.get<{ Params: { courseId: string }; Querystring: { asLearner?: string } }>(
     "/tenant/courses/:courseId/reviews",
     { preHandler: [requireTenantUserSession()] },
     async (request, reply) => {
@@ -53,7 +53,7 @@ const tenantCourseReviewRoutes: FastifyPluginAsync = async (fastify) => {
       if (!course) {
         return reply.code(404).send({ success: false, message: "Not found" });
       }
-      if (!(await isCourseVisibleToCaller(request.tenantDb, request.user!.id, courseId))) {
+      if (!(await isCourseVisibleToCaller(request.tenantDb, request.user!.id, courseId, { asLearner: wantsLearnerView(request.query) }))) {
         return reply.code(404).send({ success: false, message: "Not found" });
       }
       const rows = await request.tenantDb.select().from(courseReviews).where(eq(courseReviews.courseId, courseId)).orderBy(courseReviews.createdAt);
@@ -64,7 +64,7 @@ const tenantCourseReviewRoutes: FastifyPluginAsync = async (fastify) => {
   // GET /tenant/courses/:courseId/reviews/mine — the caller's own review on this course, or null.
   // Scoped to `request.user!.id` server-side, same convention as every other "mine" lookup in this
   // app (`tenant-progress-routes.ts`'s own progress rows) — never a client-supplied user id.
-  fastify.get<{ Params: { courseId: string } }>(
+  fastify.get<{ Params: { courseId: string }; Querystring: { asLearner?: string } }>(
     "/tenant/courses/:courseId/reviews/mine",
     { preHandler: [requireTenantUserSession()] },
     async (request, reply) => {
@@ -73,7 +73,7 @@ const tenantCourseReviewRoutes: FastifyPluginAsync = async (fastify) => {
       if (!course) {
         return reply.code(404).send({ success: false, message: "Not found" });
       }
-      if (!(await isCourseVisibleToCaller(request.tenantDb, request.user!.id, courseId))) {
+      if (!(await isCourseVisibleToCaller(request.tenantDb, request.user!.id, courseId, { asLearner: wantsLearnerView(request.query) }))) {
         return reply.code(404).send({ success: false, message: "Not found" });
       }
       const [review] = await request.tenantDb
@@ -89,7 +89,7 @@ const tenantCourseReviewRoutes: FastifyPluginAsync = async (fastify) => {
   // (status flips to "updated") rather than accumulating duplicates. `learnerName`/`learnerEmail` are
   // resolved server-side from `request.user!.id`, same as every other "self" write in this app —
   // never accepted from the request body.
-  fastify.post<{ Params: { courseId: string }; Body: { rating?: number; reviewText?: string | null } }>(
+  fastify.post<{ Params: { courseId: string }; Querystring: { asLearner?: string }; Body: { rating?: number; reviewText?: string | null } }>(
     "/tenant/courses/:courseId/reviews",
     { preHandler: [requireTenantUserSession()] },
     async (request, reply) => {
@@ -102,7 +102,7 @@ const tenantCourseReviewRoutes: FastifyPluginAsync = async (fastify) => {
       if (!course) {
         return reply.code(404).send({ success: false, message: "Not found" });
       }
-      if (!(await isCourseVisibleToCaller(request.tenantDb, request.user!.id, courseId))) {
+      if (!(await isCourseVisibleToCaller(request.tenantDb, request.user!.id, courseId, { asLearner: wantsLearnerView(request.query) }))) {
         return reply.code(404).send({ success: false, message: "Not found" });
       }
 

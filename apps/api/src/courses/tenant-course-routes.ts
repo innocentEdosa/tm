@@ -32,38 +32,105 @@ type CourseRow = typeof courses.$inferSelect;
  * row for backward compatibility), an explicit `assignee_type = 'all'` row, a `'user'` row naming
  * them directly, a `'department'` row naming their own department, or a `'role'` row naming any
  * role they hold. Callers with `course.manage` never have this condition applied at all — course
- * admins always see every course regardless of who it's assigned to. */
+ * admins always see every course regardless of who it's assigned to.
+ *
+ * Each of those matching rows also has to have *started* — `ca.deadline` (the physical column
+ * backing `startsAt`) unset or `<= CURRENT_DATE` — for that path to count; a path whose access
+ * hasn't started yet contributes nothing, matching "Access starts" actually gating access rather
+ * than just being a display label. A caller reachable through more than one path (e.g. their
+ * department *and* an individual assignment) gets in as soon as *any one* of them has started; the
+ * others being still in the future doesn't hide the course. The "no assignment rows at all"
+ * backward-compat branch is deliberately exempt from this — there's no row to carry a start date. */
 export function buildAssignmentVisibilityCondition(userId: string) {
   return sql`(
     NOT EXISTS (SELECT 1 FROM course_assignments ca WHERE ca.course_id = ${courses.id})
-    OR EXISTS (SELECT 1 FROM course_assignments ca WHERE ca.course_id = ${courses.id} AND ca.assignee_type = 'all')
-    OR EXISTS (SELECT 1 FROM course_assignments ca WHERE ca.course_id = ${courses.id} AND ca.assignee_type = 'user' AND ca.user_id = ${userId})
+    OR EXISTS (SELECT 1 FROM course_assignments ca WHERE ca.course_id = ${courses.id} AND ca.assignee_type = 'all' AND (ca.deadline IS NULL OR ca.deadline <= CURRENT_DATE))
+    OR EXISTS (SELECT 1 FROM course_assignments ca WHERE ca.course_id = ${courses.id} AND ca.assignee_type = 'user' AND ca.user_id = ${userId} AND (ca.deadline IS NULL OR ca.deadline <= CURRENT_DATE))
     OR EXISTS (
       SELECT 1 FROM course_assignments ca
       JOIN users u ON u.id = ${userId}
-      WHERE ca.course_id = ${courses.id} AND ca.assignee_type = 'department' AND ca.department_id = u.department_id
+      WHERE ca.course_id = ${courses.id} AND ca.assignee_type = 'department' AND ca.department_id = u.department_id AND (ca.deadline IS NULL OR ca.deadline <= CURRENT_DATE)
     )
     OR EXISTS (
       SELECT 1 FROM course_assignments ca
       JOIN user_roles ur ON ur.role_id = ca.role_id AND ur.user_id = ${userId}
-      WHERE ca.course_id = ${courses.id} AND ca.assignee_type = 'role'
+      WHERE ca.course_id = ${courses.id} AND ca.assignee_type = 'role' AND (ca.deadline IS NULL OR ca.deadline <= CURRENT_DATE)
     )
   )`;
+}
+
+/** `?asLearner=true` — appended by every learner-facing frontend fetch (My Courses, the course
+ * player, its curriculum/reviews tabs) to say "evaluate visibility as a learner, not as whatever
+ * permissions this caller happens to also hold." The Course Management editor (course settings,
+ * curriculum authoring, reviews moderation) never sends it, so `course.manage` keeps working there
+ * exactly as before. */
+export function wantsLearnerView(query: { asLearner?: string } | undefined): boolean {
+  return query?.asLearner === "true";
 }
 
 /** Every learner-facing course-detail route (curriculum, authors, progress, reviews — all now open
  * to any authenticated tenant user, not just `course.view`/`course.manage` holders per "My Learning
  * accessible by everyone") needs this same "can this caller actually see this course" check that
- * `GET /tenant/courses/:courseId` already applies — `course.manage` always bypasses it; everyone
- * else only sees a course per `buildAssignmentVisibilityCondition`. */
-export async function isCourseVisibleToCaller(tenantDb: Db, userId: string, courseId: string): Promise<boolean> {
-  const canManage = await userHasAnyPermission(tenantDb, userId, ["course.manage"]);
+ * `GET /tenant/courses/:courseId` already applies — `course.manage` bypasses it *unless* `asLearner`
+ * is set, in which case the caller sees exactly what a learner would even if they also happen to hold
+ * `course.manage` (an admin managing a course still needs to see it unconditionally in Course
+ * Settings; that same admin browsing "My Courses" or the course player should not). Everyone else
+ * only sees a course per `buildAssignmentVisibilityCondition` regardless of this flag. */
+export async function isCourseVisibleToCaller(tenantDb: Db, userId: string, courseId: string, opts?: { asLearner?: boolean }): Promise<boolean> {
+  const canManage = !opts?.asLearner && (await userHasAnyPermission(tenantDb, userId, ["course.manage"]));
   if (canManage) return true;
   const [visible] = await tenantDb
     .select({ id: courses.id })
     .from(courses)
     .where(and(eq(courses.id, courseId), buildAssignmentVisibilityCondition(userId)));
   return !!visible;
+}
+
+export interface ResolvedCallerDates {
+  startsAt: string | null;
+  completionDeadline: string | null;
+}
+
+/**
+ * Course Assignment Deadlines follow-up — resolves each course's `startsAt`/`completionDeadline`
+ * *for this specific caller*, never a course-level property (a course has no single date of its own;
+ * each assignment path to it can carry its own pair, see `course-assignments.ts`'s own doc comment).
+ * A caller can be reachable through more than one assignment row at once — their department's row
+ * *and* their role's row, say, each independently dated — so this applies the same "which paths
+ * actually reach this caller" logic as `buildAssignmentVisibilityCondition` above, but instead of a
+ * boolean, takes `MIN(...)` of each date column across every matching row, independently. Precedence:
+ * **the earliest non-null value among every applicable path wins, for each of the two dates
+ * separately** — not "most specific type wins" (there's no existing precedent for that in this
+ * codebase, and picking the earliest is the safer default: a learner should never be shown a later
+ * date than the strictest one that actually applies to them). A path with a given date unset
+ * contributes nothing to that column's `MIN` (excluded via `IS NOT NULL`, not treated as an
+ * unbeatable "unset"). Returns a Map; a course with neither date resolved is simply absent from it.
+ */
+export async function resolveDeadlinesForCaller(tenantDb: Db, userId: string, courseIds: string[]): Promise<Map<string, ResolvedCallerDates>> {
+  if (courseIds.length === 0) return new Map();
+  // `sql.join` builds a real `($1, $2, ...)` tuple for the `IN` below — a bare `${courseIds}`
+  // interpolation of a JS array does NOT become a Postgres array literal usable with `= ANY(...)`
+  // (confirmed the hard way: it substitutes as a single scalar param, which `ANY()` then tries and
+  // fails to parse as an array literal itself).
+  const courseIdList = sql.join(courseIds.map((id) => sql`${id}`), sql`, `);
+  const result = await tenantDb.execute(sql`
+    SELECT ca.course_id AS "courseId", MIN(ca.deadline) AS "startsAt", MIN(ca.completion_deadline) AS "completionDeadline"
+    FROM course_assignments ca
+    WHERE ca.course_id IN (${courseIdList})
+      AND (ca.deadline IS NOT NULL OR ca.completion_deadline IS NOT NULL)
+      AND (
+        ca.assignee_type = 'all'
+        OR (ca.assignee_type = 'user' AND ca.user_id = ${userId})
+        OR (ca.assignee_type = 'department' AND ca.department_id = (SELECT department_id FROM users WHERE id = ${userId}))
+        OR (ca.assignee_type = 'role' AND ca.role_id IN (SELECT role_id FROM user_roles WHERE user_id = ${userId}))
+      )
+    GROUP BY ca.course_id
+  `);
+  const map = new Map<string, ResolvedCallerDates>();
+  for (const row of result.rows as { courseId: string; startsAt: string | null; completionDeadline: string | null }[]) {
+    map.set(row.courseId, { startsAt: row.startsAt, completionDeadline: row.completionDeadline });
+  }
+  return map;
 }
 
 interface CourseWriteBody {
@@ -107,8 +174,14 @@ function validateFields(body: CourseWriteBody): { code: number; message: string 
  * same way the SCORM launch route computes `entryPointUrl` server-side. Exported (not just used
  * internally by this plugin's own routes) so the Course Marketplace Updates apply/dismiss routes
  * (tenant-marketplace-routes.ts) can return a course in the exact same shape as `GET
- * /tenant/courses/:courseId` without duplicating this join logic (contracts §apply/§dismiss). */
-export async function toResponseRows(tenantDb: Db, rows: CourseRow[]) {
+ * /tenant/courses/:courseId` without duplicating this join logic (contracts §apply/§dismiss).
+ *
+ * `callerUserId`, when given, also resolves each course's `myStartsAt`/`myCompletionDeadline` — the
+ * caller's own dates per `resolveDeadlinesForCaller` above, never shared/course-level fields.
+ * Optional (both default to `null` on every row) since the marketplace apply/dismiss call sites
+ * return a course in an admin-action context, not "a specific learner reading their own assignment"
+ * — there's no caller whose personal dates would be meaningful there. */
+export async function toResponseRows(tenantDb: Db, rows: CourseRow[], callerUserId?: string) {
     const categoryIds = Array.from(new Set(rows.map((r) => r.categoryId)));
     const categoryRows =
       categoryIds.length > 0
@@ -131,6 +204,7 @@ export async function toResponseRows(tenantDb: Db, rows: CourseRow[]) {
     const userById = new Map(userRows.map((u) => [u.id, u]));
 
     const courseIds = rows.map((r) => r.id);
+    const datesByCourseId = callerUserId ? await resolveDeadlinesForCaller(tenantDb, callerUserId, courseIds) : new Map<string, ResolvedCallerDates>();
     const moduleCountRows =
       courseIds.length > 0
         ? await tenantDb
@@ -206,6 +280,8 @@ export async function toResponseRows(tenantDb: Db, rows: CourseRow[]) {
       courseImageUrl: imageUrlByCourseId.get(r.id) ?? null,
       moduleCount: moduleCountByCourseId.get(r.id) ?? 0,
       updateAvailable: updateAvailableByCourseId.get(r.id) ?? false,
+      myStartsAt: datesByCourseId.get(r.id)?.startsAt ?? null,
+      myCompletionDeadline: datesByCourseId.get(r.id)?.completionDeadline ?? null,
       status: r.status,
       createdBy: r.createdByUserId ? (userById.get(r.createdByUserId) ?? null) : null,
       createdAt: r.createdAt,
@@ -226,6 +302,7 @@ const tenantCourseRoutes: FastifyPluginAsync = async (fastify) => {
       status?: string;
       page?: string;
       pageSize?: string;
+      asLearner?: string;
     };
   }>(
     "/tenant/courses",
@@ -234,7 +311,7 @@ const tenantCourseRoutes: FastifyPluginAsync = async (fastify) => {
       const tenantId = request.user!.tenantId;
       const conditions = [eq(courses.tenantId, tenantId)];
 
-      const canManage = await userHasAnyPermission(request.tenantDb, request.user!.id, ["course.manage"]);
+      const canManage = !wantsLearnerView(request.query) && (await userHasAnyPermission(request.tenantDb, request.user!.id, ["course.manage"]));
       if (!canManage) {
         conditions.push(buildAssignmentVisibilityCondition(request.user!.id));
       }
@@ -270,7 +347,7 @@ const tenantCourseRoutes: FastifyPluginAsync = async (fastify) => {
         .limit(pageSize)
         .offset((page - 1) * pageSize);
 
-      const data = await toResponseRows(request.tenantDb, rows);
+      const data = await toResponseRows(request.tenantDb, rows, request.user!.id);
       return { success: true, data, pagination: { page, pageSize, total } };
     },
   );
@@ -291,7 +368,7 @@ const tenantCourseRoutes: FastifyPluginAsync = async (fastify) => {
   );
 
   // GET /tenant/courses/:courseId — spec FR-004, contracts §GET by id.
-  fastify.get<{ Params: { courseId: string } }>(
+  fastify.get<{ Params: { courseId: string }; Querystring: { asLearner?: string } }>(
     "/tenant/courses/:courseId",
     { preHandler: [requireTenantUserSession()] },
     async (request, reply) => {
@@ -300,7 +377,7 @@ const tenantCourseRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(404).send({ success: false, message: "Not found" });
       }
 
-      const canManage = await userHasAnyPermission(request.tenantDb, request.user!.id, ["course.manage"]);
+      const canManage = !wantsLearnerView(request.query) && (await userHasAnyPermission(request.tenantDb, request.user!.id, ["course.manage"]));
       if (!canManage) {
         const [visible] = await request.tenantDb
           .select({ id: courses.id })
@@ -313,7 +390,7 @@ const tenantCourseRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
-      const [data] = await toResponseRows(request.tenantDb, [existing]);
+      const [data] = await toResponseRows(request.tenantDb, [existing], request.user!.id);
       return { success: true, data };
     },
   );

@@ -1,20 +1,18 @@
 "use client";
 
 import { useState } from "react";
-import { Card } from "@tm/ui";
 import CurriculumTab from "./curriculum-tab";
 
-type Section = "outline" | "files";
+type Section = "outline";
 
-const SECTIONS: { id: Section; label: string }[] = [
-  { id: "outline", label: "Course Outline" },
-  { id: "files", label: "File Manager" },
-];
+const SECTIONS: { id: Section; label: string }[] = [{ id: "outline", label: "Course Outline" }];
 
 /**
- * The Curriculum top-tab: a left sub-nav for "Course Outline" (the module/lesson editor) and "File
- * Manager" — a browser for files already uploaded elsewhere in the tenant, so a lesson can reuse one
- * instead of re-uploading. File Manager is a stub for now; its real API wiring is a later spec.
+ * The Curriculum top-tab: a left sub-nav for "Course Outline" (the module/lesson editor). File
+ * Manager was removed from here — file reuse now happens inline, via drawers opened where a file is
+ * actually needed (e.g. the course-image picker's "Choose an existing image" drawer,
+ * course-image-field.tsx, and the lesson-resource picker, content-item-forms/lesson-form-sections.tsx)
+ * rather than a separate standalone section here.
  */
 export default function CurriculumShell({ courseId, readOnly }: { courseId: string; readOnly: boolean }) {
   const [section, setSection] = useState<Section>("outline");
@@ -38,17 +36,7 @@ export default function CurriculumShell({ courseId, readOnly }: { courseId: stri
           ))}
         </ul>
       </nav>
-      <div className="flex-1">
-        {section === "outline" && <CurriculumTab courseId={courseId} readOnly={readOnly} />}
-        {section === "files" && (
-          <Card>
-            <p className="font-semibold">File Manager</p>
-            <p className="text-sm text-muted">
-              Reuse files already uploaded elsewhere in your tenant instead of uploading them again. This section is coming soon.
-            </p>
-          </Card>
-        )}
-      </div>
+      <div className="flex-1">{section === "outline" && <CurriculumTab courseId={courseId} readOnly={readOnly} />}</div>
     </div>
   );
 }
