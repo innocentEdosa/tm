@@ -43,6 +43,9 @@ export function validateFieldValue(field: ValidatableField, value: unknown): Fie
     case "text":
     case "textarea":
     case "date":
+    case "datetime":
+    case "email":
+    case "url":
       if (typeof value !== "string") {
         return { fieldKey: field.fieldKey, message: `${field.label} must be text` };
       }
@@ -52,7 +55,8 @@ export function validateFieldValue(field: ValidatableField, value: unknown): Fie
         return { fieldKey: field.fieldKey, message: `${field.label} must be a number` };
       }
       return null;
-    case "select": {
+    case "select":
+    case "radio": {
       const options = (field.options as string[] | null) ?? [];
       if (typeof value !== "string" || !options.includes(value)) {
         return { fieldKey: field.fieldKey, message: `${field.label} must be one of the configured options` };
@@ -66,6 +70,21 @@ export function validateFieldValue(field: ValidatableField, value: unknown): Fie
       }
       return null;
     }
+    case "checkbox":
+    case "toggle":
+      if (typeof value !== "boolean") {
+        return { fieldKey: field.fieldKey, message: `${field.label} is invalid` };
+      }
+      return null;
+    case "file":
+      // Never validated here — spec FR-031, the Form Builder never becomes the file storage
+      // layer; a consumer wiring real upload/storage integration validates its own way.
+      return null;
+    case "user_select":
+      if (typeof value !== "string") {
+        return { fieldKey: field.fieldKey, message: `${field.label} must be a valid selection` };
+      }
+      return null;
     default:
       return { fieldKey: field.fieldKey, message: `${field.label} has an unrecognized field type` };
   }

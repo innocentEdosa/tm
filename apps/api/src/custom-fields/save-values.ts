@@ -47,7 +47,7 @@ export async function writeCustomFieldValues(
   }
 
   const [definition] = await tenantDb
-    .select({ id: formDefinitions.id })
+    .select({ id: formDefinitions.id, activeVersionId: formDefinitions.activeVersionId })
     .from(formDefinitions)
     .where(eq(formDefinitions.key, formKey));
   if (!definition) {
@@ -63,14 +63,18 @@ export async function writeCustomFieldValues(
       .where(and(eq(customFieldValues.entityId, entityId), eq(customFieldValues.fieldId, field.id)));
 
     if (existing) {
+      // Form Builder spec (033) FR-032 — re-saving refreshes `formVersionId` to whichever
+      // version is active *now*, not the one active when this value was first captured; the
+      // historical record is only meant to reflect the version active at each write's own time.
       await tenantDb
         .update(customFieldValues)
-        .set({ value, updatedAt: new Date() })
+        .set({ value, formVersionId: definition.activeVersionId, updatedAt: new Date() })
         .where(eq(customFieldValues.id, existing.id));
     } else {
       await tenantDb.insert(customFieldValues).values({
         tenantId,
         formDefinitionId: definition.id,
+        formVersionId: definition.activeVersionId,
         entityId,
         fieldId: field.id,
         value,

@@ -117,6 +117,24 @@ select.field-input:not([multiple]) {
   @apply mt-1.5 text-sm text-slate-500;
 }
 
+/* Form Builder's 12-column field grid (packages/form-builder FieldGrid) — mobile-first: every
+   field is full width by default (matches a real phone, and the Live Preview panel's "Mobile"
+   toggle, which constrains its container well under this threshold) and only takes its authored
+   `colSpan` once the grid's own container is wide enough for multi-column to make sense. A
+   container query (not a viewport media query) so this responds to the panel's actual width —
+   the preview's resizable/toggleable pane never changes the browser's own viewport size. */
+.field-grid {
+  container-type: inline-size;
+}
+.field-grid-item {
+  grid-column: span 12 / span 12;
+}
+@container (min-width: 480px) {
+  .field-grid-item {
+    grid-column: span var(--field-col-span, 12) / span var(--field-col-span, 12);
+  }
+}
+
 /* ─── Cards & surfaces ────────────────────────────────────────── */
 
 /* Desktop Shell Visual Language spec — shadow removed, hairline border only (FR-008). One canonical

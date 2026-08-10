@@ -17,6 +17,7 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
             {props.required && <span className="text-red-600"> *</span>}
           </label>
         )}
+        {hint && <p className="field-hint">{hint}</p>}
         <input
           ref={ref}
           id={inputId}
@@ -25,7 +26,6 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
           {...props}
         />
         {error && <p className="field-error">{error}</p>}
-        {!error && hint && <p className="field-hint">{hint}</p>}
       </div>
     );
   },

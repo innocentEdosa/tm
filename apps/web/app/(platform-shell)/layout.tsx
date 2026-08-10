@@ -51,6 +51,12 @@ export default async function PlatformLayout({ children }: { children: React.Rea
           label: "Course Marketplace",
           href: "/admin/course-marketplace",
         },
+        {
+          key: "forms",
+          icon: "fileText",
+          label: "Forms",
+          href: "/platform/forms",
+        },
       ],
     },
   ];

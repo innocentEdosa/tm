@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type ComponentType, type Dispatch, type SetStateAction } from "react";
 import { createPortal } from "react-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { MoreHorizontal } from "lucide-react";
 import { Button, Input, Card, Badge, PageHeader, Pagination, Drawer } from "@tm/ui";
+import { FormRenderer, useEffectiveForm, type FieldRendererProps } from "@tm/form-builder";
 
 const API_BASE = "/tenant-api/tenant-auth";
 const TENANT_API_BASE = "/tenant-api/tenant";
@@ -56,19 +57,6 @@ interface MemberListMeta {
   pageSize: number;
   total: number;
   reason: "no_department_assigned" | null;
-}
-
-type CustomFieldType = "text" | "textarea" | "number" | "date" | "select" | "multiselect";
-
-interface MemberCustomField {
-  id: string;
-  fieldKey: string;
-  label: string;
-  fieldType: CustomFieldType;
-  options: string[] | null;
-  isRequired: boolean;
-  displayOrder: number;
-  isSystem: boolean;
 }
 
 function MemberAvatar({ fullName }: { fullName: string }) {
@@ -175,6 +163,93 @@ function SearchableSelect({
     </div>
   );
 }
+
+interface MemberFormFieldState {
+  formFullName: string;
+  setFormFullName: Dispatch<SetStateAction<string>>;
+  formEmail: string;
+  setFormEmail: Dispatch<SetStateAction<string>>;
+  formRoleId: string;
+  setFormRoleId: Dispatch<SetStateAction<string>>;
+  formDepartmentId: string;
+  setFormDepartmentId: Dispatch<SetStateAction<string>>;
+  editingMemberId: string | null;
+  roleOptions: RoleOption[];
+  activeDepartmentOptions: DepartmentOption[];
+  allDepartments: DepartmentOption[];
+}
+
+/** Backs Member's `fieldRenderers` overrides (spec FR-029) — Full name/Email/Role/Department all
+ * need feature-specific behavior a generic input can't provide (Role/Department are searchable
+ * comboboxes; Email is disabled once editing). Module-level context, not props recreated inline,
+ * so these components' identities stay stable across renders (see the equivalent note in
+ * department-settings-client.tsx — inline component definitions would remount on every
+ * keystroke). */
+const MemberFieldContext = createContext<MemberFormFieldState | null>(null);
+
+function useMemberFieldContext(): MemberFormFieldState {
+  const ctx = useContext(MemberFieldContext);
+  if (!ctx) throw new Error("Member field renderers must be used inside MemberFieldContext");
+  return ctx;
+}
+
+function FullNameField({ error }: FieldRendererProps) {
+  const { formFullName, setFormFullName } = useMemberFieldContext();
+  return <Input label="Full name" required error={error} value={formFullName} onChange={(e) => setFormFullName(e.target.value)} />;
+}
+
+function MemberEmailField({ error }: FieldRendererProps) {
+  const { formEmail, setFormEmail, editingMemberId } = useMemberFieldContext();
+  return (
+    <Input
+      label="Email"
+      type="email"
+      required
+      error={error}
+      disabled={!!editingMemberId}
+      hint={editingMemberId ? "Email can't be changed here." : undefined}
+      value={formEmail}
+      onChange={(e) => setFormEmail(e.target.value)}
+    />
+  );
+}
+
+function RoleField() {
+  const { formRoleId, setFormRoleId, roleOptions } = useMemberFieldContext();
+  return (
+    <div>
+      <label className="field-label" htmlFor="roleId">
+        Role
+      </label>
+      <SearchableSelect value={formRoleId} onChange={setFormRoleId} options={roleOptions.map((r) => ({ id: r.id, label: r.name }))} placeholder="Search roles…" />
+    </div>
+  );
+}
+
+function DepartmentField() {
+  const { formDepartmentId, setFormDepartmentId, activeDepartmentOptions, allDepartments } = useMemberFieldContext();
+  return (
+    <div>
+      <label className="field-label" htmlFor="departmentId">
+        Department
+      </label>
+      <SearchableSelect
+        value={formDepartmentId}
+        onChange={setFormDepartmentId}
+        options={activeDepartmentOptions.map((d) => ({ id: d.id, label: departmentPath(d.id, allDepartments) }))}
+        placeholder="Search departments…"
+        allowClear
+      />
+    </div>
+  );
+}
+
+const MEMBER_FIELD_RENDERERS: Record<string, ComponentType<FieldRendererProps>> = {
+  full_name: FullNameField,
+  email: MemberEmailField,
+  role_id: RoleField,
+  department_id: DepartmentField,
+};
 
 const ROW_ACTIONS_MENU_WIDTH = 140;
 const ROW_ACTIONS_MENU_HEIGHT = 84;
@@ -338,28 +413,15 @@ export default function TeamSettingsClient({
   // a row is clicked (research.md §4/§7 — reuses the existing, already-generic Custom Fields
   // Framework routes, no new endpoint).
   const [viewTargetId, setViewTargetId] = useState<string | null>(null);
-  // Lazily enabled — mirrors the original "fetch once, on first use" behavior instead of always
-  // fetching on mount, since a session that never opens a member drawer shouldn't pay for it.
-  const [memberFieldsRequested, setMemberFieldsRequested] = useState(false);
 
-  const memberFieldsQuery = useQuery({
-    queryKey: ["member-form-fields", subdomain],
-    queryFn: async () => {
-      const res = await fetch(`${TENANT_API_BASE}/form-fields?formKey=member&subdomain=${encodeURIComponent(subdomain)}`, {
-        credentials: "include",
-      });
-      const json = (res.ok ? await res.json() : { data: [] }) as { data: MemberCustomField[] };
-      return json.data;
-    },
-    enabled: memberFieldsRequested,
-  });
-  const memberFields = memberFieldsQuery.data ?? null;
-  // Spec 013: `memberFields` now also includes the form's own system-field placeholder rows
-  // (full_name/email/role_id/department_id, 0043_seed_member_system_fields.sql) so the generic
-  // Forms settings preview can render the whole form — this screen renders those fixed fields
-  // itself via dedicated controls, so only the tenant's real custom fields belong in the dynamic
-  // list below (mirrors Department's own `customFields = layoutFields.filter((f) => !f.isSystem)`).
-  const tenantCustomFields = (memberFields ?? []).filter((f) => !f.isSystem);
+  // Form Builder spec (033) — the effective form (system + platform + tenant fields, merged and
+  // ordered) replaces the old `GET /form-fields?formKey=member` fetch. `full_name`/`email`/
+  // `role_id`/`department_id` are `isSystem` rows this page still renders with dedicated
+  // controls (via `MEMBER_FIELD_RENDERERS`, spec FR-029); only real tenant custom fields render
+  // generically.
+  const { form: memberEffectiveForm } = useEffectiveForm("member", subdomain);
+  const layoutFields = memberEffectiveForm?.steps.flatMap((step) => step.sections.flatMap((section) => section.fields)) ?? [];
+  const tenantCustomFields = layoutFields.filter((f) => !f.isSystem);
   const [viewValues, setViewValues] = useState<Record<string, unknown>>({});
   const [activeTab, setActiveTab] = useState<ProfileTabKey>("profile");
 
@@ -374,8 +436,8 @@ export default function TeamSettingsClient({
   const [formDepartmentId, setFormDepartmentId] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
 
-  // Spec 013 US3 — the tenant's own "member" custom fields, rendered dynamically after the fixed
-  // fields above, reusing the same `memberFields` list the read-only profile view already fetches.
+  // The tenant's own "member" custom fields, rendered by `<FormRenderer>` alongside the fixed
+  // system fields above, in the merged order `useEffectiveForm("member", subdomain)` returns.
   const [formCustomFieldValues, setFormCustomFieldValues] = useState<Record<string, unknown>>({});
   const [formCustomFieldErrors, setFormCustomFieldErrors] = useState<Record<string, string>>({});
 
@@ -399,10 +461,6 @@ export default function TeamSettingsClient({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editMemberCustomFieldValuesQuery.data]);
 
-  function ensureMemberFieldsLoaded() {
-    setMemberFieldsRequested(true);
-  }
-
   function openCreateForm() {
     setEditingMemberId(null);
     setFormFullName("");
@@ -412,7 +470,6 @@ export default function TeamSettingsClient({
     setFormCustomFieldValues({});
     setFormCustomFieldErrors({});
     setFormError(null);
-    ensureMemberFieldsLoaded();
     setFormOpen(true);
   }
 
@@ -428,7 +485,6 @@ export default function TeamSettingsClient({
     setFormCustomFieldValues({});
     setFormCustomFieldErrors({});
     setFormError(null);
-    ensureMemberFieldsLoaded();
     setFormOpen(true);
   }
 
@@ -451,74 +507,36 @@ export default function TeamSettingsClient({
     return Object.keys(errors).length === 0;
   }
 
-  function renderCustomField(field: MemberCustomField): React.ReactNode {
-    return (
-      <div key={field.id}>
-        <label className="field-label" htmlFor={`custom-${field.fieldKey}`}>
-          {field.label}
-          {field.isRequired ? " *" : ""}
-        </label>
-        {field.fieldType === "textarea" ? (
-          <textarea
-            id={`custom-${field.fieldKey}`}
-            className="field-input"
-            rows={3}
-            value={(formCustomFieldValues[field.fieldKey] as string) ?? ""}
-            onChange={(e) => setFormCustomFieldValues((v) => ({ ...v, [field.fieldKey]: e.target.value }))}
-          />
-        ) : field.fieldType === "select" ? (
-          <select
-            id={`custom-${field.fieldKey}`}
-            className="field-input"
-            value={(formCustomFieldValues[field.fieldKey] as string) ?? ""}
-            onChange={(e) => setFormCustomFieldValues((v) => ({ ...v, [field.fieldKey]: e.target.value }))}
-          >
-            <option value="">— Select —</option>
-            {(field.options ?? []).map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
-            ))}
-          </select>
-        ) : field.fieldType === "multiselect" ? (
-          <select
-            id={`custom-${field.fieldKey}`}
-            className="field-input"
-            multiple
-            value={(formCustomFieldValues[field.fieldKey] as string[]) ?? []}
-            onChange={(e) =>
-              setFormCustomFieldValues((v) => ({
-                ...v,
-                [field.fieldKey]: Array.from(e.target.selectedOptions, (o) => o.value),
-              }))
-            }
-          >
-            {(field.options ?? []).map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
-            ))}
-          </select>
-        ) : (
-          <input
-            id={`custom-${field.fieldKey}`}
-            type={field.fieldType === "number" ? "number" : field.fieldType === "date" ? "date" : "text"}
-            className="field-input"
-            value={(formCustomFieldValues[field.fieldKey] as string | number) ?? ""}
-            onChange={(e) =>
-              setFormCustomFieldValues((v) => ({
-                ...v,
-                [field.fieldKey]: field.fieldType === "number" ? e.target.valueAsNumber : e.target.value,
-              }))
-            }
-          />
-        )}
-        {formCustomFieldErrors[field.fieldKey] && (
-          <p className="mt-1 text-xs text-red-600">{formCustomFieldErrors[field.fieldKey]}</p>
-        )}
-      </div>
-    );
+  // FormRenderer needs one flat `values` object keyed by `fieldKey` (mirrors Department's
+  // `rendererValues`) — system field values live in the page's own `formFullName`/`formEmail`/
+  // `formRoleId`/`formDepartmentId` state (owned via `MEMBER_FIELD_RENDERERS` below), custom
+  // field values in `formCustomFieldValues`.
+  const memberRendererValues = {
+    full_name: formFullName,
+    email: formEmail,
+    role_id: formRoleId,
+    department_id: formDepartmentId,
+    ...formCustomFieldValues,
+  };
+
+  function handleMemberFieldChange(fieldKey: string, value: unknown) {
+    setFormCustomFieldValues((v) => ({ ...v, [fieldKey]: value }));
   }
+
+  const memberFieldContextValue: MemberFormFieldState = {
+    formFullName,
+    setFormFullName,
+    formEmail,
+    setFormEmail,
+    formRoleId,
+    setFormRoleId,
+    formDepartmentId,
+    setFormDepartmentId,
+    editingMemberId,
+    roleOptions,
+    activeDepartmentOptions,
+    allDepartments,
+  };
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
@@ -608,7 +626,6 @@ export default function TeamSettingsClient({
   function openProfile(memberId: string) {
     setViewTargetId(memberId);
     setActiveTab("profile");
-    ensureMemberFieldsLoaded();
   }
 
   const saveMemberMutation = useMutation({
@@ -649,8 +666,10 @@ export default function TeamSettingsClient({
     onError: (err: Error) => setFormError(err.message || "Couldn't reach the server. Try again."),
   });
 
-  function handleSubmit(event: React.FormEvent) {
-    event.preventDefault();
+  // Called from `<FormRenderer onSubmit={...}>` — FormRenderer has already run its own
+  // client-side required/type validation against every field, including custom ones, before
+  // ever calling this.
+  function handleFormSubmit() {
     setFormError(null);
     if (!formRoleId) {
       setFormError("Role is required.");
@@ -810,56 +829,21 @@ export default function TeamSettingsClient({
 
         {formError && <div className="banner-error mt-4">{formError}</div>}
 
-        <form className="mt-4 space-y-5" onSubmit={handleSubmit}>
-          <Input
-            label="Full name"
-            id="fullName"
-            name="fullName"
-            required
-            value={formFullName}
-            onChange={(e) => setFormFullName(e.target.value)}
-          />
-          <Input
-            label="Email"
-            id="email"
-            name="email"
-            type="email"
-            required
-            disabled={!!editingMemberId}
-            hint={editingMemberId ? "Email can't be changed here." : undefined}
-            value={formEmail}
-            onChange={(e) => setFormEmail(e.target.value)}
-          />
-          <div>
-            <label className="field-label" htmlFor="roleId">
-              Role
-            </label>
-            <SearchableSelect
-              value={formRoleId}
-              onChange={setFormRoleId}
-              options={roleOptions.map((r) => ({ id: r.id, label: r.name }))}
-              placeholder="Search roles…"
+        <div className="mt-4">
+          <MemberFieldContext.Provider value={memberFieldContextValue}>
+            <FormRenderer
+              form={memberEffectiveForm}
+              values={memberRendererValues}
+              onChange={handleMemberFieldChange}
+              onSubmit={handleFormSubmit}
+              errors={formCustomFieldErrors}
+              isSubmitting={saveMemberMutation.isPending}
+              fieldRenderers={MEMBER_FIELD_RENDERERS}
+              submitLabel={editingMemberId ? "Save changes" : "Add team member"}
+              subdomain={subdomain}
             />
-          </div>
-          <div>
-            <label className="field-label" htmlFor="departmentId">
-              Department
-            </label>
-            <SearchableSelect
-              value={formDepartmentId}
-              onChange={setFormDepartmentId}
-              options={activeDepartmentOptions.map((d) => ({ id: d.id, label: departmentPath(d.id, allDepartments) }))}
-              placeholder="Search departments…"
-              allowClear
-            />
-          </div>
-
-          {tenantCustomFields.map((field) => renderCustomField(field))}
-
-          <Button type="submit" isLoading={saveMemberMutation.isPending}>
-            {editingMemberId ? "Save changes" : "Add team member"}
-          </Button>
-        </form>
+          </MemberFieldContext.Provider>
+        </div>
       </Drawer>
 
       <Drawer open={!!viewTarget} onClose={() => setViewTargetId(null)} side="right" title="Member profile">

@@ -1,31 +1,24 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ComponentType, type Dispatch, type SetStateAction } from "react";
 import { createPortal } from "react-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { MoreHorizontal, Plus } from "lucide-react";
 import { PageHeader, Card, Badge, Modal, Drawer, Button, Input } from "@tm/ui";
+import { FormRenderer, useEffectiveForm, type FieldRendererProps, type FormField as EffectiveFormField } from "@tm/form-builder";
 
 const API_BASE = "/tenant-api/tenant";
 
-// spec FR-006/FR-007/FR-015 — Extensible Custom Fields Framework. The framework now returns this
-// form's ENTIRE layout — its own system fields (Name/Parent/Description/Status/Manager/Assistant
-// Manager) interleaved with global/tenant custom fields, in one tenant-reorderable sequence
-// (research.md §4) — this component never decides ordering, it only renders whichever real,
-// hardcoded control matches a system row's `fieldKey`, or the generic custom-field control for
-// everything else, in the order given.
-type CustomFieldType = "text" | "textarea" | "number" | "date" | "select" | "multiselect";
-
-interface CustomFieldDefinition {
-  id: string;
-  fieldKey: string;
-  label: string;
-  fieldType: CustomFieldType;
-  options: string[] | null;
-  isRequired: boolean;
-  scope: "system" | "global" | "tenant";
-  isSystem: boolean;
-}
+// Form Builder spec (033) — replaces the old Custom Fields Framework's per-page
+// `renderSystemField`/`renderCustomField`/`renderFormField` switch entirely. This page now only
+// requests the effective form (`useEffectiveForm("department", subdomain)`) and hands it to the
+// shared `<FormRenderer>`. Department's own bespoke controls (Name/Parent/Description/Status/
+// Manager/Assistant Manager all need feature-specific behavior a generic input can't provide —
+// e.g. Manager is a person-search widget, Parent excludes descendants) are supplied through
+// `FormRenderer`'s documented escape hatch (`fieldRenderers`, spec FR-029), never a page-local
+// generic field-type switch. Custom (platform/tenant) fields render entirely generically, with
+// zero Department-specific code.
+type CustomFieldDefinition = EffectiveFormField;
 
 interface UserRef {
   id: string;
@@ -184,6 +177,137 @@ interface DepartmentFormState {
   manager: UserRef | null;
   assistantManager: UserRef | null;
 }
+
+interface DepartmentFieldContextValue {
+  form: DepartmentFormState;
+  setForm: Dispatch<SetStateAction<DepartmentFormState>>;
+  departments: DepartmentRow[];
+  excludedParentIds: Set<string>;
+  editingId: string | null;
+  subdomain: string;
+}
+
+/** Backs Department's `fieldRenderers` overrides (spec FR-029) with the page's own live
+ * `form`/`setForm` state, `departments` list, etc. Module-level context (not props recreated
+ * every render) so `DEPARTMENT_FIELD_RENDERERS`'s component identities stay stable across
+ * renders — defining components inline in the render body would remount every field (and drop
+ * focus) on every keystroke. */
+const DepartmentFieldContext = createContext<DepartmentFieldContextValue | null>(null);
+
+function useDepartmentFieldContext(): DepartmentFieldContextValue {
+  const ctx = useContext(DepartmentFieldContext);
+  if (!ctx) throw new Error("Department field renderers must be used inside DepartmentFieldContext");
+  return ctx;
+}
+
+function NameField({ error }: FieldRendererProps) {
+  const { form, setForm } = useDepartmentFieldContext();
+  return <Input label="Name" required error={error} value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />;
+}
+
+function ParentDepartmentField() {
+  const { form, setForm, departments, excludedParentIds } = useDepartmentFieldContext();
+  return (
+    <div>
+      <label className="field-label" htmlFor="parentDepartmentId">
+        Parent department
+      </label>
+      <select
+        id="parentDepartmentId"
+        className="field-input"
+        value={form.parentDepartmentId}
+        onChange={(e) => setForm((f) => ({ ...f, parentDepartmentId: e.target.value }))}
+      >
+        <option value="">— None (top-level) —</option>
+        {departments
+          .filter((d) => !excludedParentIds.has(d.id))
+          .map((d) => (
+            <option key={d.id} value={d.id}>
+              {d.name}
+            </option>
+          ))}
+      </select>
+    </div>
+  );
+}
+
+function DescriptionField() {
+  const { form, setForm } = useDepartmentFieldContext();
+  return (
+    <div>
+      <label className="field-label" htmlFor="description">
+        Description
+      </label>
+      <textarea
+        id="description"
+        className="field-input"
+        rows={3}
+        value={form.description}
+        onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+      />
+    </div>
+  );
+}
+
+function StatusField() {
+  const { form, setForm, editingId } = useDepartmentFieldContext();
+  if (!editingId) return null;
+  return (
+    <div>
+      <label className="field-label" htmlFor="status">
+        Status
+      </label>
+      <select
+        id="status"
+        className="field-input"
+        value={form.status}
+        onChange={(e) => setForm((f) => ({ ...f, status: e.target.value as "active" | "archived" }))}
+      >
+        <option value="active">Active</option>
+        <option value="archived">Archived</option>
+      </select>
+    </div>
+  );
+}
+
+function ManagerField() {
+  const { form, setForm, subdomain } = useDepartmentFieldContext();
+  return (
+    <PersonPicker
+      label="Manager"
+      subdomain={subdomain}
+      value={form.manager}
+      onChange={(u) => setForm((f) => ({ ...f, manager: u }))}
+      excludeUserId={form.assistantManager?.id}
+    />
+  );
+}
+
+function AssistantManagerField() {
+  const { form, setForm, subdomain } = useDepartmentFieldContext();
+  return (
+    <PersonPicker
+      label="Assistant Manager"
+      subdomain={subdomain}
+      value={form.assistantManager}
+      onChange={(u) => setForm((f) => ({ ...f, assistantManager: u }))}
+      excludeUserId={form.manager?.id}
+    />
+  );
+}
+
+/** The `fieldRenderers` map passed to `<FormRenderer>` (spec FR-029) — every one of Department's
+ * system fields needs feature-specific behavior a generic input can't provide (person search,
+ * descendant-exclusion, edit-only visibility), so all six are overridden here. Custom
+ * (platform/tenant) fields are never in this map — they render entirely generically. */
+const DEPARTMENT_FIELD_RENDERERS: Record<string, ComponentType<FieldRendererProps>> = {
+  name: NameField,
+  parent_department_id: ParentDepartmentField,
+  description: DescriptionField,
+  status: StatusField,
+  manager_id: ManagerField,
+  assistant_manager_id: AssistantManagerField,
+};
 
 const EMPTY_FORM: DepartmentFormState = {
   name: "",
@@ -349,19 +473,15 @@ export default function DepartmentSettingsClient({ subdomain }: { subdomain: str
     queryClient.invalidateQueries({ queryKey: ["departments", subdomain] });
   }
 
-  // The whole form's layout (system + global + tenant fields, ordered) — fetched once, independent
-  // of which drawer is open, since both the create/edit drawer AND the view drawer need it.
-  const layoutFieldsQuery = useQuery({
-    queryKey: ["department-form-fields", subdomain],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/form-fields?formKey=department&subdomain=${encodeURIComponent(subdomain)}`, {
-        credentials: "include",
-      });
-      const json = (await res.json()) as { data: CustomFieldDefinition[] };
-      return json.data;
-    },
-  });
-  const layoutFields = useMemo(() => layoutFieldsQuery.data ?? [], [layoutFieldsQuery.data]);
+  // The whole form's layout (system + platform + tenant fields, steps, sections) — fetched once,
+  // independent of which drawer is open, since both the create/edit drawer AND the view drawer
+  // need it. `getEffectiveForm` (apps/api/src/form-builder/get-effective-form.ts) has already
+  // merged and ordered everything; this page never sorts or merges anything itself.
+  const { form: effectiveForm } = useEffectiveForm("department", subdomain);
+  const layoutFields = useMemo(
+    () => effectiveForm?.steps.flatMap((step) => step.sections.flatMap((section) => section.fields)) ?? [],
+    [effectiveForm],
+  );
 
   const editCustomFieldValuesQuery = useQuery({
     queryKey: ["department-custom-field-values", editingId, subdomain],
@@ -514,8 +634,12 @@ export default function DepartmentSettingsClient({ subdomain }: { subdomain: str
     },
   });
 
-  function handleSubmit(event: React.FormEvent) {
-    event.preventDefault();
+  // Called from `<FormRenderer onSubmit={...}>` — FormRenderer has already run its own
+  // client-side required/type validation (mirroring `validateFieldValue`) against every field,
+  // including custom ones, before ever calling this; the checks below are Department's own
+  // additional business rules (duplicate name, manager != assistant manager) that a generic
+  // form-field validator has no way to know about.
+  function handleFormSubmit() {
     setFormError(null);
     const trimmedName = form.name.trim();
     if (!trimmedName) {
@@ -587,177 +711,34 @@ export default function DepartmentSettingsClient({ subdomain }: { subdomain: str
     [departments, editingId],
   );
 
-  /** Department's own real, hardcoded controls — one per system field the framework's layout
-   * places, matched by `fieldKey` (research.md §4). The framework decides *where* these sit
-   * relative to global/tenant custom fields; this component still owns *how* each one actually
-   * renders, validates, and saves (via `form.*` state, never `customFieldValues`). */
-  function renderSystemField(field: CustomFieldDefinition): React.ReactNode {
-    switch (field.fieldKey) {
-      case "name":
-        return (
-          <Input
-            key={field.id}
-            label="Name"
-            required
-            value={form.name}
-            onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-          />
-        );
-      case "parent_department_id":
-        return (
-          <div key={field.id}>
-            <label className="field-label" htmlFor="parentDepartmentId">
-              Parent department
-            </label>
-            <select
-              id="parentDepartmentId"
-              className="field-input"
-              value={form.parentDepartmentId}
-              onChange={(e) => setForm((f) => ({ ...f, parentDepartmentId: e.target.value }))}
-            >
-              <option value="">— None (top-level) —</option>
-              {(departments ?? [])
-                .filter((d) => !excludedParentIds.has(d.id))
-                .map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.name}
-                  </option>
-                ))}
-            </select>
-          </div>
-        );
-      case "description":
-        return (
-          <div key={field.id}>
-            <label className="field-label" htmlFor="description">
-              Description
-            </label>
-            <textarea
-              id="description"
-              className="field-input"
-              rows={3}
-              value={form.description}
-              onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-            />
-          </div>
-        );
-      case "status":
-        if (!editingId) return null;
-        return (
-          <div key={field.id}>
-            <label className="field-label" htmlFor="status">
-              Status
-            </label>
-            <select
-              id="status"
-              className="field-input"
-              value={form.status}
-              onChange={(e) => setForm((f) => ({ ...f, status: e.target.value as "active" | "archived" }))}
-            >
-              <option value="active">Active</option>
-              <option value="archived">Archived</option>
-            </select>
-          </div>
-        );
-      case "manager_id":
-        return (
-          <PersonPicker
-            key={field.id}
-            label="Manager"
-            subdomain={subdomain}
-            value={form.manager}
-            onChange={(u) => setForm((f) => ({ ...f, manager: u }))}
-            excludeUserId={form.assistantManager?.id}
-          />
-        );
-      case "assistant_manager_id":
-        return (
-          <PersonPicker
-            key={field.id}
-            label="Assistant Manager"
-            subdomain={subdomain}
-            value={form.assistantManager}
-            onChange={(u) => setForm((f) => ({ ...f, assistantManager: u }))}
-            excludeUserId={form.manager?.id}
-          />
-        );
-      default:
-        return null;
-    }
+  // FormRenderer needs one flat `values` object keyed by `fieldKey` for its own client-side
+  // required/type validation (spec FR-030 mirror) — system field values still live in `form.*`
+  // state (owned by this page, per the `fieldRenderers` overrides below), custom field values in
+  // `customFieldValues`; this is just the merged read view FormRenderer is handed each render.
+  const rendererValues = useMemo(
+    () => ({
+      name: form.name,
+      parent_department_id: form.parentDepartmentId,
+      description: form.description,
+      status: form.status,
+      manager_id: form.manager,
+      assistant_manager_id: form.assistantManager,
+      ...customFieldValues,
+    }),
+    [form, customFieldValues],
+  );
+
+  // Only a custom (platform/tenant) field ever reaches this — every system field's override
+  // component (DEPARTMENT_FIELD_RENDERERS below) calls `setForm` directly via context instead of
+  // routing through FormRenderer's generic onChange.
+  function handleFieldChange(fieldKey: string, value: unknown) {
+    setCustomFieldValues((v) => ({ ...v, [fieldKey]: value }));
   }
 
-  function renderCustomField(field: CustomFieldDefinition): React.ReactNode {
-    return (
-      <div key={field.id}>
-        <label className="field-label" htmlFor={`custom-${field.fieldKey}`}>
-          {field.label}
-          {field.isRequired ? " *" : ""}
-        </label>
-        {field.fieldType === "textarea" ? (
-          <textarea
-            id={`custom-${field.fieldKey}`}
-            className="field-input"
-            rows={3}
-            value={(customFieldValues[field.fieldKey] as string) ?? ""}
-            onChange={(e) => setCustomFieldValues((v) => ({ ...v, [field.fieldKey]: e.target.value }))}
-          />
-        ) : field.fieldType === "select" ? (
-          <select
-            id={`custom-${field.fieldKey}`}
-            className="field-input"
-            value={(customFieldValues[field.fieldKey] as string) ?? ""}
-            onChange={(e) => setCustomFieldValues((v) => ({ ...v, [field.fieldKey]: e.target.value }))}
-          >
-            <option value="">— Select —</option>
-            {(field.options ?? []).map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
-            ))}
-          </select>
-        ) : field.fieldType === "multiselect" ? (
-          <select
-            id={`custom-${field.fieldKey}`}
-            className="field-input"
-            multiple
-            value={(customFieldValues[field.fieldKey] as string[]) ?? []}
-            onChange={(e) =>
-              setCustomFieldValues((v) => ({
-                ...v,
-                [field.fieldKey]: Array.from(e.target.selectedOptions, (o) => o.value),
-              }))
-            }
-          >
-            {(field.options ?? []).map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
-            ))}
-          </select>
-        ) : (
-          <input
-            id={`custom-${field.fieldKey}`}
-            type={field.fieldType === "number" ? "number" : field.fieldType === "date" ? "date" : "text"}
-            className="field-input"
-            value={(customFieldValues[field.fieldKey] as string | number) ?? ""}
-            onChange={(e) =>
-              setCustomFieldValues((v) => ({
-                ...v,
-                [field.fieldKey]: field.fieldType === "number" ? e.target.valueAsNumber : e.target.value,
-              }))
-            }
-          />
-        )}
-        {customFieldErrors[field.fieldKey] && (
-          <p className="mt-1 text-xs text-red-600">{customFieldErrors[field.fieldKey]}</p>
-        )}
-      </div>
-    );
-  }
-
-  function renderFormField(field: CustomFieldDefinition): React.ReactNode {
-    return field.isSystem ? renderSystemField(field) : renderCustomField(field);
-  }
+  const departmentFieldContextValue = useMemo(
+    () => ({ form, setForm, departments: departments ?? [], excludedParentIds, editingId, subdomain }),
+    [form, departments, excludedParentIds, editingId, subdomain],
+  );
 
   function renderRows(parentId: string | null, depth: number): React.ReactNode[] {
     const rows = childrenByParent.get(parentId) ?? [];
@@ -873,13 +854,22 @@ export default function DepartmentSettingsClient({ subdomain }: { subdomain: str
       </Card>
 
       <Drawer open={formOpen} onClose={() => setFormOpen(false)} side="right" title={editingId ? "Edit department" : "Add department"}>
-        <form className="space-y-4" onSubmit={handleSubmit}>
+        <div className="space-y-4">
           {formError && <div className="banner-error">{formError}</div>}
-          {layoutFields.map((field) => renderFormField(field))}
-          <Button type="submit" isLoading={saveMutation.isPending} className="w-full">
-            {editingId ? "Save changes" : "Create department"}
-          </Button>
-        </form>
+          <DepartmentFieldContext.Provider value={departmentFieldContextValue}>
+            <FormRenderer
+              form={effectiveForm}
+              values={rendererValues}
+              onChange={handleFieldChange}
+              onSubmit={handleFormSubmit}
+              errors={customFieldErrors}
+              isSubmitting={saveMutation.isPending}
+              fieldRenderers={DEPARTMENT_FIELD_RENDERERS}
+              submitLabel={editingId ? "Save changes" : "Create department"}
+              subdomain={subdomain}
+            />
+          </DepartmentFieldContext.Provider>
+        </div>
       </Drawer>
 
       <Drawer open={!!viewTarget} onClose={() => setViewTargetId(null)} side="right" title="Department details">

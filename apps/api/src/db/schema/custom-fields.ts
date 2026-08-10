@@ -1,6 +1,8 @@
 import { pgTable, uuid, text, boolean, integer, jsonb, timestamp, check, unique } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { tenants } from "./tenants";
+import { superAdmins } from "./super-admins";
+import { formVersions, formSections } from "./form-builder";
 
 /**
  * Platform-global catalog of developer-registered form types (data-model.md `form_definitions`).
@@ -8,13 +10,30 @@ import { tenants } from "./tenants";
  * seeded once via migration (`department`). Mirrors `permissions`/`department_templates`'s
  * SELECT-only-to-tm_app grant treatment.
  */
-export const formDefinitions = pgTable("form_definitions", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  key: text("key").notNull().unique(),
-  name: text("name").notNull(),
-  description: text("description").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const formDefinitions = pgTable(
+  "form_definitions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    key: text("key").notNull().unique(),
+    name: text("name").notNull(),
+    description: text("description").notNull(),
+    /** Presentational only — an icon identifier from the existing design system's icon set. */
+    icon: text("icon"),
+    status: text("status").notNull().default("active"),
+    /** The currently published `form_versions` row consuming features resolve against. `NULL`
+     * until a first version is ever published for this form type (spec FR-001/FR-008). Nullable
+     * FK added here rather than at table-creation time to avoid a same-migration circular
+     * dependency with `form_versions.form_definition_id` — see data-model.md "Migration
+     * Sequencing". */
+    activeVersionId: uuid("active_version_id").references((): any => formVersions.id),
+    createdBySuperAdminId: uuid("created_by_super_admin_id").references(() => superAdmins.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check("form_definitions_status_check", sql`${table.status} IN ('active', 'archived')`),
+  ],
+);
 
 /**
  * A single field attached to a form type (data-model.md `form_fields`) — either a Super-Admin
@@ -35,12 +54,27 @@ export const formFields = pgTable(
       .notNull()
       .references(() => formDefinitions.id, { onDelete: "restrict" }),
     tenantId: uuid("tenant_id").references(() => tenants.id, { onDelete: "restrict" }),
+    /** Set for platform-authored rows (`tenantId IS NULL`); `NULL` for tenant-owned rows, which
+     * aren't version-scoped — tenant customizations apply immediately, no publish step
+     * (data-model.md, spec Assumptions). */
+    formVersionId: uuid("form_version_id").references(() => formVersions.id, { onDelete: "cascade" }),
+    /** Placement within the version's layout. `NULL` falls back to the version's default
+     * section. For tenant-owned fields, points at the *currently active* version's section,
+     * reconciled by section `key` on republish (spec FR-025). */
+    formSectionId: uuid("form_section_id").references(() => formSections.id),
     fieldKey: text("field_key").notNull(),
     label: text("label").notNull(),
+    description: text("description"),
+    placeholder: text("placeholder"),
     fieldType: text("field_type").notNull(),
     options: jsonb("options"),
+    defaultValue: jsonb("default_value"),
+    /** e.g. `{ min, max, pattern }` — applicable subset depends on `fieldType` (spec FR-013). */
+    validation: jsonb("validation"),
     isRequired: boolean("is_required").notNull().default(false),
     displayOrder: integer("display_order").notNull(),
+    /** `{ colSpan }`, 1-12, default 12 — multi-column layout (spec FR-016). */
+    layout: jsonb("layout"),
     createdBy: text("created_by").notNull(),
     /** Marks a placeholder row for one of a form's fixed, module-hardcoded fields (e.g.
      * Department's Name/Description) — seeded once per form type (`tenant_id IS NULL`), never
@@ -63,7 +97,7 @@ export const formFields = pgTable(
     ),
     check(
       "form_fields_field_type_check",
-      sql`${table.fieldType} IN ('text', 'textarea', 'number', 'date', 'select', 'multiselect')`,
+      sql`${table.fieldType} IN ('text', 'textarea', 'number', 'email', 'url', 'date', 'datetime', 'select', 'multiselect', 'radio', 'checkbox', 'toggle', 'file', 'user_select')`,
     ),
     check(
       "form_fields_created_by_check",
@@ -94,7 +128,20 @@ export const formFieldOrderOverrides = pgTable(
     fieldId: uuid("field_id")
       .notNull()
       .references(() => formFields.id, { onDelete: "cascade" }),
-    displayOrder: integer("display_order").notNull(),
+    /** `NULL` = use the field's own seeded order; a value = this tenant's override. */
+    displayOrder: integer("display_order"),
+    /** This tenant hides an optional, non-system platform field from its own rendering, without
+     * touching the underlying platform field definition (spec FR-021). Never settable to `true`
+     * for a field with `isSystem = true` or `isRequired = true` — enforced in
+     * `apps/api/src/form-builder/visibility-rules.ts`, not by a DB constraint (spec FR-022). */
+    isHidden: boolean("is_hidden").notNull().default(false),
+    /** `NULL` = use the field's own description/placeholder; a value = this tenant's own
+     * help-text override — the same "customize without touching the shared row" mechanism as
+     * `isHidden`/`displayOrder` above, extended to system/platform fields' help text (a Tenant
+     * Admin can never touch a system/platform field's row directly, but their own tenant's
+     * wording for it is fair game — the label, type, and binding stay fixed regardless). */
+    description: text("description"),
+    placeholder: text("placeholder"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -120,6 +167,10 @@ export const customFieldValues = pgTable(
     formDefinitionId: uuid("form_definition_id")
       .notNull()
       .references(() => formDefinitions.id, { onDelete: "restrict" }),
+    /** The platform version active when this value was written (spec FR-032) — lets a
+     * historical record remain interpretable after its form has since been republished. `NULL`
+     * for values written before this column existed (interpreted as "version 1" by convention). */
+    formVersionId: uuid("form_version_id").references(() => formVersions.id, { onDelete: "restrict" }),
     entityId: uuid("entity_id").notNull(),
     fieldId: uuid("field_id")
       .notNull()
