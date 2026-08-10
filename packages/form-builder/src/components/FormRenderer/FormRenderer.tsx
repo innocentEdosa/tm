@@ -191,13 +191,17 @@ export const FormRenderer = forwardRef<FormRendererHandle, FormRendererProps>(fu
     setStepIndex((i) => Math.max(i - 1, 0));
   }
 
-  async function handleSubmit(event: FormEvent) {
-    event.preventDefault();
+  async function submitForm() {
     if (readOnly) return;
     const errs = validateFields(allFields(currentForm));
     setClientErrors(errs);
     if (Object.keys(errs).length > 0) return;
     await onSubmit(values);
+  }
+
+  async function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    await submitForm();
   }
 
   const sectionsToRender = isWizard ? currentStep.sections : currentForm.steps.flatMap((s) => s.sections);
@@ -257,6 +261,20 @@ export const FormRenderer = forwardRef<FormRendererHandle, FormRendererProps>(fu
           {isWizard && stepIndex < currentForm.steps.length - 1 ? (
             <Button type="button" onClick={handleNext} className={ctaAlign === "full" ? "flex-1" : undefined}>
               Next
+            </Button>
+          ) : isWizard ? (
+            // Deliberately `type="button"` + a direct `onClick`, not `type="submit"` like the
+            // single-step case below — this footer slot re-renders from the "Next" button
+            // (`type="button"`) into this one as `stepIndex` reaches the last step, and React
+            // reuses the same underlying DOM node for it. A real (trusted) click's native
+            // "activate this button" behavior is evaluated against the button's *live* `type`
+            // attribute after this click's own bubble-phase listeners — including the one that
+            // just flipped Next→Submit — have already run. With `type="submit"` here, that meant
+            // the very click that advanced past the last step also fired as a form submission,
+            // skipping validation/entry of every step past it entirely (only reproduces with a
+            // real click, not a synthetic `.click()`, which is why it slipped past testing).
+            <Button type="button" onClick={submitForm} isLoading={isSubmitting} className={ctaAlign === "full" ? "flex-1" : undefined}>
+              {effectiveSubmitLabel}
             </Button>
           ) : (
             <Button type="submit" isLoading={isSubmitting} className={ctaAlign === "full" ? "flex-1" : undefined}>
