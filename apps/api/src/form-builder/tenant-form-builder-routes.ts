@@ -6,44 +6,16 @@ import { formDefinitions, formFields, formFieldOrderOverrides } from "../db/sche
 import { formSections, formSteps, tenantFormCtaOverrides } from "../db/schema/form-builder";
 import { users } from "../db/schema/users";
 import { slugify } from "../custom-fields/field-validation";
-import { fieldKeyCollisionExists } from "../custom-fields/field-key-uniqueness";
 import { getEffectiveForm } from "./get-effective-form";
 import { assertFieldCanBeHidden, FieldCannotBeHiddenError } from "./visibility-rules";
-import type { Db } from "../db/client";
+import { FormService, type FieldType } from "./form-service";
 
-/** Resolves a tenant field's placement to a real `form_sections.id` — the section matching
- * `sectionKey` if given and valid, searched across both the form type's currently active
- * version's own sections AND this tenant's own sections (Form Builder spec follow-up: "the
- * tenant can have sections and steps too"), otherwise the active version's first section with no
- * parent step (or simply its first section). Returns `null` only when there's nowhere to place
- * a field at all (form type never published, and this tenant has no sections of their own yet). */
-async function resolveSectionId(tenantDb: Db, tenantId: string, formDefinitionId: string, activeVersionId: string | null, sectionKey: string | undefined): Promise<string | null> {
-  const platformSections = activeVersionId ? await tenantDb.select().from(formSections).where(eq(formSections.formVersionId, activeVersionId)) : [];
-  const tenantSections = await tenantDb.select().from(formSections).where(and(eq(formSections.tenantId, tenantId), eq(formSections.formDefinitionId, formDefinitionId)));
-  const allSections = [...platformSections, ...tenantSections];
-  if (allSections.length === 0) return null;
-  const matched = sectionKey ? allSections.find((s) => s.key === sectionKey) : undefined;
-  const fallback = platformSections.find((s) => s.formStepId === null) ?? platformSections[0] ?? allSections[0];
-  return (matched ?? fallback).id;
+/** Maps a `FormService` failure to the exact same status code/message every route here already
+ * used before the Phase 1 (AI Foundation) extraction — behavior-preserving, not a new contract. */
+function sendFormServiceError(reply: import("fastify").FastifyReply, error: { code: "not_found" | "conflict" | "invalid"; message: string }) {
+  const statusCode = error.code === "not_found" ? 404 : error.code === "conflict" ? 409 : 400;
+  return reply.code(statusCode).send({ success: false, message: error.message });
 }
-
-const FIELD_TYPES = [
-  "text",
-  "textarea",
-  "number",
-  "email",
-  "url",
-  "date",
-  "datetime",
-  "select",
-  "multiselect",
-  "radio",
-  "checkbox",
-  "toggle",
-  "file",
-  "user_select",
-] as const;
-type FieldType = (typeof FIELD_TYPES)[number];
 
 interface CreateTenantFieldBody {
   label?: string;
@@ -181,61 +153,15 @@ const tenantFormBuilderRoutes: FastifyPluginAsync = async (fastify) => {
     { preHandler: [requireTenantUserSession(), requireAnyPermission("forms.manage.tenant")] },
     async (request, reply) => {
       const { formKey } = request.params;
-      const { label, fieldType, options, isRequired } = request.body ?? {};
-      if (!label?.trim() || !fieldType) {
-        return reply.code(400).send({ success: false, message: "label and fieldType are required" });
+      const result = await FormService.createField(
+        { tenantId: request.user!.tenantId, userId: request.user!.id, db: request.tenantDb },
+        formKey,
+        request.body ?? { label: "", fieldType: "text" },
+      );
+      if (!result.ok) {
+        return sendFormServiceError(reply, result.error);
       }
-      if (!FIELD_TYPES.includes(fieldType)) {
-        return reply.code(400).send({ success: false, message: "Unrecognized fieldType" });
-      }
-      if ((fieldType === "select" || fieldType === "multiselect" || fieldType === "radio") && (!options || options.length === 0)) {
-        return reply.code(400).send({ success: false, message: "options is required for select/multiselect/radio fields" });
-      }
-
-      const [definition] = await request.tenantDb.select().from(formDefinitions).where(eq(formDefinitions.key, formKey));
-      if (!definition) {
-        return reply.code(404).send({ success: false, message: "Unknown form type" });
-      }
-
-      const fieldKey = request.body.fieldKey?.trim() || slugify(label);
-      if (await fieldKeyCollisionExists(request.tenantDb, definition.id, fieldKey)) {
-        return reply.code(409).send({ success: false, message: "A field with this key already exists on this form" });
-      }
-
-      const tenantId = request.user!.tenantId;
-      const sectionKey = request.body.sectionKey;
-      const formSectionId = await resolveSectionId(request.tenantDb, tenantId, definition.id, definition.activeVersionId, sectionKey);
-
-      const effective = await getEffectiveForm(request.tenantDb, formKey, tenantId);
-      const targetSection = effective?.steps.flatMap((s) => s.sections).find((sec) => sec.key === sectionKey) ?? effective?.steps[0]?.sections[0];
-      const nextDisplayOrder = (targetSection?.fields ?? []).reduce((max, f) => Math.max(max, f.displayOrder), -1) + 1;
-
-      const [created] = await request.tenantDb
-        .insert(formFields)
-        .values({
-          formDefinitionId: definition.id,
-          tenantId,
-          formVersionId: null,
-          formSectionId,
-          fieldKey,
-          label: label.trim(),
-          description: request.body.description ?? null,
-          placeholder: request.body.placeholder ?? null,
-          fieldType,
-          options: options ?? null,
-          defaultValue: request.body.defaultValue ?? null,
-          validation: request.body.validation ?? null,
-          isRequired: !!isRequired,
-          displayOrder: nextDisplayOrder,
-          layout: request.body.layout ?? null,
-          createdBy: "tenant_admin",
-        })
-        .returning();
-
-      return reply.code(201).send({
-        success: true,
-        data: { id: created.id, fieldKey: created.fieldKey, label: created.label, fieldType: created.fieldType, scope: "tenant", isSystem: false },
-      });
+      return reply.code(201).send({ success: true, data: result.data });
     },
   );
 
@@ -244,50 +170,16 @@ const tenantFormBuilderRoutes: FastifyPluginAsync = async (fastify) => {
     { preHandler: [requireTenantUserSession(), requireAnyPermission("forms.manage.tenant")] },
     async (request, reply) => {
       const { fieldId } = request.params;
-      const tenantId = request.user!.tenantId;
-
-      const [existing] = await request.tenantDb.select().from(formFields).where(and(eq(formFields.id, fieldId), eq(formFields.tenantId, tenantId)));
-      if (!existing) {
-        return reply.code(404).send({ success: false, message: "Not found" });
+      const result = await FormService.updateField(
+        { tenantId: request.user!.tenantId, userId: request.user!.id, db: request.tenantDb },
+        request.params.formKey,
+        fieldId,
+        request.body ?? {},
+      );
+      if (!result.ok) {
+        return sendFormServiceError(reply, result.error);
       }
-
-      const body = request.body ?? {};
-      if (body.fieldType && !FIELD_TYPES.includes(body.fieldType)) {
-        return reply.code(400).send({ success: false, message: "Unrecognized fieldType" });
-      }
-
-      let formSectionId: string | undefined;
-      if (body.sectionKey !== undefined) {
-        const [definition] = await request.tenantDb.select().from(formDefinitions).where(eq(formDefinitions.id, existing.formDefinitionId));
-        const resolved = definition
-          ? await resolveSectionId(request.tenantDb, tenantId, definition.id, definition.activeVersionId, body.sectionKey)
-          : null;
-        if (!resolved) {
-          return reply.code(400).send({ success: false, message: "Unknown section" });
-        }
-        formSectionId = resolved;
-      }
-
-      const [updated] = await request.tenantDb
-        .update(formFields)
-        .set({
-          ...(body.label !== undefined ? { label: body.label.trim() } : {}),
-          ...(body.fieldType !== undefined ? { fieldType: body.fieldType } : {}),
-          ...(body.description !== undefined ? { description: body.description } : {}),
-          ...(body.placeholder !== undefined ? { placeholder: body.placeholder } : {}),
-          ...(body.options !== undefined ? { options: body.options } : {}),
-          ...(body.defaultValue !== undefined ? { defaultValue: body.defaultValue } : {}),
-          ...(body.validation !== undefined ? { validation: body.validation } : {}),
-          ...(body.isRequired !== undefined ? { isRequired: body.isRequired } : {}),
-          ...(body.layout !== undefined ? { layout: body.layout } : {}),
-          ...(formSectionId !== undefined ? { formSectionId } : {}),
-          ...(body.archived ? { archivedAt: new Date() } : {}),
-          updatedAt: new Date(),
-        })
-        .where(eq(formFields.id, fieldId))
-        .returning();
-
-      return { success: true, data: { id: updated.id, fieldKey: updated.fieldKey, label: updated.label, scope: "tenant", isSystem: false } };
+      return { success: true, data: result.data };
     },
   );
 
@@ -593,27 +485,12 @@ const tenantFormBuilderRoutes: FastifyPluginAsync = async (fastify) => {
     { preHandler: [requireTenantUserSession(), requireAnyPermission("forms.manage.tenant")] },
     async (request, reply) => {
       const { formKey } = request.params;
-      const { fieldIds } = request.body ?? {};
-      if (!fieldIds || fieldIds.length === 0) {
-        return reply.code(400).send({ success: false, message: "fieldIds is required" });
+      const ctx = { tenantId: request.user!.tenantId, userId: request.user!.id, db: request.tenantDb };
+      const result = await FormService.reorderFields(ctx, formKey, request.body?.fieldIds ?? []);
+      if (!result.ok) {
+        return sendFormServiceError(reply, result.error);
       }
-
-      const tenantId = request.user!.tenantId;
-      for (const [index, fieldId] of fieldIds.entries()) {
-        const [existingOverride] = await request.tenantDb
-          .select({ id: formFieldOrderOverrides.id })
-          .from(formFieldOrderOverrides)
-          .where(and(eq(formFieldOrderOverrides.tenantId, tenantId), eq(formFieldOrderOverrides.fieldId, fieldId)));
-        if (existingOverride) {
-          await request.tenantDb.update(formFieldOrderOverrides).set({ displayOrder: index, updatedAt: new Date() }).where(eq(formFieldOrderOverrides.id, existingOverride.id));
-        } else {
-          const [definition] = await request.tenantDb.select({ id: formDefinitions.id }).from(formDefinitions).where(eq(formDefinitions.key, formKey));
-          if (!definition) continue;
-          await request.tenantDb.insert(formFieldOrderOverrides).values({ tenantId, formDefinitionId: definition.id, fieldId, displayOrder: index });
-        }
-      }
-
-      const data = await getEffectiveForm(request.tenantDb, formKey, tenantId);
+      const data = await getEffectiveForm(request.tenantDb, formKey, ctx.tenantId);
       return { success: true, data };
     },
   );

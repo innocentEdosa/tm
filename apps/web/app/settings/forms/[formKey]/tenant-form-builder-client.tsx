@@ -20,6 +20,8 @@ import { ArrowLeft, Eye, EyeOff, Pencil } from "lucide-react";
 import { Card, Drawer, Modal, Button, Input, Toggle } from "@tm/ui";
 import { FormPreview, useEffectiveForm, type FormCta } from "@tm/form-builder";
 import { FormBuilderCanvas, CtaEditor, FIELD_TYPE_LABELS, type FieldType, type CanvasAction, type CanvasBadge, type CanvasField, type CanvasSection, type CanvasStep } from "../../../_shared/form-builder";
+import { AiPageContextProvider } from "../../../_shared/ai-assistant/ai-page-context";
+import { AiAssistantLauncher } from "../../../_shared/ai-assistant/ai-assistant-launcher";
 
 const API_BASE = "/tenant-api/tenant";
 
@@ -683,6 +685,7 @@ export default function TenantFormBuilderClient({ formKey, subdomain }: { formKe
   }
 
   return (
+    <AiPageContextProvider value={{ formKey }}>
     <div className="flex h-screen flex-col bg-slate-50">
       <header className="flex shrink-0 items-center justify-between border-b border-border bg-white px-6 py-3">
         <div className="flex items-center gap-4">
@@ -968,6 +971,9 @@ export default function TenantFormBuilderClient({ formKey, subdomain }: { formKe
           </Button>
         </div>
       </Modal>
+
+      <AiAssistantLauncher subdomain={subdomain} />
     </div>
+    </AiPageContextProvider>
   );
 }

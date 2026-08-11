@@ -2,6 +2,7 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { AppShell, type NavSection, type NavLinkItem, type NavEntry } from "@tm/ui";
 import { getTenantSession } from "@/lib/tenant-session";
+import { AiAssistantLauncher } from "@/app/_shared/ai-assistant/ai-assistant-launcher";
 
 const API_BASE = "/tenant-api/tenant-auth";
 
@@ -239,7 +240,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
     });
   }
 
-  if (canManageAuth || canManageForms) {
+  {
     const settingsChildren: NavLinkItem[] = [];
     if (canManageAuth) {
       settingsChildren.push({
@@ -257,6 +258,17 @@ export default async function DashboardLayout({ children }: { children: React.Re
         href: "/settings/forms",
       });
     }
+    // AI Activity (AI Foundation Phase 2) — unconditional, like "My Learning": this is a personal
+    // history of the current user's own AI conversations/tool actions, not a permission-gated
+    // administrative screen (docs/ai-foundation-architecture.md's "own activity, not tenant-wide"
+    // scope decision), so every tenant user who has talked to the assistant can find it here
+    // regardless of what else they're allowed to manage.
+    settingsChildren.push({
+      key: "ai-activity",
+      icon: "sparkles",
+      label: "AI Activity",
+      href: "/settings/ai-activity",
+    });
 
     footerEntries.push({
       key: "settings",
@@ -277,6 +289,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       afterLogoutHref="/tenant"
     >
       {children}
+      <AiAssistantLauncher subdomain={subdomain} />
     </AppShell>
   );
 }

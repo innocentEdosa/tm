@@ -28,6 +28,7 @@ import {
   History,
   BarChart3,
   HelpCircle,
+  Sparkles,
 } from "lucide-react";
 
 type IconComponent = React.ComponentType<{ className?: string }>;
@@ -59,6 +60,7 @@ const ICONS = {
   history: History,
   barChart3: BarChart3,
   helpCircle: HelpCircle,
+  sparkles: Sparkles,
 } satisfies Record<string, IconComponent>;
 
 export interface NavLinkItem {

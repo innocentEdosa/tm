@@ -36,6 +36,7 @@ import tenantMarketplaceRoutes from "./course-marketplace/tenant-marketplace-rou
 import adminMarketplaceSelectionRoutes from "./course-marketplace/admin-marketplace-selection-routes";
 import platformFormRoutes from "./form-builder/platform-form-routes";
 import tenantFormBuilderRoutes from "./form-builder/tenant-form-builder-routes";
+import aiRoutes from "./ai/routes";
 
 export interface BuildServerOptions {
   /**
@@ -126,6 +127,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Fas
   await server.register(adminMarketplaceSelectionRoutes);
   await server.register(platformFormRoutes);
   await server.register(tenantFormBuilderRoutes);
+  await server.register(aiRoutes);
 
   server.get("/health", async () => ({
     status: "ok",
