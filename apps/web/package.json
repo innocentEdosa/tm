@@ -8,7 +8,8 @@
     "lint": "next lint",
     "type-check": "tsc --noEmit",
     "start": "next start",
-    "clean": "rm -rf .next .turbo"
+    "clean": "rm -rf .next .turbo",
+    "test": "vitest run"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -35,6 +36,7 @@
     "eslint": "^9.0.0",
     "eslint-config-next": "^15.0.0",
     "tailwindcss": "^4.0.0",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "vitest": "^4.1.9"
   }
 }

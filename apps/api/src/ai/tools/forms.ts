@@ -20,6 +20,9 @@ const listFormFieldsInput = z.object({
 
 registerTool({
   name: "list_form_fields",
+  domain: "forms",
+  resource: "field",
+  operation: "list",
   description: "List every field currently configured on a form type (system, platform-default, and this tenant's own), including hidden ones. Read-only.",
   inputSchema: listFormFieldsInput,
   requiredPermissions: [],
@@ -50,6 +53,9 @@ const suggestionSchema = z.object({ fields: z.array(suggestedFieldSchema) });
 
 registerTool({
   name: "suggest_form_fields",
+  domain: "forms",
+  resource: "field",
+  operation: "suggest",
   description: "Given a natural-language description, propose a set of new field definitions for a form type. Does NOT modify the database — a pure proposal for a human (or create_form_field) to act on.",
   inputSchema: suggestFormFieldsInput,
   outputSchema: suggestionSchema,
@@ -106,6 +112,9 @@ const createFormFieldInput = z.object({
 
 registerTool({
   name: "create_form_field",
+  domain: "forms",
+  resource: "field",
+  operation: "create",
   description: "Create a new field on a form type. Mutating — requires human confirmation before it takes effect.",
   inputSchema: createFormFieldInput,
   requiredPermissions: ["forms.manage.tenant"],
@@ -121,9 +130,9 @@ registerTool({
 });
 
 const updateFormFieldInput = z.object({
-  formKey: z.string(),
-  fieldId: z.string().uuid(),
-  label: z.string().optional(),
+  formKey: z.string().describe("The form type this field belongs to, e.g. \"member\" or \"department\" — never a course, module, or lesson identifier."),
+  fieldId: z.string().uuid().describe("A form_fields id — specifically one previously returned by list_form_fields/create_form_field. Never any other resource's id (a course, module, or lesson id will not exist as a form field and this call will simply fail to find it)."),
+  label: z.string().optional().describe("The field's new display label, shown on the form itself."),
   fieldType: fieldTypeSchema.optional(),
   description: z.string().optional(),
   placeholder: z.string().optional(),
@@ -135,7 +144,11 @@ const updateFormFieldInput = z.object({
 
 registerTool({
   name: "update_form_field",
-  description: "Update (or archive, via archived: true) an existing tenant-owned field on a form type. Mutating — requires human confirmation.",
+  domain: "forms",
+  resource: "field",
+  operation: "update",
+  description:
+    "Update (or archive, via archived: true) an existing tenant-owned field on a Forms → Fields form type — e.g. changing a form field's label, type, or required-ness. Applies ONLY to form fields (things a tenant admin configured under Settings → Forms). Never use this for a course, module, lesson, department, user, or any other resource, even if the user's request mentions changing a \"title\" or \"name\" — those are different resources with their own tools (or, if no matching tool exists for that resource yet, no tool at all; say so instead of using this one). Mutating — requires human confirmation.",
   inputSchema: updateFormFieldInput,
   requiredPermissions: ["forms.manage.tenant"],
   mutating: true,
@@ -156,6 +169,9 @@ const reorderFormFieldsInput = z.object({
 
 registerTool({
   name: "reorder_form_fields",
+  domain: "forms",
+  resource: "field",
+  operation: "reorder",
   description: "Reorder a form type's fields into the given sequence. Mutating — requires human confirmation, since it changes what every user filling out this form sees first.",
   inputSchema: reorderFormFieldsInput,
   requiredPermissions: ["forms.manage.tenant"],

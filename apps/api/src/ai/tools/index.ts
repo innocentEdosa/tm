@@ -4,3 +4,5 @@
  * needs it. Add a new domain's tool module's import here, not a new registration call site.
  */
 import "./forms";
+import "./courses";
+import "./images";

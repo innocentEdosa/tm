@@ -26,7 +26,8 @@ export const courseModules = pgTable(
     position: integer("position").notNull(),
     /** Independent of the parent course's own draft/active/archived status — a module can be
      * draft/published while its course is still active, matching the course-editor UI's per-module
-     * publish toggle. */
+     * publish toggle. `archived` (Course Organization AI Phase 1) mirrors the course-level status's
+     * own draft/active/archived pattern — non-destructive, freely reversible, never a delete. */
     status: text("status").notNull().default("draft"),
     // Course Marketplace Updates (spec 032) — set at clone time and re-set on every "apply update"
     // for a module that originated from a platform course; NULL for a tenant-authored module. Lets
@@ -48,7 +49,7 @@ export const courseModules = pgTable(
   (table) => [
     index("course_modules_tenant_id_course_id_idx").on(table.tenantId, table.courseId),
     index("course_modules_source_platform_course_module_id_idx").on(table.sourcePlatformCourseModuleId),
-    check("course_modules_status_check", sql`${table.status} in ('draft', 'published')`),
+    check("course_modules_status_check", sql`${table.status} in ('draft', 'published', 'archived')`),
   ],
 );
 
@@ -78,7 +79,9 @@ export const contentItems = pgTable(
     position: integer("position").notNull(),
     payload: jsonb("payload").notNull().default({}),
     /** Independent of the parent course's own status — a lesson can be draft/published while its
-     * course is active, matching the course-editor UI's per-lesson publish toggle. */
+     * course is active, matching the course-editor UI's per-lesson publish toggle. `archived`
+     * (Course Organization AI Phase 1) mirrors the course-level status's own draft/active/archived
+     * pattern — non-destructive, freely reversible, never a delete. */
     status: text("status").notNull().default("draft"),
     // Course Marketplace Updates (spec 032) — same purpose as course_modules'
     // sourcePlatformCourseModuleId above, one level down. This is the column that makes "keep
@@ -107,6 +110,6 @@ export const contentItems = pgTable(
       "content_items_type_check",
       sql`${table.type} in ('video', 'article', 'live_class', 'test', 'assignment', 'external_import')`,
     ),
-    check("content_items_status_check", sql`${table.status} in ('draft', 'published')`),
+    check("content_items_status_check", sql`${table.status} in ('draft', 'published', 'archived')`),
   ],
 );

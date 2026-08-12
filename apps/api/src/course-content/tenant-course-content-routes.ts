@@ -5,15 +5,12 @@ import { requirePermission } from "../permissions/require-permission";
 import { courses } from "../db/schema/courses";
 import { courseModules, contentItems } from "../db/schema/course-content";
 import { users } from "../db/schema/users";
-import { isCourseVisibleToCaller, wantsLearnerView } from "../courses/tenant-course-routes";
+import { isCourseVisibleToCaller, wantsLearnerView, sendCourseServiceError } from "../courses/tenant-course-routes";
 import { deleteAllAttachmentsForEntity } from "../attachments/tenant-attachment-routes";
-import { CONTENT_ITEM_TYPES, validateContentItemPayload, type ContentItemType } from "./content-item-payload-validation";
+import { CourseService, type PublishStatus as Status } from "../courses/course-service";
 
 type ModuleRow = typeof courseModules.$inferSelect;
 type ContentItemRow = typeof contentItems.$inferSelect;
-
-const STATUSES = ["draft", "published"] as const;
-type Status = (typeof STATUSES)[number];
 
 interface ModuleWriteBody {
   title?: string;
@@ -150,68 +147,38 @@ const tenantCourseContentRoutes: FastifyPluginAsync = async (fastify) => {
     { preHandler: [requireTenantUserSession(), requirePermission("course.manage")] },
     async (request, reply) => {
       const { courseId } = request.params;
-      const body = request.body ?? {};
-      if (!body.title?.trim()) {
-        return reply.code(400).send({ success: false, message: "title is required" });
+      const result = await CourseService.createModule(
+        { tenantId: request.user!.tenantId, userId: request.user!.id, db: request.tenantDb },
+        courseId,
+        request.body ?? {},
+      );
+      if (!result.ok) {
+        return sendCourseServiceError(reply, result.error);
       }
-      const course = await resolveCourse(request.tenantDb, courseId);
-      if (!course) {
-        return reply.code(404).send({ success: false, message: "Not found" });
-      }
-
-      const existing = await request.tenantDb.select({ id: courseModules.id }).from(courseModules).where(eq(courseModules.courseId, courseId));
-
-      const [created] = await request.tenantDb
-        .insert(courseModules)
-        .values({
-          tenantId: request.user!.tenantId,
-          courseId,
-          title: body.title.trim(),
-          description: body.description ?? null,
-          position: existing.length,
-          createdByUserId: request.user!.id,
-        })
-        .returning();
-      await appendToOutlineOrder(request.tenantDb, courseId, created.id);
 
       const userById = await buildUserById(request.tenantDb, [request.user!.id]);
-      return reply.code(201).send({ success: true, data: toModuleRow(created, userById, []) });
+      return reply.code(201).send({ success: true, data: toModuleRow(result.data, userById, []) });
     },
   );
 
-  // PATCH /tenant/modules/:moduleId — spec FR-006/FR-012, contracts §PATCH module.
+  // PATCH /tenant/modules/:moduleId — spec FR-006/FR-012, contracts §PATCH module. Delegates to
+  // CourseService (AI Course Editing Phase 1) — same validation/update logic, now shared with
+  // ai/tools/courses.ts's update_course_module tool.
   fastify.patch<{ Params: { moduleId: string }; Body: ModuleWriteBody }>(
     "/tenant/modules/:moduleId",
     { preHandler: [requireTenantUserSession(), requirePermission("course.manage")] },
     async (request, reply) => {
-      const { moduleId } = request.params;
-      const [existing] = await request.tenantDb.select().from(courseModules).where(eq(courseModules.id, moduleId));
-      if (!existing) {
-        return reply.code(404).send({ success: false, message: "Not found" });
+      const result = await CourseService.updateModule(
+        { tenantId: request.user!.tenantId, userId: request.user!.id, db: request.tenantDb },
+        request.params.moduleId,
+        request.body ?? {},
+      );
+      if (!result.ok) {
+        return sendCourseServiceError(reply, result.error);
       }
 
-      const body = request.body ?? {};
-      if (body.title !== undefined && !body.title.trim()) {
-        return reply.code(400).send({ success: false, message: "title cannot be blank" });
-      }
-      if (body.status !== undefined && !STATUSES.includes(body.status)) {
-        return reply.code(422).send({ success: false, message: "Invalid status" });
-      }
-
-      const [updated] = await request.tenantDb
-        .update(courseModules)
-        .set({
-          ...(body.title !== undefined ? { title: body.title.trim() } : {}),
-          ...(body.description !== undefined ? { description: body.description } : {}),
-          ...(body.status !== undefined ? { status: body.status } : {}),
-          updatedByUserId: request.user!.id,
-          updatedAt: new Date(),
-        })
-        .where(eq(courseModules.id, moduleId))
-        .returning();
-
-      const userById = await buildUserById(request.tenantDb, [updated.createdByUserId, updated.updatedByUserId].filter((id): id is string => !!id));
-      return reply.code(200).send({ success: true, data: toModuleRow(updated, userById) });
+      const userById = await buildUserById(request.tenantDb, [result.data.createdByUserId, result.data.updatedByUserId].filter((id): id is string => !!id));
+      return reply.code(200).send({ success: true, data: toModuleRow(result.data, userById) });
     },
   );
 
@@ -238,32 +205,23 @@ const tenantCourseContentRoutes: FastifyPluginAsync = async (fastify) => {
   );
 
   // POST /tenant/courses/:courseId/modules/reorder — spec FR-007, contracts §POST modules/reorder.
+  // Delegates to CourseService (Course Organization AI Phase 1) — same validation/rewrite logic, now
+  // shared with ai/tools/courses.ts's reorder_course_modules tool.
   fastify.post<{ Params: { courseId: string }; Body: { moduleIds?: string[] } }>(
     "/tenant/courses/:courseId/modules/reorder",
     { preHandler: [requireTenantUserSession(), requirePermission("course.manage")] },
     async (request, reply) => {
-      const { courseId } = request.params;
-      const course = await resolveCourse(request.tenantDb, courseId);
-      if (!course) {
-        return reply.code(404).send({ success: false, message: "Not found" });
+      const result = await CourseService.reorderModules(
+        { tenantId: request.user!.tenantId, userId: request.user!.id, db: request.tenantDb },
+        request.params.courseId,
+        request.body?.moduleIds ?? [],
+      );
+      if (!result.ok) {
+        return sendCourseServiceError(reply, result.error);
       }
 
-      const submitted = request.body?.moduleIds ?? [];
-      const current = await request.tenantDb.select({ id: courseModules.id }).from(courseModules).where(eq(courseModules.courseId, courseId));
-      const currentIds = new Set(current.map((m) => m.id));
-      const submittedIds = new Set(submitted);
-      const exactMatch = submitted.length === current.length && submitted.every((id) => currentIds.has(id)) && current.every((m) => submittedIds.has(m.id));
-      if (!exactMatch) {
-        return reply.code(422).send({ success: false, message: "moduleIds must exactly match the course's current module set" });
-      }
-
-      for (let i = 0; i < submitted.length; i++) {
-        await request.tenantDb.update(courseModules).set({ position: i }).where(eq(courseModules.id, submitted[i]));
-      }
-
-      const reordered = await request.tenantDb.select().from(courseModules).where(eq(courseModules.courseId, courseId)).orderBy(courseModules.position);
-      const userById = await buildUserById(request.tenantDb, reordered.flatMap((m) => [m.createdByUserId, m.updatedByUserId]).filter((id): id is string => !!id));
-      return reply.code(200).send({ success: true, data: reordered.map((m) => toModuleRow(m, userById)) });
+      const userById = await buildUserById(request.tenantDb, result.data.flatMap((m) => [m.createdByUserId, m.updatedByUserId]).filter((id): id is string => !!id));
+      return reply.code(200).send({ success: true, data: result.data.map((m) => toModuleRow(m, userById)) });
     },
   );
 
@@ -306,46 +264,17 @@ const tenantCourseContentRoutes: FastifyPluginAsync = async (fastify) => {
     { preHandler: [requireTenantUserSession(), requirePermission("course.manage")] },
     async (request, reply) => {
       const { courseId } = request.params;
-      const body = request.body ?? {};
-      if (!body.type || !body.title?.trim()) {
-        return reply.code(400).send({ success: false, message: "type and title are required" });
+      const result = await CourseService.createLesson(
+        { tenantId: request.user!.tenantId, userId: request.user!.id, db: request.tenantDb },
+        { courseId },
+        request.body ?? {},
+      );
+      if (!result.ok) {
+        return sendCourseServiceError(reply, result.error);
       }
-      if (!CONTENT_ITEM_TYPES.includes(body.type as ContentItemType)) {
-        return reply.code(422).send({ success: false, message: "Invalid type" });
-      }
-      const validation = validateContentItemPayload(body.type as ContentItemType, body.payload);
-      if (validation.error) {
-        return reply.code(422).send({ success: false, message: validation.error });
-      }
-
-      const course = await resolveCourse(request.tenantDb, courseId);
-      if (!course) {
-        return reply.code(404).send({ success: false, message: "Not found" });
-      }
-
-      const existingStandalone = await request.tenantDb
-        .select({ id: contentItems.id })
-        .from(contentItems)
-        .where(and(eq(contentItems.courseId, courseId), isNull(contentItems.moduleId)));
-
-      const [created] = await request.tenantDb
-        .insert(contentItems)
-        .values({
-          tenantId: request.user!.tenantId,
-          courseId,
-          moduleId: null,
-          type: body.type,
-          title: body.title.trim(),
-          description: body.description ?? null,
-          payload: body.payload ?? {},
-          position: existingStandalone.length,
-          createdByUserId: request.user!.id,
-        })
-        .returning();
-      await appendToOutlineOrder(request.tenantDb, courseId, created.id);
 
       const userById = await buildUserById(request.tenantDb, [request.user!.id]);
-      return reply.code(201).send({ success: true, data: toContentItemRow(created, userById) });
+      return reply.code(201).send({ success: true, data: toContentItemRow(result.data, userById) });
     },
   );
 
@@ -355,46 +284,26 @@ const tenantCourseContentRoutes: FastifyPluginAsync = async (fastify) => {
     { preHandler: [requireTenantUserSession(), requirePermission("course.manage")] },
     async (request, reply) => {
       const { moduleId } = request.params;
-      const body = request.body ?? {};
-      if (!body.type || !body.title?.trim()) {
-        return reply.code(400).send({ success: false, message: "type and title are required" });
+      const result = await CourseService.createLesson(
+        { tenantId: request.user!.tenantId, userId: request.user!.id, db: request.tenantDb },
+        { courseId: "", moduleId },
+        request.body ?? {},
+      );
+      if (!result.ok) {
+        return sendCourseServiceError(reply, result.error);
       }
-      if (!CONTENT_ITEM_TYPES.includes(body.type as ContentItemType)) {
-        return reply.code(422).send({ success: false, message: "Invalid type" });
-      }
-      const validation = validateContentItemPayload(body.type as ContentItemType, body.payload);
-      if (validation.error) {
-        return reply.code(422).send({ success: false, message: validation.error });
-      }
-
-      const [module] = await request.tenantDb.select().from(courseModules).where(eq(courseModules.id, moduleId));
-      if (!module) {
-        return reply.code(404).send({ success: false, message: "Not found" });
-      }
-
-      const existing = await request.tenantDb.select({ id: contentItems.id }).from(contentItems).where(eq(contentItems.moduleId, moduleId));
-
-      const [created] = await request.tenantDb
-        .insert(contentItems)
-        .values({
-          tenantId: request.user!.tenantId,
-          courseId: module.courseId,
-          moduleId,
-          type: body.type,
-          title: body.title.trim(),
-          description: body.description ?? null,
-          payload: body.payload ?? {},
-          position: existing.length,
-          createdByUserId: request.user!.id,
-        })
-        .returning();
 
       const userById = await buildUserById(request.tenantDb, [request.user!.id]);
-      return reply.code(201).send({ success: true, data: toContentItemRow(created, userById) });
+      return reply.code(201).send({ success: true, data: toContentItemRow(result.data, userById) });
     },
   );
 
   // PATCH /tenant/content-items/:contentItemId — spec FR-006/FR-008/FR-012, contracts §PATCH content-item.
+  // title/description/payload/status delegate to CourseService (AI Course Editing Phase 1) — same
+  // validation now shared with ai/tools/courses.ts's update_course_lesson tool. `moduleId` (moving a
+  // lesson between modules/standalone) stays inline: it's a "move," genuinely close to reorder, which
+  // is out of scope for what the AI tool needs this phase — documented on `UpdateLessonInput`, not
+  // silently dropped from the route.
   fastify.patch<{ Params: { contentItemId: string }; Body: ContentItemUpdateBody }>(
     "/tenant/content-items/:contentItemId",
     { preHandler: [requireTenantUserSession(), requirePermission("course.manage")] },
@@ -409,26 +318,24 @@ const tenantCourseContentRoutes: FastifyPluginAsync = async (fastify) => {
       if (body.type !== undefined) {
         return reply.code(422).send({ success: false, message: "type cannot be changed once created" });
       }
-      if (body.title !== undefined && !body.title.trim()) {
-        return reply.code(400).send({ success: false, message: "title cannot be blank" });
+
+      const updateResult = await CourseService.updateLesson(
+        { tenantId: request.user!.tenantId, userId: request.user!.id, db: request.tenantDb },
+        contentItemId,
+        { title: body.title, description: body.description, payload: body.payload, status: body.status },
+      );
+      if (!updateResult.ok) {
+        return sendCourseServiceError(reply, updateResult.error);
       }
-      if (body.payload !== undefined) {
-        const validation = validateContentItemPayload(existing.type as ContentItemType, body.payload);
-        if (validation.error) {
-          return reply.code(422).send({ success: false, message: validation.error });
-        }
-      }
-      if (body.status !== undefined && !STATUSES.includes(body.status)) {
-        return reply.code(422).send({ success: false, message: "Invalid status" });
-      }
+      let updated = updateResult.data;
 
       // `moduleId` can move a content item between modules (existing behavior) or, since a content
       // item can now be standalone, into/out of the course's top-level outline: `null` moves it to
       // standalone (appending to `courses.outlineOrder`); moving out of standalone into a real module
       // removes it from `outlineOrder` instead (a module-scoped item is never listed there).
-      let newPosition: number | undefined;
-      let outlineOrderChange: "add" | "remove" | null = null;
       if (body.moduleId !== undefined && body.moduleId !== existing.moduleId) {
+        let newPosition: number;
+        let outlineOrderChange: "add" | "remove" | null = null;
         if (body.moduleId === null) {
           const standaloneSiblings = await request.tenantDb
             .select({ id: contentItems.id })
@@ -450,26 +357,19 @@ const tenantCourseContentRoutes: FastifyPluginAsync = async (fastify) => {
             outlineOrderChange = "remove";
           }
         }
-      }
 
-      const [updated] = await request.tenantDb
-        .update(contentItems)
-        .set({
-          ...(body.title !== undefined ? { title: body.title.trim() } : {}),
-          ...(body.description !== undefined ? { description: body.description } : {}),
-          ...(body.payload !== undefined ? { payload: body.payload } : {}),
-          ...(body.moduleId !== undefined && body.moduleId !== existing.moduleId ? { moduleId: body.moduleId, position: newPosition } : {}),
-          ...(body.status !== undefined ? { status: body.status } : {}),
-          updatedByUserId: request.user!.id,
-          updatedAt: new Date(),
-        })
-        .where(eq(contentItems.id, contentItemId))
-        .returning();
+        const [moved] = await request.tenantDb
+          .update(contentItems)
+          .set({ moduleId: body.moduleId, position: newPosition })
+          .where(eq(contentItems.id, contentItemId))
+          .returning();
+        updated = moved;
 
-      if (outlineOrderChange === "add") {
-        await appendToOutlineOrder(request.tenantDb, existing.courseId, contentItemId);
-      } else if (outlineOrderChange === "remove") {
-        await removeFromOutlineOrder(request.tenantDb, existing.courseId, contentItemId);
+        if (outlineOrderChange === "add") {
+          await appendToOutlineOrder(request.tenantDb, existing.courseId, contentItemId);
+        } else if (outlineOrderChange === "remove") {
+          await removeFromOutlineOrder(request.tenantDb, existing.courseId, contentItemId);
+        }
       }
 
       const userById = await buildUserById(request.tenantDb, [updated.createdByUserId, updated.updatedByUserId].filter((id): id is string => !!id));
@@ -498,33 +398,24 @@ const tenantCourseContentRoutes: FastifyPluginAsync = async (fastify) => {
     },
   );
 
-  // POST /tenant/modules/:moduleId/content-items/reorder — spec FR-007, contracts §POST content-items/reorder.
+  // POST /tenant/modules/:moduleId/content-items/reorder — spec FR-007, contracts §POST
+  // content-items/reorder. Delegates to CourseService (Course Organization AI Phase 1) — same
+  // validation/rewrite logic, now shared with ai/tools/courses.ts's reorder_course_lessons tool.
   fastify.post<{ Params: { moduleId: string }; Body: { contentItemIds?: string[] } }>(
     "/tenant/modules/:moduleId/content-items/reorder",
     { preHandler: [requireTenantUserSession(), requirePermission("course.manage")] },
     async (request, reply) => {
-      const { moduleId } = request.params;
-      const [module] = await request.tenantDb.select({ id: courseModules.id }).from(courseModules).where(eq(courseModules.id, moduleId));
-      if (!module) {
-        return reply.code(404).send({ success: false, message: "Not found" });
+      const result = await CourseService.reorderLessons(
+        { tenantId: request.user!.tenantId, userId: request.user!.id, db: request.tenantDb },
+        request.params.moduleId,
+        request.body?.contentItemIds ?? [],
+      );
+      if (!result.ok) {
+        return sendCourseServiceError(reply, result.error);
       }
 
-      const submitted = request.body?.contentItemIds ?? [];
-      const current = await request.tenantDb.select({ id: contentItems.id }).from(contentItems).where(eq(contentItems.moduleId, moduleId));
-      const currentIds = new Set(current.map((c) => c.id));
-      const submittedIds = new Set(submitted);
-      const exactMatch = submitted.length === current.length && submitted.every((id) => currentIds.has(id)) && current.every((c) => submittedIds.has(c.id));
-      if (!exactMatch) {
-        return reply.code(422).send({ success: false, message: "contentItemIds must exactly match the module's current content-item set" });
-      }
-
-      for (let i = 0; i < submitted.length; i++) {
-        await request.tenantDb.update(contentItems).set({ position: i }).where(eq(contentItems.id, submitted[i]));
-      }
-
-      const reordered = await request.tenantDb.select().from(contentItems).where(eq(contentItems.moduleId, moduleId)).orderBy(contentItems.position);
-      const userById = await buildUserById(request.tenantDb, reordered.flatMap((c) => [c.createdByUserId, c.updatedByUserId]).filter((id): id is string => !!id));
-      return reply.code(200).send({ success: true, data: reordered.map((c) => toContentItemRow(c, userById)) });
+      const userById = await buildUserById(request.tenantDb, result.data.flatMap((c) => [c.createdByUserId, c.updatedByUserId]).filter((id): id is string => !!id));
+      return reply.code(200).send({ success: true, data: result.data.map((c) => toContentItemRow(c, userById)) });
     },
   );
 };

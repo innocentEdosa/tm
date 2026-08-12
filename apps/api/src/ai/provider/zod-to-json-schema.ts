@@ -7,6 +7,16 @@ import { z } from "zod";
  * dependency for a conversion this small isn't worth it ("avoid unnecessary dependencies", AI
  * Foundation brief). Extend this function, not around it, if a tool ever needs a shape it doesn't
  * yet handle — `default: throws`, not silently wrong, so a gap is caught at tool-registration time.
+ *
+ * Do NOT add `z.discriminatedUnion` (or any `oneOf`/`anyOf`/`allOf` representation) as a TOOL'S OWN
+ * top-level `inputSchema` — tried this for `create_course_lesson` (Course AI hardening phase) and
+ * OpenAI's function-calling `parameters` validator rejects it outright: "schema must have type
+ * 'object' and not have 'oneOf'/'anyOf'/'allOf'/'enum'/'const'/'not' at the top level" (confirmed
+ * against the real API, not a guess). A union nested inside a top-level object's `properties` may
+ * still be fine — only the tool's own outermost schema hit this wall — but that's untested; the
+ * cross-field validation this codebase actually needs so far is handled by a flat object plus
+ * `.superRefine()` instead (see `ai/tools/courses.ts`'s `createCourseLessonInput`), which every
+ * provider accepts since the JSON Schema it produces is just an ordinary object schema.
  */
 export function zodToJsonSchema(schema: z.ZodTypeAny): Record<string, unknown> {
   const def = schema._def;

@@ -11,18 +11,19 @@ import { courseReviews } from "../db/schema/course-reviews";
 import { fileAttachments } from "../db/schema/file-attachments";
 import { users } from "../db/schema/users";
 import { marketplaceSelections, platformCourses } from "../db/schema/platform-courses";
-import { resolveOrCreateCourseCategory } from "./course-category-resolution";
 import { deleteAllAttachmentsForEntity } from "../attachments/tenant-attachment-routes";
 import * as storage from "../storage/storage";
+import { CourseService, type CourseServiceError, type DeliveryMode, type DurationUnit, type CourseStatus } from "./course-service";
 
-const DELIVERY_MODES = ["in_person", "virtual", "self_paced", "blended"] as const;
-const DURATION_UNITS = ["minutes", "hours", "days"] as const;
-const STATUSES = ["draft", "active", "archived"] as const;
+/** Maps a `CourseService` failure to the exact same status code/message every route here already
+ * used before the Phase 3 (AI Foundation) extraction — behavior-preserving, not a new contract.
+ * Exported so `course-content/tenant-course-content-routes.ts` shares this instead of a second copy. */
+export function sendCourseServiceError(reply: import("fastify").FastifyReply, error: CourseServiceError) {
+  const statusCode = error.code === "not_found" ? 404 : error.code === "missing_required" ? 400 : 422;
+  return reply.code(statusCode).send({ success: false, message: error.message });
+}
+
 const DEFAULT_PAGE_SIZE = 20;
-
-type DeliveryMode = (typeof DELIVERY_MODES)[number];
-type DurationUnit = (typeof DURATION_UNITS)[number];
-type Status = (typeof STATUSES)[number];
 
 type CourseRow = typeof courses.$inferSelect;
 
@@ -142,29 +143,7 @@ interface CourseWriteBody {
   provider?: string | null;
   cost?: number | null;
   subcategory?: string | null;
-  status?: Status;
-}
-
-/** Shared by POST/PATCH — validates any field present in the body against its fixed enum/shape
- * (spec FR-010). Required-field presence is checked separately by each route (POST requires more
- * fields up front than PATCH, where every field is optional). */
-function validateFields(body: CourseWriteBody): { code: number; message: string } | null {
-  if (body.deliveryMode !== undefined && !DELIVERY_MODES.includes(body.deliveryMode)) {
-    return { code: 422, message: "Invalid deliveryMode" };
-  }
-  if (body.duration?.unit !== undefined && !DURATION_UNITS.includes(body.duration.unit)) {
-    return { code: 422, message: "Invalid duration.unit" };
-  }
-  if (body.duration?.value !== undefined && !(body.duration.value > 0)) {
-    return { code: 422, message: "duration.value must be greater than 0" };
-  }
-  if (body.cost !== undefined && body.cost !== null && body.cost < 0) {
-    return { code: 422, message: "cost must be >= 0" };
-  }
-  if (body.status !== undefined && !STATUSES.includes(body.status)) {
-    return { code: 422, message: "Invalid status" };
-  }
-  return null;
+  status?: CourseStatus;
 }
 
 /** Batch-joins category name and creator/updater full names for a page of course rows — mirrors
@@ -218,24 +197,34 @@ export async function toResponseRows(tenantDb: Db, rows: CourseRow[], callerUser
     const imageAttachments =
       courseIds.length > 0
         ? await tenantDb
-            .select({ entityId: fileAttachments.entityId, storageKey: fileAttachments.storageKey, createdAt: fileAttachments.createdAt })
+            .select({ entityId: fileAttachments.entityId, kind: fileAttachments.kind, storageKey: fileAttachments.storageKey, url: fileAttachments.url, createdAt: fileAttachments.createdAt })
             .from(fileAttachments)
             .where(and(eq(fileAttachments.entityType, "course"), inArray(fileAttachments.entityId, courseIds), eq(fileAttachments.status, "ready")))
             .orderBy(desc(fileAttachments.createdAt))
         : [];
     // First occurrence per course id wins (rows are already ordered newest-first) — a course only
-    // ever has one "current" image (uploading a new one deletes the prior attachment).
-    const latestImageKeyByCourseId = new Map<string, string>();
+    // ever has one "current" image (uploading/selecting a new one deletes the prior attachment).
+    // AI Image Discovery & Course Asset Management Phase 1: a course image can now be `kind: "link"`
+    // (an AI-selected, hotlinked Unsplash URL — see `set_course_image`) as well as the original
+    // `kind: "file"` (an uploaded object in R2) — a `link` row's own `url` IS the image URL already,
+    // never presigned (there's no R2 object to sign a URL for).
+    const latestImageByCourseId = new Map<string, { kind: string; storageKey: string | null; url: string | null }>();
     for (const a of imageAttachments) {
-      if (!latestImageKeyByCourseId.has(a.entityId) && a.storageKey) {
-        latestImageKeyByCourseId.set(a.entityId, a.storageKey);
+      if (!latestImageByCourseId.has(a.entityId)) {
+        latestImageByCourseId.set(a.entityId, { kind: a.kind, storageKey: a.storageKey, url: a.url });
       }
     }
     const imageUrlByCourseId = new Map<string, string>();
-    if (latestImageKeyByCourseId.size > 0 && storage.isStorageConfigured()) {
+    for (const [courseId, image] of latestImageByCourseId) {
+      if (image.kind === "link" && image.url) {
+        imageUrlByCourseId.set(courseId, image.url);
+      }
+    }
+    const fileImageEntries = Array.from(latestImageByCourseId.entries()).filter(([, image]) => image.kind === "file" && image.storageKey);
+    if (fileImageEntries.length > 0 && storage.isStorageConfigured()) {
       await Promise.all(
-        Array.from(latestImageKeyByCourseId.entries()).map(async ([courseId, key]) => {
-          imageUrlByCourseId.set(courseId, await storage.createPresignedDownloadUrl(key));
+        fileImageEntries.map(async ([courseId, image]) => {
+          imageUrlByCourseId.set(courseId, await storage.createPresignedDownloadUrl(image.storageKey!));
         }),
       );
     }
@@ -395,101 +384,42 @@ const tenantCourseRoutes: FastifyPluginAsync = async (fastify) => {
     },
   );
 
-  // POST /tenant/courses — spec FR-001/FR-001a-c/FR-009/FR-010, contracts §POST.
+  // POST /tenant/courses — spec FR-001/FR-001a-c/FR-009/FR-010, contracts §POST. Delegates to
+  // CourseService (AI Foundation Phase 3) — same validation/creation logic, now shared with
+  // ai/tools/courses.ts's create_course_draft tool.
   fastify.post<{ Body: CourseWriteBody }>(
     "/tenant/courses",
     { preHandler: [requireTenantUserSession(), requirePermission("course.manage")] },
     async (request, reply) => {
-      const body = request.body ?? {};
-      if (!body.title?.trim() || !body.category?.trim() || !body.deliveryMode || body.duration?.value === undefined || !body.duration?.unit) {
-        return reply.code(400).send({
-          success: false,
-          message: "title, category, deliveryMode, and duration (value and unit) are required",
-        });
+      const result = await CourseService.createCourse(
+        { tenantId: request.user!.tenantId, userId: request.user!.id, db: request.tenantDb },
+        request.body ?? {},
+      );
+      if (!result.ok) {
+        return sendCourseServiceError(reply, result.error);
       }
-
-      const validation = validateFields(body);
-      if (validation) {
-        return reply.code(validation.code).send({ success: false, message: validation.message });
-      }
-
-      const tenantId = request.user!.tenantId;
-      const category = await resolveOrCreateCourseCategory(request.tenantDb, tenantId, body.category, request.user!.id);
-
-      const [created] = await request.tenantDb
-        .insert(courses)
-        .values({
-          tenantId,
-          title: body.title.trim(),
-          description: body.description ?? null,
-          categoryId: category.id,
-          deliveryMode: body.deliveryMode,
-          durationValue: body.duration.value,
-          durationUnit: body.duration.unit,
-          provider: body.provider ?? null,
-          cost: body.cost ?? null,
-          subcategory: body.subcategory ?? null,
-          status: "draft",
-          createdByUserId: request.user!.id,
-        })
-        .returning();
-
-      const [data] = await toResponseRows(request.tenantDb, [created]);
-      return reply.code(201).send({ success: true, data });
+      return reply.code(201).send({ success: true, data: result.data });
     },
   );
 
   // PATCH /tenant/courses/:courseId — spec FR-005/FR-009/FR-010, contracts §PATCH. `status` accepts
   // any of its three enum values directly, no restricted transition graph (spec Clarifications) —
-  // un-archiving is just a normal field update via this same handler.
+  // un-archiving is just a normal field update via this same handler. Delegates to CourseService
+  // (AI Course Editing Phase 1) — same validation/update logic, now shared with
+  // ai/tools/courses.ts's update_course tool.
   fastify.patch<{ Params: { courseId: string }; Body: CourseWriteBody }>(
     "/tenant/courses/:courseId",
     { preHandler: [requireTenantUserSession(), requirePermission("course.manage")] },
     async (request, reply) => {
-      const { courseId } = request.params;
-      const [existing] = await request.tenantDb.select().from(courses).where(eq(courses.id, courseId));
-      if (!existing) {
-        return reply.code(404).send({ success: false, message: "Not found" });
+      const result = await CourseService.updateCourse(
+        { tenantId: request.user!.tenantId, userId: request.user!.id, db: request.tenantDb },
+        request.params.courseId,
+        request.body ?? {},
+      );
+      if (!result.ok) {
+        return sendCourseServiceError(reply, result.error);
       }
-
-      const body = request.body ?? {};
-      const validation = validateFields(body);
-      if (validation) {
-        return reply.code(validation.code).send({ success: false, message: validation.message });
-      }
-
-      let categoryId: string | undefined;
-      if (body.category !== undefined) {
-        const category = await resolveOrCreateCourseCategory(
-          request.tenantDb,
-          request.user!.tenantId,
-          body.category,
-          request.user!.id,
-        );
-        categoryId = category.id;
-      }
-
-      const [updated] = await request.tenantDb
-        .update(courses)
-        .set({
-          ...(body.title !== undefined ? { title: body.title.trim() } : {}),
-          ...(body.description !== undefined ? { description: body.description } : {}),
-          ...(categoryId !== undefined ? { categoryId } : {}),
-          ...(body.deliveryMode !== undefined ? { deliveryMode: body.deliveryMode } : {}),
-          ...(body.duration?.value !== undefined ? { durationValue: body.duration.value } : {}),
-          ...(body.duration?.unit !== undefined ? { durationUnit: body.duration.unit } : {}),
-          ...(body.provider !== undefined ? { provider: body.provider } : {}),
-          ...(body.cost !== undefined ? { cost: body.cost } : {}),
-          ...(body.subcategory !== undefined ? { subcategory: body.subcategory } : {}),
-          ...(body.status !== undefined ? { status: body.status } : {}),
-          updatedByUserId: request.user!.id,
-          updatedAt: new Date(),
-        })
-        .where(eq(courses.id, courseId))
-        .returning();
-
-      const [data] = await toResponseRows(request.tenantDb, [updated]);
-      return reply.code(200).send({ success: true, data });
+      return reply.code(200).send({ success: true, data: result.data });
     },
   );
 
@@ -533,17 +463,16 @@ const tenantCourseRoutes: FastifyPluginAsync = async (fastify) => {
       if (!Array.isArray(body.learningObjectives) || !Array.isArray(body.requirements)) {
         return reply.code(400).send({ success: false, message: "learningObjectives and requirements must be arrays" });
       }
-      const learningObjectives = body.learningObjectives.filter((v): v is string => typeof v === "string").map((v) => v.trim()).filter(Boolean);
-      const requirements = body.requirements.filter((v): v is string => typeof v === "string").map((v) => v.trim()).filter(Boolean);
 
-      const [updated] = await request.tenantDb
-        .update(courses)
-        .set({ learningObjectives, requirements, updatedByUserId: request.user!.id, updatedAt: new Date() })
-        .where(eq(courses.id, courseId))
-        .returning();
-
-      const [data] = await toResponseRows(request.tenantDb, [updated]);
-      return reply.code(200).send({ success: true, data });
+      const result = await CourseService.updateCourse(
+        { tenantId: request.user!.tenantId, userId: request.user!.id, db: request.tenantDb },
+        courseId,
+        { learningObjectives: body.learningObjectives, requirements: body.requirements },
+      );
+      if (!result.ok) {
+        return sendCourseServiceError(reply, result.error);
+      }
+      return reply.code(200).send({ success: true, data: result.data });
     },
   );
 

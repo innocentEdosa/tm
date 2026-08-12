@@ -51,7 +51,7 @@ async function runAndAudit(
   let status: "executed" | "failed" = "executed";
   let error: string | undefined;
   try {
-    output = await tool.execute(ctx, input);
+    output = await tool.execute({ ...ctx, conversationId }, input);
   } catch (err) {
     status = "failed";
     error = err instanceof Error ? err.message : String(err);
@@ -165,7 +165,7 @@ export async function confirmToolExecution(executionId: string, ctx: ToolContext
   let status: "executed" | "failed" = "executed";
   let error: string | undefined;
   try {
-    output = await tool.execute(ctx, row.input);
+    output = await tool.execute({ ...ctx, conversationId: row.conversationId }, row.input);
   } catch (err) {
     status = "failed";
     error = err instanceof Error ? err.message : String(err);

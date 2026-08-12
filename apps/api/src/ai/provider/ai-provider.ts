@@ -11,6 +11,15 @@ export interface ChatMessage {
   content: string;
   /** Only set on a `role: "tool"` message — which prior tool call this result answers. */
   toolCallId?: string;
+  /** Only set on a `role: "assistant"` message that actually invoked a tool (AI Foundation —
+   * Structured Tool Context). Carries the same `id`/`name`/`arguments` a live `ChatResult.toolCalls`
+   * entry would, sourced ONLY from `ai_tool_executions` rows a real tool execution wrote — never
+   * from user-authored text (`ai/routes.ts`'s history reconstruction is the only place this is ever
+   * populated from persisted data). Each provider translates this into its own native tool-call
+   * representation (Anthropic `tool_use` content blocks, OpenAI `tool_calls`) instead of the caller
+   * ever needing to know either shape. A `role: "tool"` message immediately following one of these
+   * is that call's real, trusted result — not a paraphrase. */
+  toolCalls?: ChatToolCall[];
 }
 
 /** JSON-Schema-shaped, not a Zod type — this is what actually crosses the wire to a model

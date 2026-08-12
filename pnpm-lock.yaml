@@ -166,6 +166,9 @@ importers:
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
+      vitest:
+        specifier: ^4.1.9
+        version: 4.1.9(@types/node@20.19.43)(vite@8.1.2(@types/node@20.19.43)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4))
 
   packages/eslint-config:
     devDependencies:

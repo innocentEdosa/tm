@@ -24,6 +24,18 @@ export function listTools(): AiToolDefinition<any, any>[] {
   return [...registry.values()];
 }
 
+/** Composes the exact string sent to a provider as a tool's `description` (Tool Selection & Scope
+ * Guardrails phase) — a `[domain → resource.operation]` tag prepended to the tool's own prose. Pure
+ * and provider-independent: both `AnthropicProvider` and `OpenAiProvider` just receive whatever
+ * string `ai/routes.ts` puts in `ChatToolSpec.description`, unaware this composition happened at
+ * all. The tag exists so a model can tell two structurally-similar tools apart from different
+ * domains (e.g. `update_form_field` vs a future `update_course_lesson`) without depending on prose
+ * alone — see `ai/routes.ts`'s `SYSTEM_PROMPT` for the matching instruction that tells the model how
+ * to use this tag when deciding whether any registered tool actually applies. */
+export function describeToolForProvider(tool: AiToolDefinition<any, any>): string {
+  return `[${tool.domain} → ${tool.resource}.${tool.operation}] ${tool.description}`;
+}
+
 /** Test-only seam — lets integration tests reset the registry between runs if a test needs to
  * register a throwaway tool. Never called from production code. */
 export function __clearRegistryForTesting(): void {

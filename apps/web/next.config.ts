@@ -12,7 +12,17 @@ const nextConfig: NextConfig = {
   // (dev/staging/production). The URL's query string (presigned signature/expiry) is irrelevant to
   // this match — only scheme+hostname are checked.
   images: {
-    remotePatterns: [{ protocol: "https", hostname: "*.r2.cloudflarestorage.com" }],
+    remotePatterns: [
+      { protocol: "https", hostname: "*.r2.cloudflarestorage.com" },
+      // AI Image Discovery & Course Asset Management Phase 1 — an AI-selected course/lesson image
+      // is a `kind: "link"` file_attachments row whose `url` is Unsplash's own hotlinked CDN URL
+      // (never re-hosted; see `UnsplashProvider`'s doc comment on why re-hosting would violate
+      // Unsplash's API guidelines). `next/image` refuses to optimize any hostname not explicitly
+      // allowlisted here, hence this entry — without it, `<Image src={courseImageUrl} />` throws
+      // at runtime for exactly this one image source (confirmed live: R2-backed images worked,
+      // this didn't, until this was added).
+      { protocol: "https", hostname: "images.unsplash.com" },
+    ],
   },
   // Next infers the monorepo root by walking up for lockfiles; this repo also has a stray lockfile
   // one level above the actual workspace root (pnpm-workspace.yaml lives here), which made Next guess

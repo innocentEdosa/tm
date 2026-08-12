@@ -5,7 +5,13 @@
 export type DeliveryMode = "in_person" | "virtual" | "self_paced" | "blended";
 export type DurationUnit = "minutes" | "hours" | "days";
 export type CourseStatus = "draft" | "active" | "archived";
-export type ContentStatus = "draft" | "published";
+/** `archived` (Course Organization AI Phase 1, backend migration 0123) mirrors `CourseStatus`'s own
+ * draft/active/archived pattern one level down — non-destructive, freely reversible, reachable from
+ * (and back to) any other status. Today the only way a module/lesson actually reaches `archived` is
+ * via the AI's `archive_course_module`/`archive_course_lesson` tools (no manual "Archive" action
+ * exists in the course editor UI) — every UI that renders or mutates this value must still treat it
+ * as a first-class state, not an unexpected one. */
+export type ContentStatus = "draft" | "published" | "archived";
 export type ContentItemType = "video" | "article" | "live_class" | "test" | "assignment" | "external_import";
 
 export interface CourseCategory {

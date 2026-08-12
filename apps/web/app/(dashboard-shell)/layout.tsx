@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { AppShell, type NavSection, type NavLinkItem, type NavEntry } from "@tm/ui";
 import { getTenantSession } from "@/lib/tenant-session";
 import { AiAssistantLauncher } from "@/app/_shared/ai-assistant/ai-assistant-launcher";
+import { AiPageContextProvider } from "@/app/_shared/ai-assistant/ai-page-context";
 
 const API_BASE = "/tenant-api/tenant-auth";
 
@@ -288,8 +289,10 @@ export default async function DashboardLayout({ children }: { children: React.Re
       logoutHref={`${API_BASE}/logout?subdomain=${encodeURIComponent(subdomain)}`}
       afterLogoutHref="/tenant"
     >
-      {children}
-      <AiAssistantLauncher subdomain={subdomain} />
+      <AiPageContextProvider>
+        {children}
+        <AiAssistantLauncher subdomain={subdomain} />
+      </AiPageContextProvider>
     </AppShell>
   );
 }

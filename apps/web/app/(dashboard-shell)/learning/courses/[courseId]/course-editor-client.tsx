@@ -8,6 +8,7 @@ import { MoreVertical } from "lucide-react";
 import { Card, Badge, Button, Modal, Popover } from "@tm/ui";
 import { tenantFetch } from "@/lib/tenant-api-client";
 import { SubdomainProvider, useSubdomain } from "@/lib/subdomain-context";
+import { useSetAiPageContext } from "@/app/_shared/ai-assistant/ai-page-context";
 import { CourseEditorApiProvider, useCourseEditorApi } from "@/lib/course-editor-context";
 import { tenantCourseEditorApi } from "@/lib/course-editor-adapter";
 import type { Course, CourseStatus, Curriculum } from "@/lib/course-api-types";
@@ -44,6 +45,7 @@ function CourseEditorInner({ courseId, canManage, currentUserEmail }: { courseId
   const router = useRouter();
   const queryClient = useQueryClient();
   const api = useCourseEditorApi();
+  useSetAiPageContext({ courseId });
 
   const courseQuery = useQuery({
     queryKey: ["course", courseId, subdomain],

@@ -28,6 +28,7 @@ import {
   type ContentItemType,
   type ContentStatus,
 } from "@/lib/course-api-types";
+import { CONTENT_STATUS_LABEL, CONTENT_STATUS_DOT, CONTENT_STATUS_BADGE_VARIANT } from "@/lib/course-status-display";
 import ContentItemTypePicker, { AiContentComingSoonModal, ContentItemTypeMenuItems, TYPE_ICON } from "./content-item-type-picker";
 import VideoForm from "./content-item-forms/video-form";
 import ArticleForm from "./content-item-forms/article-form";
@@ -35,9 +36,9 @@ import LiveClassForm from "./content-item-forms/live-class-form";
 import TestAssignmentForm from "./content-item-forms/test-assignment-form";
 import ExternalImportForm from "./content-item-forms/external-import-form";
 
-const STATUS_LABEL: Record<ContentStatus, string> = { draft: "Draft", published: "Published" };
-const STATUS_DOT: Record<ContentStatus, string> = { draft: "bg-slate-400", published: "bg-green-600" };
-const STATUS_BADGE_VARIANT: Record<ContentStatus, "success" | "neutral"> = { draft: "neutral", published: "success" };
+const STATUS_LABEL = CONTENT_STATUS_LABEL;
+const STATUS_DOT = CONTENT_STATUS_DOT;
+const STATUS_BADGE_VARIANT = CONTENT_STATUS_BADGE_VARIANT;
 
 /** Prefix for a module's empty-content-list droppable zone id, distinguishing it from real item/module
  * ids in the shared `onDragEnd` resolver below. */

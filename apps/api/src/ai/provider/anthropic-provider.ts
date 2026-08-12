@@ -15,6 +15,19 @@ function toAnthropicMessages(messages: ChatMessage[]): { system?: string; messag
         content: [{ type: "tool_result", tool_use_id: m.toolCallId!, content: m.content }],
       };
     }
+    // A `role: "tool"` message's `tool_result` block is only valid to the real Anthropic API when
+    // the immediately preceding assistant turn actually contains a matching `tool_use` block with
+    // that same id — structured `ChatMessage.toolCalls` (AI Foundation — Structured Tool Context)
+    // is what makes that true here, whether this assistant message is a same-turn in-memory
+    // follow-up (`ai/routes.ts`'s read-tool round trip) or reconstructed from persisted history.
+    if (m.role === "assistant" && m.toolCalls && m.toolCalls.length > 0) {
+      const blocks: Array<Anthropic.TextBlockParam | Anthropic.ToolUseBlockParam> = [];
+      if (m.content) blocks.push({ type: "text", text: m.content });
+      for (const call of m.toolCalls) {
+        blocks.push({ type: "tool_use", id: call.id, name: call.name, input: call.arguments });
+      }
+      return { role: "assistant", content: blocks };
+    }
     return { role: m.role as "user" | "assistant", content: m.content };
   });
 

@@ -90,8 +90,14 @@ export function AiAssistantLauncher({ subdomain }: { subdomain: string }) {
         const created = await createConversation(subdomain);
         conversationId = created.data.id;
       }
-      const res = await sendMessage(conversationId, content, subdomain, pageContext.formKey ? { formKey: pageContext.formKey } : undefined);
-      setChat((prev) => ({ loaded: true, conversationId: conversationId!, messages: [...prev.messages, res.data.message] }));
+      const context = pageContext.formKey || pageContext.courseId ? { formKey: pageContext.formKey, courseId: pageContext.courseId } : undefined;
+      const res = await sendMessage(conversationId, content, subdomain, context);
+      // The route returns `toolExecution` as a sibling of `message`, not nested inside it (unlike
+      // GET /ai/conversations/:id, which joins it onto each message server-side) — merge it in here
+      // so a freshly-proposed mutation's ProposalCard renders immediately instead of only appearing
+      // after a reload re-fetches the joined conversation.
+      const savedMessage: AiMessage = { ...res.data.message, toolExecution: res.data.toolExecution };
+      setChat((prev) => ({ loaded: true, conversationId: conversationId!, messages: [...prev.messages, savedMessage] }));
     } catch (err) {
       setSendError(err instanceof Error ? err.message : "Something went wrong sending that message.");
     } finally {
@@ -168,7 +174,9 @@ export function AiAssistantLauncher({ subdomain }: { subdomain: string }) {
       <Drawer open={open} onClose={() => setOpen(false)} title="AI Assistant">
         <div className="flex h-full flex-col">
           <div className="flex items-center justify-between border-b border-border pb-3">
-            <p className="text-xs text-slate-500">{pageContext.formKey ? `Viewing: ${pageContext.formKey} form` : "General assistant"}</p>
+            <p className="text-xs text-slate-500">
+              {pageContext.formKey ? `Viewing: ${pageContext.formKey} form` : pageContext.courseId ? "Viewing: this course" : "General assistant"}
+            </p>
             <button type="button" className="text-xs font-medium text-cta hover:underline" onClick={handleNewConversation}>
               New conversation
             </button>

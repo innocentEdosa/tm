@@ -8,37 +8,31 @@ const DEFAULT_MAX_TOKENS = 4096;
 /**
  * Converts our provider-agnostic history to OpenAI's shape. The one wrinkle: OpenAI's API rejects
  * a `role: "tool"` message unless the immediately preceding assistant message carries a matching
- * entry in `tool_calls` (by id) — unlike Anthropic, which is satisfied by plain text. Our
- * `ChatMessage` type has no structured "assistant made this tool call" message (see
- * `ai-provider.ts` — `ai/routes.ts` only ever threads a bare `toolCallId` through the follow-up
- * `role: "tool"` message, in-memory, within a single request). So when an assistant message is
- * immediately followed by a tool message, synthesize a matching `tool_calls` entry — id taken from
- * the tool message, name/arguments are placeholders since nothing upstream carries them. This is
- * only ever exercised for that one in-memory pairing (`ai/routes.ts`'s read-tool follow-up call),
- * never replayed across separate requests.
+ * entry in `tool_calls` (by id) — unlike Anthropic, which used to be satisfied by plain text alone.
+ * `ChatMessage.toolCalls` (AI Foundation — Structured Tool Context) is the real, trusted call an
+ * assistant message made — sourced from an actual tool execution, whether this is a same-turn
+ * in-memory follow-up (`ai/routes.ts`'s read-tool round trip) or reconstructed from persisted
+ * history — so it's translated directly into OpenAI's `tool_calls` here, real name and arguments
+ * included, no placeholder synthesis needed anymore.
  */
 function toOpenAiMessages(messages: ChatMessage[]): ChatCompletionMessageParam[] {
   const converted: ChatCompletionMessageParam[] = [];
 
-  for (let i = 0; i < messages.length; i++) {
-    const m = messages[i];
+  for (const m of messages) {
     if (m.role === "system") {
       converted.push({ role: "system", content: m.content });
     } else if (m.role === "user") {
       converted.push({ role: "user", content: m.content });
     } else if (m.role === "tool") {
       converted.push({ role: "tool", tool_call_id: m.toolCallId!, content: m.content });
+    } else if (m.toolCalls && m.toolCalls.length > 0) {
+      converted.push({
+        role: "assistant",
+        content: m.content || null,
+        tool_calls: m.toolCalls.map((call) => ({ id: call.id, type: "function", function: { name: call.name, arguments: JSON.stringify(call.arguments) } })),
+      });
     } else {
-      const next = messages[i + 1];
-      if (next?.role === "tool" && next.toolCallId) {
-        converted.push({
-          role: "assistant",
-          content: m.content || null,
-          tool_calls: [{ id: next.toolCallId, type: "function", function: { name: "tool_call", arguments: "{}" } }],
-        });
-      } else {
-        converted.push({ role: "assistant", content: m.content });
-      }
+      converted.push({ role: "assistant", content: m.content });
     }
   }
 

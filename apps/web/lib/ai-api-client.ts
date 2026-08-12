@@ -82,7 +82,7 @@ export function sendMessage(
   conversationId: string,
   content: string,
   subdomain: string,
-  context?: { formKey?: string },
+  context?: { formKey?: string; courseId?: string },
 ): Promise<{ success: true; data: { message: AiMessage; toolExecution: AiToolExecution | null } }> {
   return aiFetch(`/conversations/${conversationId}/messages`, { method: "POST", subdomain, body: { content, context } });
 }

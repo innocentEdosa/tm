@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, bigint, timestamp, index, check } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, bigint, timestamp, jsonb, index, check } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { tenants } from "./tenants";
 import { users } from "./users";
@@ -35,6 +35,16 @@ export const fileAttachments = pgTable(
     sizeBytes: bigint("size_bytes", { mode: "number" }),
     storageKey: text("storage_key"),
     url: text("url"),
+    /** AI Image Discovery & Course Asset Management Phase 1 — nullable, additive (0124 migration).
+     * NULL for every attachment created before this phase and for every manually-uploaded/linked
+     * attachment going forward; only ever populated when `set_course_image`/`set_lesson_image`
+     * persists an AI-discovered image, since that's the one case this app has actual, real
+     * attribution/licensing data worth keeping (a provider's photographer name/link, source page,
+     * license) that no existing column could hold. Shape (all optional — a provider may not supply
+     * every field): `{ provider, providerImageId, authorName, authorUrl, sourceUrl, license,
+     * licenseUrl }`. Never used for authorization or resolution — purely display data, read by
+     * `ProposalCard` and the course/lesson image UI to render attribution where available. */
+    metadata: jsonb("metadata"),
     status: text("status").notNull().default("pending"),
     createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
