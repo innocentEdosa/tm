@@ -27,10 +27,17 @@ type DepartmentRow = typeof departments.$inferSelect;
 const tenantDepartmentRoutes: FastifyPluginAsync = async (fastify) => {
   // GET /tenant/departments — spec FR-001/FR-014/FR-015, contracts/department-management-api.md.
   // Also readable by `course.manage` (Course Assignment Settings) — it needs the department list to
-  // populate the course-assignment picker, not to manage departments themselves.
+  // populate the course-assignment picker, not to manage departments themselves — and by
+  // `business_objective.manage`, which needs it (with `?search=`) to back the Business Objective
+  // form's Owner department picker.
   fastify.get<{ Querystring: { search?: string } }>(
     "/tenant/departments",
-    { preHandler: [requireTenantUserSession(), requireAnyPermission("department.view", "course.manage")] },
+    {
+      preHandler: [
+        requireTenantUserSession(),
+        requireAnyPermission("department.view", "course.manage", "business_objective.manage"),
+      ],
+    },
     async (request) => {
       const all = await request.tenantDb.select().from(departments);
 

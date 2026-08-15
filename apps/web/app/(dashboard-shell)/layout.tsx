@@ -70,6 +70,11 @@ export default async function DashboardLayout({ children }: { children: React.Re
     session.permissions.includes("training_request.manage.all") ||
     session.permissions.includes("training_request.manage.department") ||
     session.permissions.includes("training_request.approve");
+  // Business Objectives (Strategy nav) — tenant-wide, no department scope, so unlike canAccessTna
+  // there's just a single view/manage pair (no `.all`/`.department` split).
+  const canAccessBusinessObjective =
+    session.permissions.includes("business_objective.manage") ||
+    session.permissions.includes("business_objective.view");
   // Course Marketplace spec (029) — browsing and selecting reuses course.manage, no new permission
   // key (spec Clarifications, locked scope).
   const canAccessCourseMarketplace = session.permissions.includes("course.manage");
@@ -88,10 +93,10 @@ export default async function DashboardLayout({ children }: { children: React.Re
     session.permissions.includes("course.view") || session.permissions.includes("course.manage");
 
   // "My Learning" — the learner-facing entry point (courses assigned to *me*, with my own progress),
-  // split out into its own top-level group, peer to "Learning" (the admin-facing catalog/management
-  // side) rather than nested under it. Unconditionally visible — accessible by everyone, not gated on
-  // `course.view`/`course.manage` (those stay "Learning"-only, below); the page and every API call it
-  // makes rely on assignment-based visibility, not a permission key, to decide what's actually shown.
+  // split out into its own top-level group, peer to "Studio" (the admin-facing content-management
+  // side, below) rather than nested under it. Unconditionally visible — accessible by everyone, not
+  // gated on `course.view`/`course.manage` (those stay "Studio"-only, below); the page and every API
+  // call it makes rely on assignment-based visibility, not a permission key, to decide what's shown.
   navSections.push({
     key: "my-learning",
     entries: [
@@ -104,99 +109,101 @@ export default async function DashboardLayout({ children }: { children: React.Re
     ],
   });
 
-  // "Learning" (Training Request spec, 014, renamed by spec 020) — a new top-level section, peer to
-  // "Administration" and "Settings" (plan.md Summary). The old top-level disabled "Courses"
-  // placeholder (research.md §8) is now this section's "Courses" entry, live per spec 028 rather than
-  // a permanent "Soon" stub. "Learning Resources" (previously a disabled "Soon" stub) is repointed at
-  // the Course Marketplace (spec 029) rather than getting its own separate nav entry — browsing the
-  // Super-Admin-curated catalog *is* this tenant's "learning resources" concept, gated on the same
-  // course.manage permission. "Learning Program" stays a disabled "Soon" stub until its own spec lands.
-  if (canAccessCourses || canAccessCourseMarketplace) {
-    const learningChildren: NavLinkItem[] = [];
-    if (canAccessCourses) {
-      learningChildren.push({ key: "courses", icon: "bookOpen", label: "Courses", href: "/learning/courses" });
-    }
-    learningChildren.push({
-      key: "learning-program",
-      icon: "graduationCap",
-      label: "Learning Program",
-      href: "/learning/learning-program",
-      disabled: true,
-      tag: "Soon",
-    });
-    if (canAccessCourseMarketplace) {
-      learningChildren.push({ key: "learning-resources", icon: "fileText", label: "Learning Resources", href: "/learning/marketplace" });
-    } else {
-      learningChildren.push({
-        key: "learning-resources",
-        icon: "fileText",
-        label: "Learning Resources",
-        href: "/learning/learning-resources",
-        disabled: true,
-        tag: "Soon",
-      });
-    }
+  // "Strategy" (sidebar restructure) — replaces the former "Training Plan" group. The section itself
+  // now shows for either canAccessTna OR canAccessBusinessObjective (either feature's permission is
+  // enough to see "Strategy" at all); each real child entry is then independently included only for
+  // callers who actually hold its own permission, so e.g. a Business-Objective-only caller doesn't
+  // also see the (still permission-gated) Training Request entry. "Annual Learning Plan" and
+  // "Training Needs Analysis" remain permanent disabled stubs, unrelated to either flag.
+  if (canAccessTna || canAccessBusinessObjective) {
     navSections.push({
-      key: "learning",
+      key: "strategy",
       entries: [
         {
-          key: "learning",
-          icon: "bookOpen",
-          label: "Learning",
-          children: learningChildren,
-        },
-      ],
-    });
-  }
-
-  // "Training Plan" — a new top-level group (its own section, peer to "Learning"/"Administration")
-  // holding the training-request workflow's 3-part IA: today only "Training Request" has a real page
-  // (the existing training-request/training-need feature — same backend under either name, only the
-  // nav label changed across specs 014/020); "Training Needs Analysis" and "Training Plan" are
-  // disabled "Coming soon" stubs until their own specs land, same convention as the pre-028 "Courses"
-  // placeholder above.
-  if (canAccessTna) {
-    navSections.push({
-      key: "training-plan",
-      entries: [
-        {
-          key: "training-plan",
+          key: "strategy",
           icon: "clipboardList",
-          label: "Training Plan",
+          label: "Strategy",
           children: [
+            ...(canAccessBusinessObjective
+              ? [{ key: "business-objective", icon: "target" as const, label: "Business Objective", href: "/learning/business-objective" }]
+              : [{ key: "business-objective", icon: "target" as const, label: "Business Objective", href: "/learning/business-objective", disabled: true, tag: "Soon" }]),
+            { key: "annual-learning-plan", icon: "bookOpen", label: "Annual Learning Plan", href: "/learning/annual-learning-plan", disabled: true, tag: "Soon" },
             { key: "tna", icon: "fileText", label: "Training Needs Analysis", href: "/learning/training-needs-analysis", disabled: true, tag: "Soon" },
-            { key: "training-request", icon: "clipboardList", label: "Training Request", href: "/learning/training-requests" },
-            { key: "training-plan-item", icon: "bookOpen", label: "Training Plan", href: "/learning/training-plan", disabled: true, tag: "Soon" },
+            ...(canAccessTna
+              ? [{ key: "training-request", icon: "clipboardList" as const, label: "Training Request", href: "/learning/training-requests" }]
+              : []),
           ],
         },
       ],
     });
   }
 
-  // "Skills Profile" — a new top-level group, unconditionally visible (no permission model exists
-  // for any of this yet — same reasoning as "Dashboard" itself never being gated). All 3 children are
-  // disabled "Coming soon" stubs, same convention as Training Plan's placeholders above.
+  // "Studio" (sidebar restructure) — replaces the former "Learning" group. "Content Builder" is the
+  // existing Courses page (unchanged href/permission, spec 028) and "Resource Library" is the
+  // existing Course Marketplace entry (unchanged href/permission, spec 029) — only the labels moved.
+  // "Assessment Builder" and "Learning Paths" are new disabled "Coming soon" stubs, same convention
+  // as every other not-yet-built entry in this file. The old "Learning Program" stub is retired —
+  // "Learning Paths" below now covers that same not-yet-built concept.
+  if (canAccessCourses || canAccessCourseMarketplace) {
+    const studioChildren: NavLinkItem[] = [];
+    if (canAccessCourses) {
+      studioChildren.push({ key: "content-builder", icon: "bookOpen", label: "Content Builder", href: "/learning/courses" });
+    }
+    if (canAccessCourseMarketplace) {
+      studioChildren.push({ key: "resource-library", icon: "fileText", label: "Resource Library", href: "/learning/marketplace" });
+    } else {
+      studioChildren.push({
+        key: "resource-library",
+        icon: "fileText",
+        label: "Resource Library",
+        href: "/learning/learning-resources",
+        disabled: true,
+        tag: "Soon",
+      });
+    }
+    studioChildren.push(
+      { key: "assessment-builder", icon: "listChecks", label: "Assessment Builder", href: "/learning/assessment-builder", disabled: true, tag: "Soon" },
+      { key: "learning-paths", icon: "route", label: "Learning Paths", href: "/learning/learning-paths", disabled: true, tag: "Soon" },
+    );
+    navSections.push({
+      key: "studio",
+      entries: [
+        {
+          key: "studio",
+          icon: "layers",
+          label: "Studio",
+          children: studioChildren,
+        },
+      ],
+    });
+  }
+
+  // "Skill Profile" (sidebar restructure, formerly "Skills Profile") — same unconditional visibility
+  // as before (no permission model exists for any of this yet — same reasoning as "Dashboard" itself
+  // never being gated). "Analytics" replaces the old "Reports & Analytics" child now that "Reports &
+  // Insights" has its own top-level entry below; "Learning Goals"/"Learning History" are unchanged.
   navSections.push({
-    key: "skills-profile",
+    key: "skill-profile",
     entries: [
       {
-        key: "skills-profile",
+        key: "skill-profile",
         icon: "award",
-        label: "Skills Profile",
+        label: "Skill Profile",
         children: [
           { key: "learning-goals", icon: "target", label: "Learning Goals", href: "/learning/goals", disabled: true, tag: "Soon" },
+          { key: "analytics", icon: "trendingUp", label: "Analytics", href: "/learning/analytics", disabled: true, tag: "Soon" },
           { key: "learning-history", icon: "history", label: "Learning History", href: "/learning/history", disabled: true, tag: "Soon" },
-          { key: "reports-analytics", icon: "barChart3", label: "Reports & Analytics", href: "/learning/reports", disabled: true, tag: "Soon" },
         ],
       },
     ],
   });
 
-  // "Help & Support" — a flat top-level entry (no children), also unconditionally visible and
-  // disabled until it has a real destination, same reasoning as "Skills Profile" above.
+  // "Reports & Insights" (sidebar restructure) — a new top-level, flat entry (no children),
+  // unconditionally visible like "Skill Profile" above (no backend yet), disabled until it has a
+  // real destination.
   navSections.push({
-    key: "help-support",
-    entries: [{ key: "help-support", icon: "helpCircle", label: "Help & Support", href: "/help", disabled: true, tag: "Soon" }],
+    key: "reports-insights",
+    entries: [{ key: "reports-insights", icon: "barChart3", label: "Reports & Insights", href: "/learning/reports-insights", disabled: true, tag: "Soon" }],
   });
 
   // "Settings" (spec FR-011/FR-012, User Story 5) — a system-configuration concern, deliberately
@@ -207,7 +214,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   // "Administration" — moved into the footer (pinned above Settings/Log out, alongside them) rather
   // than the scrollable nav above, so it reads as account/workspace-level administration rather than
-  // a peer of the day-to-day Learning/Training Plan sections.
+  // a peer of the day-to-day Studio/Strategy sections.
   if (canManageTeam || canViewDepartments || canManageRoles) {
     const administrationChildren: NavLinkItem[] = [];
     if (canManageTeam) {

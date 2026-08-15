@@ -57,6 +57,12 @@ export default async function PlatformLayout({ children }: { children: React.Rea
           label: "Forms",
           href: "/platform/forms",
         },
+        {
+          key: "settings",
+          icon: "settings",
+          label: "Settings",
+          href: "/platform/settings",
+        },
       ],
     },
   ];

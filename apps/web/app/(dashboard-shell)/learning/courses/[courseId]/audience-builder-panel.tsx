@@ -104,22 +104,22 @@ function GroupPickerList({
       {loading ? (
         <div className="space-y-2">
           {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="h-12 animate-pulse rounded-xl bg-slate-100" />
+            <div key={i} className="h-12 animate-pulse rounded-lg bg-slate-100" />
           ))}
         </div>
       ) : error ? (
-        <div className="rounded-xl border border-dashed border-border py-8 text-center text-sm text-red-600">
+        <div className="rounded-lg border border-dashed border-border py-8 text-center text-sm text-red-600">
           Couldn&apos;t load {noun}s.{" "}
           <button type="button" className="cursor-pointer font-medium underline" onClick={onRetry}>
             Retry
           </button>
         </div>
       ) : items.length === 0 ? (
-        <p className="rounded-xl border border-dashed border-border py-8 text-center text-sm text-muted">{emptyMessage}</p>
+        <p className="rounded-lg border border-dashed border-border py-8 text-center text-sm text-muted">{emptyMessage}</p>
       ) : filtered.length === 0 ? (
-        <p className="rounded-xl border border-dashed border-border py-8 text-center text-sm text-muted">No {noun}s found.</p>
+        <p className="rounded-lg border border-dashed border-border py-8 text-center text-sm text-muted">No {noun}s found.</p>
       ) : (
-        <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border">
+        <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border">
           {filtered.map((item) => {
             const target = selectedById.get(item.id);
             const isSelected = !!target;
@@ -256,21 +256,21 @@ function UsersPickerList({ subdomain, selected, onChange }: { subdomain: string;
       {usersQuery.isLoading ? (
         <div className="space-y-2">
           {Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} className="h-14 animate-pulse rounded-xl bg-slate-100" />
+            <div key={i} className="h-14 animate-pulse rounded-lg bg-slate-100" />
           ))}
         </div>
       ) : usersQuery.isError ? (
-        <div className="rounded-xl border border-dashed border-border py-8 text-center text-sm text-red-600">
+        <div className="rounded-lg border border-dashed border-border py-8 text-center text-sm text-red-600">
           Couldn&apos;t load users.{" "}
           <button type="button" className="cursor-pointer font-medium underline" onClick={() => usersQuery.refetch()}>
             Retry
           </button>
         </div>
       ) : rows.length === 0 ? (
-        <p className="rounded-xl border border-dashed border-border py-8 text-center text-sm text-muted">No users found.</p>
+        <p className="rounded-lg border border-dashed border-border py-8 text-center text-sm text-muted">No users found.</p>
       ) : (
         <>
-          <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border">
+          <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border">
             {rows.map((u) => {
               const isSelected = selectedById.has(u.id);
               return (
@@ -297,7 +297,7 @@ function UsersPickerList({ subdomain, selected, onChange }: { subdomain: string;
           <p className="mb-2 text-xs font-semibold tracking-wide text-secondary uppercase">
             {selected.length} selected
           </p>
-          <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border">
+          <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border">
             {selected.map((u) => {
               const isExpanded = expandedIds.has(u.id);
               return (

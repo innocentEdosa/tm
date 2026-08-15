@@ -1,0 +1,2 @@
+ALTER TABLE "business_objectives" ADD COLUMN "category" text DEFAULT 'other' NOT NULL;--> statement-breakpoint
+ALTER TABLE "business_objectives" ADD CONSTRAINT "business_objectives_category_check" CHECK ("business_objectives"."category" in ('growth', 'revenue', 'operations', 'customer', 'product', 'people', 'financial', 'other'));

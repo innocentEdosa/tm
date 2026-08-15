@@ -4,13 +4,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, ArrowDown, MoreHorizontal } from "lucide-react";
+import { ArrowUp, ArrowDown, MoreHorizontal, Search } from "lucide-react";
 import { PageHeader, Card, Badge, Modal, Button, Pagination } from "@tm/ui";
 import { tenantFetch } from "@/lib/tenant-api-client";
 import { SubdomainProvider, useSubdomain } from "@/lib/subdomain-context";
 import { CourseEditorApiProvider } from "@/lib/course-editor-context";
 import { tenantCourseEditorApi } from "@/lib/course-editor-adapter";
-import type { Course, CourseStatus } from "@/lib/course-api-types";
+import type { Course, CourseCategory, CourseStatus } from "@/lib/course-api-types";
 import CreateCourseMenu from "./create-course-menu";
 
 const STATUS_LABEL: Record<CourseStatus, string> = { active: "Published", draft: "Draft", archived: "Archived" };
@@ -130,6 +130,8 @@ function CoursesListInner({ canManage }: { canManage: boolean }) {
   const queryClient = useQueryClient();
 
   const [statusFilter, setStatusFilter] = useState<"" | CourseStatus>("");
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
   const [sortField, setSortField] = useState<SortField>("createdAt");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [page, setPage] = useState(1);
@@ -143,6 +145,14 @@ function CoursesListInner({ canManage }: { canManage: boolean }) {
       return tenantFetch<{ data: Course[] }>(`/courses?${params.toString()}`, { subdomain });
     },
   });
+  const categoriesQuery = useQuery({
+    queryKey: ["course-categories", subdomain],
+    queryFn: async () => {
+      const { data } = await tenantFetch<{ data: CourseCategory[] }>("/courses/categories", { subdomain });
+      return data;
+    },
+  });
+  const categories = categoriesQuery.data ?? [];
 
   const deleteMutation = useMutation({
     mutationFn: (courseId: string) => tenantFetch(`/courses/${courseId}`, { method: "DELETE", subdomain }),
@@ -162,36 +172,76 @@ function CoursesListInner({ canManage }: { canManage: boolean }) {
   }
 
   const courses = coursesQuery.data?.data ?? null;
-  const sorted = courses
-    ? [...courses].sort((a, b) => {
-        const result = sortField === "title" ? a.title.localeCompare(b.title) : a.createdAt.localeCompare(b.createdAt);
-        return sortDir === "asc" ? result : -result;
+  const trimmedSearch = searchQuery.trim().toLowerCase();
+  const filtered = courses
+    ? courses.filter((c) => {
+        const matchesSearch = !trimmedSearch || c.title.toLowerCase().includes(trimmedSearch);
+        const matchesCategory = !categoryFilter || c.category?.id === categoryFilter;
+        return matchesSearch && matchesCategory;
       })
     : [];
+  const sorted = [...filtered].sort((a, b) => {
+    const result = sortField === "title" ? a.title.localeCompare(b.title) : a.createdAt.localeCompare(b.createdAt);
+    return sortDir === "asc" ? result : -result;
+  });
   const paged = sorted.slice((page - 1) * DISPLAY_PAGE_SIZE, page * DISPLAY_PAGE_SIZE);
 
   return (
     <main className="px-8 py-8">
       <div className="flex items-start justify-between">
-        <PageHeader title="Courses" />
-        {canManage && <CreateCourseMenu />}
+        <PageHeader title="Contents" subtitle="Create and manage content across your organization" />
+        {canManage && <CreateCourseMenu manualCreateHref="/learning/courses/create" />}
       </div>
 
-      <div className="mt-6 flex items-center gap-3">
-        <select
-          className="field-input max-w-xs"
-          aria-label="Filter by status"
-          value={statusFilter}
-          onChange={(e) => {
-            setStatusFilter(e.target.value as "" | CourseStatus);
-            setPage(1);
-          }}
-        >
-          <option value="">All</option>
-          <option value="active">Published</option>
-          <option value="draft">Draft</option>
-          <option value="archived">Archived</option>
-        </select>
+      <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+        <div className="relative max-w-xs flex-1">
+          <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <input
+            type="search"
+            className="field-input !pl-9"
+            placeholder="Search in your courses…"
+            aria-label="Search in your courses"
+            value={searchQuery}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              setPage(1);
+            }}
+          />
+        </div>
+
+        <div className="flex items-center gap-3">
+          <select
+            className="field-input max-w-xs"
+            aria-label="Filter by status"
+            value={statusFilter}
+            onChange={(e) => {
+              setStatusFilter(e.target.value as "" | CourseStatus);
+              setPage(1);
+            }}
+          >
+            <option value="">All Statuses</option>
+            <option value="active">Published</option>
+            <option value="draft">Draft</option>
+            <option value="archived">Archived</option>
+          </select>
+
+          <select
+            className="field-input max-w-xs"
+            aria-label="Filter by category"
+            value={categoryFilter}
+            onChange={(e) => {
+              setCategoryFilter(e.target.value);
+              setPage(1);
+            }}
+          >
+            <option value="">All Category</option>
+            {categories.map((category) => (
+              <option key={category.id} value={category.id}>
+                {category.name}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       <Card className="mt-4 overflow-hidden p-0">
@@ -236,7 +286,10 @@ function CoursesListInner({ canManage }: { canManage: boolean }) {
                   className="cursor-pointer border-t border-border hover:bg-slate-50"
                   onClick={(event) => {
                     if ((event.target as HTMLElement).closest("[data-row-actions]")) return;
-                    router.push(`/learning/courses/${course.id}`);
+                    // Managers land on the new fullscreen step-based editor ("on edit" — same flow as
+                    // creating); a read-only viewer keeps using the old tabbed editor, which is the
+                    // only one of the two that renders a readOnly view.
+                    router.push(canManage ? `/learning/courses/${course.id}/edit` : `/learning/courses/${course.id}`);
                   }}
                 >
                   <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
@@ -260,7 +313,7 @@ function CoursesListInner({ canManage }: { canManage: boolean }) {
                   {canManage && (
                     <td className="px-4 py-3 text-right text-sm" onClick={(e) => e.stopPropagation()}>
                       <div className="flex justify-end">
-                        <RowActionsMenu onEdit={() => router.push(`/learning/courses/${course.id}`)} onDelete={() => setDeleteTarget(course)} />
+                        <RowActionsMenu onEdit={() => router.push(`/learning/courses/${course.id}/edit`)} onDelete={() => setDeleteTarget(course)} />
                       </div>
                     </td>
                   )}

@@ -200,7 +200,7 @@ function MyCoursesInner() {
       {someCardsFailed && <p className="banner-error mt-4">Some of your courses couldn&apos;t be loaded. Try refreshing.</p>}
 
       {courses.length === 0 ? (
-        <div className="mt-8 rounded-2xl border border-dashed border-border bg-white p-12 text-center">
+        <div className="mt-8 rounded-lg border border-dashed border-border bg-white p-12 text-center">
           <p className="text-secondary">No courses have been assigned to you yet.</p>
         </div>
       ) : (
@@ -211,7 +211,7 @@ function MyCoursesInner() {
           {cardsStillLoading &&
             visibleCards.length === 0 &&
             Array.from({ length: Math.min(3, courses.length) }).map((_, i) => (
-              <div key={i} className="h-80 animate-pulse rounded-2xl bg-slate-100" />
+              <div key={i} className="h-80 animate-pulse rounded-lg bg-slate-100" />
             ))}
           {!cardsStillLoading && visibleCards.length === 0 && (
             <p className="col-span-full py-8 text-center text-sm text-muted">No courses match your search or filters.</p>

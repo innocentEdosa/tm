@@ -29,6 +29,9 @@ import {
   BarChart3,
   HelpCircle,
   Sparkles,
+  Layers,
+  Route,
+  TrendingUp,
 } from "lucide-react";
 
 type IconComponent = React.ComponentType<{ className?: string }>;
@@ -61,6 +64,9 @@ const ICONS = {
   barChart3: BarChart3,
   helpCircle: HelpCircle,
   sparkles: Sparkles,
+  layers: Layers,
+  route: Route,
+  trendingUp: TrendingUp,
 } satisfies Record<string, IconComponent>;
 
 export interface NavLinkItem {

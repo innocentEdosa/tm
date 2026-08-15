@@ -1,0 +1,1 @@
+ALTER TABLE "business_objectives" ALTER COLUMN "target_value" DROP NOT NULL;

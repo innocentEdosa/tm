@@ -90,7 +90,7 @@ export default function UpcomingLearningsPanel({
   const items = liveClasses.length > 0 ? liveClasses.slice(0, MAX_ITEMS) : suggestion ? [suggestion] : [];
 
   return (
-    <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-border bg-white p-4">
+    <div className="flex h-full flex-col overflow-hidden rounded-lg border border-border bg-white p-4">
       <div className="mb-1.5 flex shrink-0 items-center gap-2">
         <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-cta/10 text-cta">
           <CalendarClock className="h-3.5 w-3.5" />

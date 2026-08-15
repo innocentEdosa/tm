@@ -8,6 +8,9 @@ export interface ModalProps {
   onClose: () => void;
   title: string;
   children: React.ReactNode;
+  /** `"md"` (default) is the original fixed `max-w-md` panel. `"lg"` widens it to `max-w-3xl` for
+   * content that needs more horizontal room, e.g. a multi-column option grid. */
+  size?: "md" | "lg";
 }
 
 /**
@@ -16,7 +19,7 @@ export interface ModalProps {
  * inside a single screen. Styled to the existing locked design system (`.surface-card`/`.btn`
  * classes), not a new visual language.
  */
-export function Modal({ open, onClose, title, children }: ModalProps) {
+export function Modal({ open, onClose, title, children, size = "md" }: ModalProps) {
   useEffect(() => {
     if (!open) return;
     function handleKeyDown(event: KeyboardEvent) {
@@ -31,7 +34,7 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div
-        className="surface-card modal-panel"
+        className={`surface-card modal-panel ${size === "lg" ? "modal-panel-lg" : ""}`}
         role="dialog"
         aria-modal="true"
         aria-label={title}

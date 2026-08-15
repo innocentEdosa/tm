@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight as ChevronRightIcon, FileText, Folder, MoreHorizontal, Plus } from "lucide-react";
+import { ChevronDown, ChevronRight as ChevronRightIcon, ChevronsDownUp, ChevronsUpDown, FileText, Folder, MoreHorizontal, Plus } from "lucide-react";
 import {
   DndContext,
   DragOverlay,
@@ -324,7 +324,7 @@ function SortableModule({
 
   return (
     <li ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition }} className={`mb-4 ${isDragging ? "opacity-40" : ""}`}>
-      {/* `!` forces these to win over `.surface-card`'s own `p-8`/`rounded-2xl` — that class is plain
+      {/* `!` forces these to win over `.surface-card`'s own `p-8`/`rounded-lg` — that class is plain
           unlayered CSS (globals.css has no `@layer components`), so per CSS cascade-layers rules it
           always beats a Tailwind utility layer class regardless of className order; a trailing-bang
           important modifier is Tailwind v4's answer to exactly this. */}
@@ -572,7 +572,7 @@ type ItemContainer = { type: "module"; moduleId: string } | { type: "standalone"
 /**
  * The "Course Outline" curriculum panel — a single unified, `@dnd-kit`-backed drag-and-drop list:
  * modules and standalone lessons interleaved in one order (no separate "Lessons" grouping), a
- * top-level "Add Content" menu (Module / Lesson), a Collapse All / Expand All toggle, and
+ * top-level "Add Content" menu (Module / Lesson), an icon-only collapse/expand-all toggle, and
  * per-module/per-lesson draft/published status (independent of the course's own status). New items
  * default to appearing in creation order (appended to the end); a single `DndContext` spans the
  * whole outline plus every module's nested content list, so a lesson can be dragged into a reorder
@@ -848,9 +848,15 @@ export default function CurriculumTab({ courseId, readOnly }: { courseId: string
         {!readOnly && (
           <div className="flex items-center gap-2">
             {modules.length > 0 && (
-              <Button variant="outline" size="sm" onClick={toggleCollapseAll}>
-                {allCollapsed ? "Expand All" : "Collapse All"}
-              </Button>
+              <button
+                type="button"
+                aria-label={allCollapsed ? "Expand all modules" : "Collapse all modules"}
+                title={allCollapsed ? "Expand all" : "Collapse all"}
+                onClick={toggleCollapseAll}
+                className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg border border-border text-secondary hover:bg-slate-50 hover:text-primary"
+              >
+                {allCollapsed ? <ChevronsUpDown className="h-4 w-4 rotate-45" /> : <ChevronsDownUp className="h-4 w-4 rotate-45" />}
+              </button>
             )}
             <Popover width={220} trigger={<Button size="sm">Add Content</Button>} open={addMenuOpen} onOpenChange={closeAddMenu}>
               {(close) => (

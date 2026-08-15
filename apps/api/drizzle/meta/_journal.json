@@ -875,6 +875,111 @@
       "when": 1786535410785,
       "tag": "0124_add_file_attachments_metadata",
       "breakpoints": true
+    },
+    {
+      "idx": 125,
+      "version": "7",
+      "when": 1786556884432,
+      "tag": "0125_add_platform_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 126,
+      "version": "7",
+      "when": 1786556884433,
+      "tag": "0126_lock_platform_settings_grants",
+      "breakpoints": true
+    },
+    {
+      "idx": 127,
+      "version": "7",
+      "when": 1786798409120,
+      "tag": "0127_business_objectives_table",
+      "breakpoints": true
+    },
+    {
+      "idx": 128,
+      "version": "7",
+      "when": 1786798409121,
+      "tag": "0128_rls_business_objectives",
+      "breakpoints": true
+    },
+    {
+      "idx": 129,
+      "version": "7",
+      "when": 1786798409122,
+      "tag": "0129_lock_business_objectives_grants",
+      "breakpoints": true
+    },
+    {
+      "idx": 130,
+      "version": "7",
+      "when": 1786798409123,
+      "tag": "0130_seed_business_objective_permissions",
+      "breakpoints": true
+    },
+    {
+      "idx": 131,
+      "version": "7",
+      "when": 1786798409124,
+      "tag": "0131_broaden_business_objective_permissions",
+      "breakpoints": true
+    },
+    {
+      "idx": 132,
+      "version": "7",
+      "when": 1786800867458,
+      "tag": "0132_add_business_objective_category",
+      "breakpoints": true
+    },
+    {
+      "idx": 133,
+      "version": "7",
+      "when": 1786801900000,
+      "tag": "0133_business_objective_categories_and_department_owner",
+      "breakpoints": true
+    },
+    {
+      "idx": 134,
+      "version": "7",
+      "when": 1786801900001,
+      "tag": "0134_rls_business_objective_categories",
+      "breakpoints": true
+    },
+    {
+      "idx": 135,
+      "version": "7",
+      "when": 1786801900002,
+      "tag": "0135_lock_business_objective_categories_grants",
+      "breakpoints": true
+    },
+    {
+      "idx": 136,
+      "version": "7",
+      "when": 1786801900003,
+      "tag": "0136_backfill_business_objective_categories_existing_tenants",
+      "breakpoints": true
+    },
+    {
+      "idx": 137,
+      "version": "7",
+      "when": 1786801900004,
+      "tag": "0137_backfill_departments_existing_tenants",
+      "breakpoints": true
+    },
+    {
+      "idx": 138,
+      "version": "7",
+      "when": 1786807728050,
+      "tag": "0138_make_business_objective_target_value_optional",
+      "breakpoints": true
+    },
+    {
+      "idx": 139,
+      "version": "7",
+      "when": 1786807728051,
+      "tag": "0139_register_business_objective_form_type",
+      "breakpoints": true
     }
   ]
 }

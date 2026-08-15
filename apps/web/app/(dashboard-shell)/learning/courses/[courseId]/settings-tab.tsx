@@ -56,7 +56,7 @@ function AudienceModeCard({
       aria-checked={selected}
       onClick={onClick}
       disabled={disabled}
-      className={`flex w-full items-start gap-3 rounded-2xl border p-4 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+      className={`flex w-full items-start gap-3 rounded-lg border p-4 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
         selected ? "border-cta bg-cta/5" : "border-border hover:bg-slate-50"
       }`}
     >
@@ -77,34 +77,6 @@ function AudienceModeCard({
   );
 }
 
-/** The Cancel/Apply action row, rendered inside whichever audience panel is currently visible
- * (Everyone or Specific people) rather than in a page-level footer — so the actions always sit next
- * to the configuration they act on. No summary text here: each panel already states its own audience
- * summary above (the "All learners (N)" line, or the "Audience" line above the picker tabs), so
- * repeating it next to the buttons would just duplicate the same count twice on screen. */
-function AudienceActionsRow({
-  onCancel,
-  onSave,
-  saving,
-  canSave,
-}: {
-  onCancel: () => void;
-  onSave: () => void;
-  saving: boolean;
-  canSave: boolean;
-}) {
-  return (
-    <div className="mt-6 flex justify-end gap-2">
-      <Button type="button" variant="secondary" onClick={onCancel} disabled={saving}>
-        Cancel
-      </Button>
-      <Button type="button" onClick={onSave} isLoading={saving} disabled={!canSave}>
-        Save
-      </Button>
-    </div>
-  );
-}
-
 /** Right-panel content for "Everyone in this organization" — deliberately simple: no
  * users/departments/roles controls at all, just the two assignment-wide dates. `totalLearners` is
  * the live, deduped tenant user count from the audience-preview endpoint; `null` (still loading or
@@ -115,17 +87,15 @@ function EveryoneSummaryPanel({
   onStartsAtChange,
   allCompletionDeadline,
   onCompletionDeadlineChange,
-  actionsRow,
 }: {
   totalLearners: number | null;
   allStartsAt: string | null;
   onStartsAtChange: (startsAt: string | null) => void;
   allCompletionDeadline: string | null;
   onCompletionDeadlineChange: (completionDeadline: string | null) => void;
-  actionsRow: React.ReactNode;
 }) {
   return (
-    <div className="rounded-2xl border border-border bg-white p-6">
+    <div className="rounded-lg border border-border bg-white p-6">
       <p className="text-base font-semibold text-primary">Everyone in the organization</p>
       <p className="mt-1 text-sm text-muted">This course will be available to all learners in your organization.</p>
 
@@ -178,8 +148,6 @@ function EveryoneSummaryPanel({
           />
         </div>
       </div>
-
-      {actionsRow}
     </div>
   );
 }
@@ -189,7 +157,7 @@ function EveryoneSummaryPanel({
 function ReadOnlyAudience({ data, totalLearners }: { data: AssignmentResponse; totalLearners: number | null }) {
   if (data.mode === "all") {
     return (
-      <div className="rounded-2xl border border-border bg-white p-6">
+      <div className="rounded-lg border border-border bg-white p-6">
         <p className="text-base font-semibold text-primary">Everyone in the organization</p>
         <p className="mt-1 text-sm text-muted">
           All learners {totalLearners !== null ? `(${totalLearners.toLocaleString()})` : ""} can see and access this course.
@@ -207,7 +175,7 @@ function ReadOnlyAudience({ data, totalLearners }: { data: AssignmentResponse; t
         ["Departments", data.departments.map((d) => ({ id: d.id, label: d.name, startsAt: d.startsAt, completionDeadline: d.completionDeadline }))],
         ["Roles", data.roles.map((r) => ({ id: r.id, label: r.name, startsAt: r.startsAt, completionDeadline: r.completionDeadline }))],
       ] as const).map(([label, rows]) => (
-        <div key={label} className="rounded-2xl border border-border bg-white p-4">
+        <div key={label} className="rounded-lg border border-border bg-white p-4">
           <p className="field-label">{label}</p>
           {rows.length === 0 ? (
             <p className="text-sm italic text-slate-400">None</p>
@@ -233,12 +201,17 @@ function ReadOnlyAudience({ data, totalLearners }: { data: AssignmentResponse; t
  * metadata: the course list/detail routes hide a course from any learner outside its assigned
  * audience, so this panel is the only place that audience is configured.
  *
+ * No Cancel/Save here — every change (mode, dates, or the user/department/role selection) autosaves
+ * itself a short debounce after the last edit, the same "no separate save step" convention as the
+ * rest of this course editor (Course Details' image upload, the lesson-form autosave hook). There's
+ * nothing to "Cancel" back to as a result; the confirmation modal below (switching to "Everyone")
+ * still exists because that one action is destructive (replaces the specific-audience configuration
+ * outright), not because of any pending unsaved state.
+ *
  * Local state (`mode`/`allStartsAt`/`allCompletionDeadline`/`selectedUsers`/`selectedDepartments`/
- * `selectedRoles`) is never destroyed just by toggling between the two mode cards — switching to "Everyone" only *hides* the
- * specific-audience builder, it doesn't clear it, so switching back always restores exactly what was
- * there. The only moment a specific-audience configuration is actually discarded is clicking Apply
- * while "Everyone" is selected (the same replace-all semantics the API already had) — which is
- * exactly what the confirmation modal below warns about before it happens.
+ * `selectedRoles`) is never destroyed just by toggling between the two mode cards — switching to
+ * "Everyone" only *hides* the specific-audience builder, it doesn't clear it, so switching back
+ * always restores exactly what was there.
  */
 export default function SettingsTab({ courseId, readOnly }: { courseId: string; readOnly: boolean }) {
   const subdomain = useSubdomain();
@@ -277,6 +250,11 @@ export default function SettingsTab({ courseId, readOnly }: { courseId: string; 
   const [confirmSwitchOpen, setConfirmSwitchOpen] = useState(false);
   const [toast, setToast] = useState<{ message: string; variant: ToastVariant } | null>(null);
   const [saving, setSaving] = useState(false);
+  const [autosaveStatus, setAutosaveStatus] = useState<"idle" | "saving" | "saved">("idle");
+  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The state snapshot autosave last saw — `null` until the very first sync from the server, so that
+  // initial sync itself is never mistaken for an admin edit and doesn't fire a save.
+  const lastSeenSignatureRef = useRef<string | null>(null);
 
   // Syncs local form state from the server exactly once, the first time it loads — never again on a
   // later background refetch (e.g. the one this same save triggers), so a save can't clobber
@@ -368,22 +346,7 @@ export default function SettingsTab({ courseId, readOnly }: { courseId: string; 
     return totalLearners !== null ? `${base} · ${totalLearners.toLocaleString()} learners` : base;
   }
 
-  function handleCancel() {
-    if (!assignmentQuery.data) return;
-    const data = assignmentQuery.data;
-    setMode(data.mode);
-    setAllStartsAt(data.allStartsAt);
-    setAllCompletionDeadline(data.allCompletionDeadline);
-    setSelectedUsers(data.users);
-    setSelectedDepartments(data.departments);
-    setSelectedRoles(data.roles);
-  }
-
-  async function handleSave() {
-    if (!canSave) {
-      setToast({ message: "Select at least one user, department, or role, or choose Everyone.", variant: "error" });
-      return;
-    }
+  async function performSave() {
     setSaving(true);
     try {
       await tenantFetch(`/courses/${courseId}/assignments`, {
@@ -399,21 +362,52 @@ export default function SettingsTab({ courseId, readOnly }: { courseId: string; 
         },
       });
       await queryClient.invalidateQueries({ queryKey: ["course-assignments", courseId, subdomain] });
-      setToast({ message: "Course settings saved.", variant: "success" });
+      setAutosaveStatus("saved");
     } catch (err) {
       setToast({ message: (err as Error).message, variant: "error" });
+      setAutosaveStatus("idle");
     } finally {
       setSaving(false);
     }
   }
+
+  // Debounced autosave — any real change to mode/dates/selection (detected via a plain JSON
+  // signature, simplest way to catch a per-item date edit buried inside `selectedUsers` etc. without
+  // hand-rolling deep-equality) schedules a save shortly after the last edit, same "no separate save
+  // step" convention the rest of this course editor already uses. Skips both the initial sync from
+  // the server (not an edit) and an incomplete "Specific people, nothing picked yet" state (mirrors
+  // `!canSave`'s old validation, just silent instead of a toast — there's no explicit Save click left
+  // to react to).
+  const stateSignature = JSON.stringify({ mode, allStartsAt, allCompletionDeadline, selectedUsers, selectedDepartments, selectedRoles });
+  useEffect(() => {
+    // No controls render in the read-only branch below, so state can never actually change there —
+    // guarded explicitly anyway so autosave can never fire for a view-only (`course.view`-only)
+    // caller even if that assumption ever stops holding.
+    if (readOnly) return;
+    if (!hasSyncedRef.current) return;
+    if (lastSeenSignatureRef.current === null) {
+      lastSeenSignatureRef.current = stateSignature;
+      return;
+    }
+    if (lastSeenSignatureRef.current === stateSignature) return;
+    lastSeenSignatureRef.current = stateSignature;
+
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    if (!canSave) return;
+    setAutosaveStatus("saving");
+    saveTimeoutRef.current = setTimeout(() => {
+      void performSave();
+    }, 800);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stateSignature, canSave, readOnly]);
 
   if (!assignmentQuery.data) {
     return assignmentQuery.isError ? (
       <p className="banner-error">Couldn&apos;t load this course&apos;s assignment. Try refreshing.</p>
     ) : (
       <div className="space-y-3">
-        <div className="h-24 animate-pulse rounded-2xl bg-slate-100" />
-        <div className="h-64 animate-pulse rounded-2xl bg-slate-100" />
+        <div className="h-24 animate-pulse rounded-lg bg-slate-100" />
+        <div className="h-64 animate-pulse rounded-lg bg-slate-100" />
       </div>
     );
   }
@@ -430,8 +424,22 @@ export default function SettingsTab({ courseId, readOnly }: { courseId: string; 
 
   return (
     <div>
-      <h2 className="text-lg font-semibold text-primary">Choose who this course is assigned to</h2>
-      <p className="mb-6 text-sm text-muted">Learners outside this audience won&apos;t see it in their course catalog.</p>
+      <div className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-lg font-semibold text-primary">Choose who this course is assigned to</h2>
+          <p className="text-sm text-muted">Learners outside this audience won&apos;t see it in their course catalog.</p>
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5 text-xs text-muted">
+          {autosaveStatus === "saving" ? (
+            <>
+              <span className="h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent" aria-hidden="true" />
+              <span>Saving…</span>
+            </>
+          ) : (
+            autosaveStatus === "saved" && <span>Saved</span>
+          )}
+        </div>
+      </div>
 
       {toast && <Toast message={toast.message} variant={toast.variant} onDismiss={() => setToast(null)} />}
 
@@ -463,10 +471,9 @@ export default function SettingsTab({ courseId, readOnly }: { courseId: string; 
               onStartsAtChange={setAllStartsAt}
               allCompletionDeadline={allCompletionDeadline}
               onCompletionDeadlineChange={setAllCompletionDeadline}
-              actionsRow={<AudienceActionsRow onCancel={handleCancel} onSave={handleSave} saving={saving} canSave={canSave} />}
             />
           ) : (
-            <div className="rounded-2xl border border-border bg-white p-6">
+            <div className="rounded-lg border border-border bg-white p-6">
               <div className="mb-4">
                 <p className="text-xs font-semibold tracking-wide text-secondary uppercase">Audience</p>
                 <p className="mt-0.5 text-sm text-primary">{previewLoading ? "Calculating…" : summaryText()}</p>
@@ -488,7 +495,6 @@ export default function SettingsTab({ courseId, readOnly }: { courseId: string; 
                 selectedRoles={selectedRoles}
                 onRolesChange={setSelectedRoles}
               />
-              <AudienceActionsRow onCancel={handleCancel} onSave={handleSave} saving={saving} canSave={canSave} />
             </div>
           )}
         </div>

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter, Plus_Jakarta_Sans, JetBrains_Mono } from "next/font/google";
 import QueryProvider from "@/lib/query-provider";
+import { getActiveTheme } from "@/lib/theme-config";
 import "./globals.css";
 
 // Design system lock (2026-07-05, Desktop Shell Visual Language spec) — Inter for body/UI text,
@@ -34,10 +35,17 @@ export const metadata: Metadata = {
   description: "TM Application",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  // UI Theme Switching — resolved server-side so the right theme is already on `<html>` for first
+  // paint (no client-side flash of the wrong theme). `data-theme="navy"` is the default; "violet"
+  // is the alternate (globals.css's base `:root` styles, overridden by the `[data-theme="navy"]`
+  // block when navy is active).
+  const theme = await getActiveTheme();
+
   return (
     <html
       lang="en"
+      data-theme={theme}
       className={`${inter.variable} ${plusJakartaSans.variable} ${jetBrainsMono.variable}`}
     >
       {/* Font variables live on <html>, not <body> — the `@theme` tokens that consume them

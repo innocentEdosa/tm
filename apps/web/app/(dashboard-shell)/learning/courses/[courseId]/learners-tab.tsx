@@ -122,7 +122,7 @@ export default function LearnersTab({ courseId, courseName }: { courseId: string
       </div>
 
       {learners.length === 0 ? (
-        <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-border py-16 text-center">
+        <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-border py-16 text-center">
           <Users className="h-8 w-8 text-muted" />
           <p className="font-semibold text-primary">No learners yet</p>
           <p className="max-w-sm text-sm text-muted">Once people enroll in this course, their progress will show up here.</p>

@@ -11,6 +11,7 @@ import { roleTemplates } from "../db/schema/role-templates";
 import { seedDefaultRolesForTenant } from "../permissions/seed-default-roles";
 import { seedDefaultDepartmentsForTenant } from "./seed-default-departments";
 import { seedDefaultCourseCategoriesForTenant } from "./seed-default-course-categories";
+import { seedDefaultBusinessObjectiveCategoriesForTenant } from "./seed-default-business-objective-categories";
 import { isReservedSubdomain } from "../tenant-routing/reserved-subdomains";
 import { tenantAuthMethods } from "../db/schema/tenant-auth-methods";
 import { generateOneTimePassword, otpExpiryFromNow } from "../tenant-auth/otp";
@@ -169,6 +170,11 @@ export async function provisionTenant(
     // usable immediately without an admin having to create them first — same "seed at provisioning"
     // idiom as departments above, no per-tenant customization input for this one (unlike departments).
     await seedDefaultCourseCategoriesForTenant(tenantDb, tenantId);
+
+    // Business Objectives (Strategy nav): same "usable immediately, no per-tenant customization
+    // input" reasoning as course categories above — a brand-new tenant shouldn't see an empty
+    // category combobox before anyone's created an objective yet.
+    await seedDefaultBusinessObjectiveCategoriesForTenant(tenantDb, tenantId);
 
     await client.query("COMMIT");
 

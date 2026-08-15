@@ -4,7 +4,17 @@
 /*
  * Design system lock (2026-07-04, Tenant Authentication Configuration spec — design-system/tm/).
  * Per constitution Principle V, this is the binding standard for all screens going forward, not a
- * one-off for this feature. Navy/blue B2B SaaS palette, Plus Jakarta Sans (layout.tsx).
+ * one-off for this feature. Plus Jakarta Sans (layout.tsx).
+ *
+ * Two themes now coexist (UI Theme Switching, 2026-08-12; navy made default 2026-08-15): the token
+ * values declared directly in this @theme block are the "violet" theme (a rich purple/violet
+ * accent, light sidebar, rounder corners, modeled on the "Mentori" reference) and are used whenever
+ * `<html>` has `data-theme="violet"`. A second theme, "navy" (deep-blue accent, dark-navy sidebar —
+ * the default), lives in the `[data-theme="navy"]` override block further down this file, activated
+ * the same way. Which one renders for a given request is decided server-side by
+ * apps/web/lib/theme-config.ts from apps/api's `/platform/theme` (Super-Admin-editable at
+ * /platform/settings, seeded by the `DEFAULT_THEME` env var) — not by anything in this file. Do not
+ * delete the "navy" block while both themes need to stay selectable.
  */
 @theme {
   --font-sans: var(--font-sans-loaded), system-ui, -apple-system, sans-serif;
@@ -14,21 +24,19 @@
 
   --color-primary: #0f172a;
   --color-secondary: #334155;
-  --color-cta: #1A56DB;
-  --color-cta-hover: #1E3A8A;
-  /* Content-well background (2026-07-13) — previously unused; white-on-white content read as too
-     clinical. Cards stay bg-white so they lift off this tinted surface. Border tuned to a cool grey
-     one step darker than the surface so the hairline stays visible instead of nearly disappearing
-     against it (was a warm tan, mismatched hue against this cool surface + too close in lightness). */
-  --color-surface: #fffcf9;
+  --color-cta: #7C3AED;
+  --color-cta-hover: #6D28D9;
+  --color-surface: #F8F9FB;
   --color-text: #020617;
   --color-border: #D9DEE3;
-  /* Sidebar chrome (2026-07-13). Trying a dark-navy variant to compare against the light warm-tint
-     version (--color-sidebar was #FDFCFA / --color-sidebar-hover #F5F2ED — revert to those two lines
-     to go back). Sidebar-scoped tokens only; nothing outside .shell-sidebar reads these. */
-  --color-sidebar: #0F172A;
-  --color-sidebar-hover: #1E293B;
-  --color-sidebar-border: #24304A;
+  /* Bumps the shared `rounded-lg` scale from Tailwind's 8px default to 12px — the "violet" theme's
+     cards/buttons read noticeably rounder than the "navy" theme's. Overriding the token instead of
+     touching classnames means every existing `rounded-lg` usage (surface-card, buttons, fields, etc.)
+     picks this up automatically; the "navy" override block below sets it back to 0.5rem. */
+  --radius-lg: 0.75rem;
+  --color-sidebar: #F8FAFB;
+  --color-sidebar-hover: #E7ECEF;
+  --color-sidebar-border: #D9DEE3;
 
   --shadow-card-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
   --shadow-card-md: 0 4px 6px rgba(0, 0, 0, 0.1);
@@ -140,7 +148,7 @@ select.field-input:not([multiple]) {
 /* Desktop Shell Visual Language spec — shadow removed, hairline border only (FR-008). One canonical
    card pattern: the `Card` component (packages/ui) renders this same class, not a competing one. */
 .surface-card {
-  @apply rounded-2xl border border-border bg-white p-8;
+  @apply rounded-lg border border-border bg-white p-8;
 }
 
 /* ─── Modal (packages/ui `Modal`) ─────────────────────────────── */
@@ -150,6 +158,9 @@ select.field-input:not([multiple]) {
 }
 .modal-panel {
   @apply w-full max-w-md max-h-[85vh] overflow-y-auto p-6;
+}
+.modal-panel-lg {
+  @apply max-w-3xl;
 }
 .modal-header {
   @apply mb-4 flex items-center justify-between gap-4;
@@ -263,19 +274,20 @@ select.field-input:not([multiple]) {
   @apply flex shrink-0 items-center gap-2.5 px-5 pt-6 pb-4;
 }
 .shell-sidebar-mark {
-  /* bg-primary would blend into the now-equally-dark sidebar; a white chip keeps the mark visible. */
-  @apply flex h-8 w-8 items-center justify-center rounded-lg bg-white text-xs font-semibold
-         text-primary;
+  /* Light sidebar: a dark chip reads clearly against it (the reverse of the dark-sidebar era, when
+     a white chip was needed instead — see the color-token comment above). */
+  @apply flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-xs font-semibold
+         text-white;
 }
 .shell-sidebar-wordmark {
-  @apply font-heading text-base font-bold tracking-tight text-white;
+  @apply font-heading text-base font-bold tracking-tight text-primary;
 }
 
 .shell-workspace-pill {
   @apply mx-3 mb-4 flex shrink-0 items-center justify-between gap-2 rounded-lg bg-sidebar-hover px-3 py-2;
 }
 .shell-workspace-pill-label {
-  @apply truncate text-sm font-medium text-white;
+  @apply truncate text-sm font-medium text-primary;
 }
 .shell-workspace-pill-chevron {
   @apply h-4 w-4 shrink-0 text-slate-400;
@@ -290,15 +302,17 @@ select.field-input:not([multiple]) {
 }
 
 .shell-nav-item {
-  @apply flex w-full items-center gap-3 rounded-lg px-2.5 py-2.5 text-[13px] font-medium text-slate-300
-         transition-colors duration-200 cursor-pointer hover:bg-sidebar-hover hover:text-white
+  @apply flex w-full items-center gap-3 rounded-lg px-2.5 py-2.5 text-[13px] font-medium text-secondary
+         transition-colors duration-200 cursor-pointer hover:bg-sidebar-hover hover:text-primary
          focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cta whitespace-nowrap;
 }
 .shell-nav-item[data-active="true"] {
-  @apply bg-cta/20 text-white hover:bg-cta/20 hover:text-white;
+  /* Solid dark pill (2026-08-11), not a tinted accent — matches the reference's active-nav treatment,
+     which is a distinct near-black pill rather than a light wash of the brand accent color. */
+  @apply bg-primary text-white hover:bg-primary hover:text-white;
 }
 .shell-nav-item[data-disabled="true"] {
-  @apply cursor-not-allowed text-slate-600 hover:bg-transparent hover:text-slate-600;
+  @apply cursor-not-allowed text-slate-300 hover:bg-transparent hover:text-slate-300;
 }
 .shell-nav-item-icon {
   @apply h-4 w-4 shrink-0;
@@ -311,7 +325,7 @@ select.field-input:not([multiple]) {
   @apply text-xs font-medium text-slate-400;
 }
 .shell-nav-tag {
-  @apply rounded-full border border-sidebar-border bg-sidebar-hover px-2 py-0.5 text-xs font-medium text-slate-300;
+  @apply rounded-full border border-sidebar-border bg-sidebar-hover px-2 py-0.5 text-xs font-medium text-slate-500;
 }
 
 .shell-nav-group-toggle {
@@ -349,10 +363,58 @@ select.field-input:not([multiple]) {
   @apply flex min-w-0 flex-col;
 }
 .shell-profile-primary {
-  @apply truncate text-sm font-medium text-white;
+  @apply truncate text-sm font-medium text-primary;
 }
 .shell-profile-secondary {
-  @apply truncate text-xs text-slate-400;
+  @apply truncate text-xs text-slate-500;
+}
+
+/* ============ Theme: navy ============
+   UI Theme Switching (2026-08-12) — the deep-blue/dark-sidebar design that was standard before the
+   2026-08-11 "Mentori" retheme above, restored as a selectable alternate rather than deleted. `<html
+   data-theme="navy">` is set server-side (apps/web/lib/theme-config.ts, reading apps/api's
+   `/platform/theme`, itself backed by the `platform_settings` DB row a Super Admin can flip from
+   /platform/settings, seeded from the `DEFAULT_THEME` env var). No attribute, or data-theme="violet",
+   keeps today's values from the @theme block above. Token values and .shell-* deltas below are
+   reconstructed from commit 3076ec3 ("Retheme the dashboard shell: tinted content well + dark
+   sidebar") plus the pre-2026-08-11 --color-cta/--color-cta-hover/--radius-lg — see that commit's
+   diff for the exact provenance of every value here rather than re-deriving from first principles. */
+[data-theme="navy"] {
+  --color-cta: #1A56DB;
+  --color-cta-hover: #1E3A8A;
+  --color-surface: #F8F9FA;
+  --color-sidebar: #0F172A;
+  --color-sidebar-hover: #1E293B;
+  --color-sidebar-border: #24304A;
+  --radius-lg: 0.5rem;
+}
+[data-theme="navy"] .shell-sidebar-mark {
+  /* bg-primary would blend into the now-equally-dark sidebar; a white chip keeps the mark visible. */
+  @apply bg-white text-primary;
+}
+[data-theme="navy"] .shell-sidebar-wordmark {
+  @apply text-white;
+}
+[data-theme="navy"] .shell-workspace-pill-label {
+  @apply text-white;
+}
+[data-theme="navy"] .shell-nav-item {
+  @apply text-slate-300 hover:text-white;
+}
+[data-theme="navy"] .shell-nav-item[data-active="true"] {
+  @apply bg-cta/20 text-white hover:bg-cta/20 hover:text-white;
+}
+[data-theme="navy"] .shell-nav-item[data-disabled="true"] {
+  @apply text-slate-600 hover:text-slate-600;
+}
+[data-theme="navy"] .shell-nav-tag {
+  @apply text-slate-300;
+}
+[data-theme="navy"] .shell-profile-primary {
+  @apply text-white;
+}
+[data-theme="navy"] .shell-profile-secondary {
+  @apply text-slate-400;
 }
 
 .shell-main {
@@ -491,7 +553,7 @@ select.field-input:not([multiple]) {
 }
 
 .login-brand-shape {
-  @apply pointer-events-none absolute rounded-3xl border border-white/10 bg-white/5;
+  @apply pointer-events-none absolute rounded-lg border border-white/10 bg-white/5;
 }
 
 .login-form-column {

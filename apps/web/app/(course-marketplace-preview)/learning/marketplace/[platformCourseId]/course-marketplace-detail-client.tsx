@@ -232,7 +232,7 @@ export default function CourseMarketplaceDetailClient({
             {/* Floating preview/purchase card — Udemy-style. Sits in its own grid column rather than
                 a true absolute overlap, which stays robust across content lengths. */}
             <div className="lg:-mb-24">
-              <div className="overflow-hidden rounded-2xl bg-white text-text shadow-card-lg">
+              <div className="overflow-hidden rounded-lg bg-white text-text shadow-card-lg">
                 <div className="aspect-video w-full bg-slate-100">
                   {course.courseImageUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element -- presigned R2 URL, no next/image domain config for it

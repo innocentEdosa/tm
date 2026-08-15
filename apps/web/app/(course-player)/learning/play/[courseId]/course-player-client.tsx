@@ -45,7 +45,7 @@ function ResourcesPanel({ contentItemId, subdomain }: { contentItemId: string; s
   if (!resources || resources.length === 0) return null;
 
   return (
-    <div className="mx-1 rounded-xl border border-border bg-white">
+    <div className="mx-1 rounded-lg border border-border bg-white">
       <p className="border-b border-border px-3 py-2 text-xs font-semibold tracking-wide text-secondary uppercase">Resources</p>
       {resources.map((r) => (
         <ResourceRow key={r.id} resource={r} subdomain={subdomain} />

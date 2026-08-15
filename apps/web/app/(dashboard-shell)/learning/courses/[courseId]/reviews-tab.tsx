@@ -134,7 +134,7 @@ export default function ReviewsTab({ courseId, readOnly, currentUserEmail }: { c
       </div>
 
       {allReviews.length === 0 ? (
-        <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-border py-16 text-center">
+        <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-border py-16 text-center">
           <MessageSquare className="h-8 w-8 text-muted" />
           <p className="font-semibold text-primary">No reviews yet</p>
           <p className="max-w-sm text-sm text-muted">Once learners rate or review this course, they&apos;ll show up here.</p>
@@ -202,7 +202,7 @@ export default function ReviewsTab({ courseId, readOnly, currentUserEmail }: { c
           </div>
 
           {sorted.length === 0 ? (
-            <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-border py-16 text-center">
+            <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-border py-16 text-center">
               <MessageSquare className="h-8 w-8 text-muted" />
               <p className="font-semibold text-primary">No matching reviews</p>
               <p className="max-w-sm text-sm text-muted">Try adjusting your filters.</p>

@@ -9,6 +9,7 @@ import { buildAssignmentVisibilityCondition, toResponseRows } from "./tenant-cou
 import { deleteAllAttachmentsForEntity } from "../attachments/tenant-attachment-routes";
 import { CONTENT_ITEM_TYPES, validateContentItemPayload, type ContentItemType } from "../course-content/content-item-payload-validation";
 import type { ImageCandidate } from "../images/image-provider";
+import { revertToDraftIfPublished } from "./revert-course-to-draft";
 
 /**
  * The application-service boundary for the tenant-scoped side of Course Management (AI Foundation
@@ -87,6 +88,7 @@ function ok<T>(data: T): CourseServiceResult<T> {
 function fail<T>(code: CourseServiceError["code"], message: string): CourseServiceResult<T> {
   return { ok: false, error: { code, message } };
 }
+
 
 /** AI Image Discovery & Course Asset Management Phase 1 — the shape written into
  * `file_attachments.metadata` (migration 0124) for an AI-selected image. Only ever built from a
@@ -564,6 +566,7 @@ export const CourseService = {
       })
       .returning();
     await ctx.db.update(courses).set({ outlineOrder: sql`array_append(${courses.outlineOrder}, ${created.id})` }).where(eq(courses.id, courseId));
+    await revertToDraftIfPublished(ctx.db, courseId);
 
     return ok(created);
   },
@@ -629,14 +632,18 @@ export const CourseService = {
     if (!moduleId) {
       await ctx.db.update(courses).set({ outlineOrder: sql`array_append(${courses.outlineOrder}, ${created.id})` }).where(eq(courses.id, courseId));
     }
+    await revertToDraftIfPublished(ctx.db, courseId);
 
     return ok(created);
   },
 
   /** Extracted verbatim from `PATCH /tenant/courses/:courseId` — same field-presence-based partial
    * update (`!== undefined`, never a full-object replace), same category auto-resolve-or-create,
-   * same unrestricted status transitions. Also covers `PATCH /tenant/courses/:courseId/objectives`'s
-   * `learningObjectives`/`requirements` — see `UpdateCourseInput`'s doc comment. */
+   * same unrestricted EXPLICIT status transitions (an `input.status` always wins outright). When
+   * `input.status` is omitted, though, editing any other field is itself Course Content
+   * Draft-Reversion's trigger — see `revertToDraftIfPublished`'s own doc comment. Also covers
+   * `PATCH /tenant/courses/:courseId/objectives`'s `learningObjectives`/`requirements` — see
+   * `UpdateCourseInput`'s doc comment. */
   async updateCourse(ctx: CourseServiceContext, courseId: string, input: UpdateCourseInput): Promise<CourseServiceResult<Awaited<ReturnType<typeof toResponseRows>>[number]>> {
     const [existing] = await ctx.db.select({ id: courses.id }).from(courses).where(eq(courses.id, courseId));
     if (!existing) {
@@ -669,7 +676,14 @@ export const CourseService = {
         ...(input.provider !== undefined ? { provider: input.provider } : {}),
         ...(input.cost !== undefined ? { cost: input.cost } : {}),
         ...(input.subcategory !== undefined ? { subcategory: input.subcategory } : {}),
-        ...(input.status !== undefined ? { status: input.status } : {}),
+        // An explicit status (e.g. the Publish/Unpublish action) always wins outright. Otherwise —
+        // any other field being edited here (details or, via the objectives route, learningObjectives/
+        // requirements) is a real content change: revert `active` → `draft` in the same statement via
+        // a CASE, rather than a second round trip (see `revertToDraftIfPublished`'s own doc comment
+        // for why this exists and what it's shared with).
+        ...(input.status !== undefined
+          ? { status: input.status }
+          : { status: sql`case when ${courses.status} = 'active' then 'draft' else ${courses.status} end` }),
         ...(learningObjectives !== undefined ? { learningObjectives } : {}),
         ...(requirements !== undefined ? { requirements } : {}),
         updatedByUserId: ctx.userId,
@@ -707,6 +721,7 @@ export const CourseService = {
       })
       .where(eq(courseModules.id, moduleId))
       .returning();
+    await revertToDraftIfPublished(ctx.db, existing.courseId);
 
     return ok(updated);
   },
@@ -746,6 +761,7 @@ export const CourseService = {
       })
       .where(eq(contentItems.id, contentItemId))
       .returning();
+    await revertToDraftIfPublished(ctx.db, existing.courseId);
 
     return ok(updated);
   },
@@ -774,6 +790,7 @@ export const CourseService = {
     for (let i = 0; i < moduleIds.length; i++) {
       await ctx.db.update(courseModules).set({ position: i }).where(eq(courseModules.id, moduleIds[i]));
     }
+    await revertToDraftIfPublished(ctx.db, courseId);
 
     const reordered = await ctx.db.select().from(courseModules).where(eq(courseModules.courseId, courseId)).orderBy(courseModules.position);
     return ok(reordered);
@@ -785,7 +802,7 @@ export const CourseService = {
    * in here — see `reorderLessons`' AI tool doc comment for why that matters for "wrong parent"
    * safety). */
   async reorderLessons(ctx: CourseServiceContext, moduleId: string, contentItemIds: string[]): Promise<CourseServiceResult<(typeof contentItems.$inferSelect)[]>> {
-    const [module] = await ctx.db.select({ id: courseModules.id }).from(courseModules).where(eq(courseModules.id, moduleId));
+    const [module] = await ctx.db.select({ id: courseModules.id, courseId: courseModules.courseId }).from(courseModules).where(eq(courseModules.id, moduleId));
     if (!module) {
       return fail("not_found", "Module not found");
     }
@@ -801,6 +818,7 @@ export const CourseService = {
     for (let i = 0; i < contentItemIds.length; i++) {
       await ctx.db.update(contentItems).set({ position: i }).where(eq(contentItems.id, contentItemIds[i]));
     }
+    await revertToDraftIfPublished(ctx.db, module.courseId);
 
     const reordered = await ctx.db.select().from(contentItems).where(eq(contentItems.moduleId, moduleId)).orderBy(contentItems.position);
     return ok(reordered);
@@ -863,6 +881,7 @@ export const CourseService = {
           metadata: buildImageAttachmentMetadata(candidate),
         })
         .returning();
+      await revertToDraftIfPublished(ctx.db, courseId);
       await ctx.db.execute(sql`RELEASE SAVEPOINT set_course_image`);
       return ok(created);
     } catch (err) {
@@ -881,7 +900,7 @@ export const CourseService = {
    * document/link resource, so this never silently deletes something the user attached manually.
    */
   async setLessonImage(ctx: CourseServiceContext, contentItemId: string, candidate: ImageCandidate): Promise<CourseServiceResult<typeof fileAttachments.$inferSelect>> {
-    const [lesson] = await ctx.db.select({ id: contentItems.id }).from(contentItems).where(eq(contentItems.id, contentItemId));
+    const [lesson] = await ctx.db.select({ id: contentItems.id, courseId: contentItems.courseId }).from(contentItems).where(eq(contentItems.id, contentItemId));
     if (!lesson) {
       return fail("not_found", "Lesson not found");
     }
@@ -910,6 +929,7 @@ export const CourseService = {
           metadata: buildImageAttachmentMetadata(candidate),
         })
         .returning();
+      await revertToDraftIfPublished(ctx.db, lesson.courseId);
       await ctx.db.execute(sql`RELEASE SAVEPOINT set_lesson_image`);
       return ok(created);
     } catch (err) {

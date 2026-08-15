@@ -10,6 +10,7 @@ import { fileAttachments } from "../db/schema/file-attachments";
 import { platformFileAttachments } from "../db/schema/platform-courses";
 import { users } from "../db/schema/users";
 import { validateAgainstAllowlist } from "./attachment-allowlist";
+import { revertToDraftIfPublished } from "../courses/revert-course-to-draft";
 import * as storage from "../storage/storage";
 import { resolveTenantStorageFolder } from "../storage/tenant-storage-path";
 import type { Db } from "../db/client";
@@ -162,8 +163,23 @@ const tenantAttachmentRoutes: FastifyPluginAsync = async (fastify) => {
   }
 
   async function resolveContentItem(tenantDb: typeof fastify.db, contentItemId: string) {
-    const [item] = await tenantDb.select({ id: contentItems.id }).from(contentItems).where(eq(contentItems.id, contentItemId));
+    const [item] = await tenantDb.select({ id: contentItems.id, courseId: contentItems.courseId }).from(contentItems).where(eq(contentItems.id, contentItemId));
     return item ?? null;
+  }
+
+  /** Course Content Draft-Reversion, applied to the polymorphic `file_attachments` table — resolves
+   * which course (if any) an attachment row belongs to and reverts it, covering both a course's own
+   * image (`entityType: "course"`, `entityId` IS the courseId) and a lesson resource/image
+   * (`entityType: "content_item"`, one lookup to its parent course). Every other `entityType`
+   * (`course_author`, and the platform-side ones this route never touches) isn't course content, so
+   * it's a no-op — the caller doesn't need to branch on `entityType` itself. */
+  async function revertCourseForAttachment(tenantDb: typeof fastify.db, attachment: FileAttachmentRow): Promise<void> {
+    if (attachment.entityType === "course") {
+      await revertToDraftIfPublished(tenantDb, attachment.entityId);
+    } else if (attachment.entityType === "content_item") {
+      const item = await resolveContentItem(tenantDb, attachment.entityId);
+      if (item) await revertToDraftIfPublished(tenantDb, item.courseId);
+    }
   }
 
   // POST /tenant/content-items/:contentItemId/attachments — spec FR-001/FR-002/FR-005/FR-012, contracts
@@ -198,6 +214,7 @@ const tenantAttachmentRoutes: FastifyPluginAsync = async (fastify) => {
             createdByUserId: request.user!.id,
           })
           .returning();
+        await revertToDraftIfPublished(request.tenantDb, item.courseId);
         return reply.code(201).send({ success: true, data: await toResponseRow(request.tenantDb, created) });
       }
 
@@ -373,6 +390,7 @@ const tenantAttachmentRoutes: FastifyPluginAsync = async (fastify) => {
         .where(eq(fileAttachments.id, attachmentId))
         .returning();
 
+      await revertCourseForAttachment(request.tenantDb, updated);
       return reply.code(200).send({ success: true, data: await toResponseRow(request.tenantDb, updated) });
     },
   );
@@ -452,6 +470,7 @@ const tenantAttachmentRoutes: FastifyPluginAsync = async (fastify) => {
       if (existing.storageKey) {
         await deleteObjectIfUnreferenced(request.tenantDb, existing.storageKey);
       }
+      await revertCourseForAttachment(request.tenantDb, existing);
       return reply.code(200).send({ success: true });
     },
   );
@@ -541,6 +560,7 @@ const tenantAttachmentRoutes: FastifyPluginAsync = async (fastify) => {
           createdByUserId: request.user!.id,
         })
         .returning();
+      await revertToDraftIfPublished(request.tenantDb, item.courseId);
 
       return reply.code(201).send({ success: true, data: await toResponseRow(request.tenantDb, created) });
     },
@@ -596,6 +616,7 @@ const tenantAttachmentRoutes: FastifyPluginAsync = async (fastify) => {
           createdByUserId: request.user!.id,
         })
         .returning();
+      await revertToDraftIfPublished(request.tenantDb, courseId);
 
       return reply.code(201).send({ success: true, data: await toResponseRow(request.tenantDb, created) });
     },

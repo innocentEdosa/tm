@@ -8,6 +8,7 @@ import { users } from "../db/schema/users";
 import { isCourseVisibleToCaller, wantsLearnerView, sendCourseServiceError } from "../courses/tenant-course-routes";
 import { deleteAllAttachmentsForEntity } from "../attachments/tenant-attachment-routes";
 import { CourseService, type PublishStatus as Status } from "../courses/course-service";
+import { revertToDraftIfPublished } from "../courses/revert-course-to-draft";
 
 type ModuleRow = typeof courseModules.$inferSelect;
 type ContentItemRow = typeof contentItems.$inferSelect;
@@ -200,6 +201,7 @@ const tenantCourseContentRoutes: FastifyPluginAsync = async (fastify) => {
       }
       await request.tenantDb.delete(courseModules).where(eq(courseModules.id, moduleId));
       await removeFromOutlineOrder(request.tenantDb, existing.courseId, moduleId);
+      await revertToDraftIfPublished(request.tenantDb, existing.courseId);
       return reply.code(200).send({ success: true });
     },
   );
@@ -252,6 +254,7 @@ const tenantCourseContentRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const [updated] = await request.tenantDb.update(courses).set({ outlineOrder: submitted }).where(eq(courses.id, courseId)).returning({ outlineOrder: courses.outlineOrder });
+      await revertToDraftIfPublished(request.tenantDb, courseId);
       return reply.code(200).send({ success: true, data: { outlineOrder: updated.outlineOrder } });
     },
   );
@@ -394,6 +397,7 @@ const tenantCourseContentRoutes: FastifyPluginAsync = async (fastify) => {
       if (existing.moduleId === null) {
         await removeFromOutlineOrder(request.tenantDb, existing.courseId, contentItemId);
       }
+      await revertToDraftIfPublished(request.tenantDb, existing.courseId);
       return reply.code(200).send({ success: true });
     },
   );
