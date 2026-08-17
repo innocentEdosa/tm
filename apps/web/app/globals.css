@@ -423,11 +423,14 @@ select.field-input:not([multiple]) {
 
 /* ─── Desktop shell topbar ─────────────────────────────────────
    Search + notifications + the signed-in user's identity, above the content area on every page.
-   Sits outside `.shell-content`'s own scroll region, so it stays put while content scrolls. Reuses
-   the shell's own tokens (border/cta) rather than introducing new colors. */
+   `sticky top-0` (not just `shrink-0`) — `.shell-content`'s own `overflow-y-auto` never actually
+   bounds a scroll region here (`.shell`/`.shell-main` have no fixed height for `flex-1` to fill
+   against), so the whole page scrolls at the document level; without `sticky` the topbar would
+   scroll away with it instead of staying pinned like `.shell-sidebar` already does. Reuses the
+   shell's own tokens (border/cta) rather than introducing new colors. */
 
 .shell-topbar {
-  @apply flex shrink-0 items-center justify-between gap-3 border-b border-border bg-surface px-10 py-2.5;
+  @apply sticky top-0 z-20 flex shrink-0 items-center justify-between gap-3 border-b border-border bg-surface px-10 py-2.5;
 }
 
 .shell-topbar-search {

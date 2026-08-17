@@ -27,15 +27,16 @@ type DepartmentRow = typeof departments.$inferSelect;
 const tenantDepartmentRoutes: FastifyPluginAsync = async (fastify) => {
   // GET /tenant/departments — spec FR-001/FR-014/FR-015, contracts/department-management-api.md.
   // Also readable by `course.manage` (Course Assignment Settings) — it needs the department list to
-  // populate the course-assignment picker, not to manage departments themselves — and by
+  // populate the course-assignment picker, not to manage departments themselves — by
   // `business_objective.manage`, which needs it (with `?search=`) to back the Business Objective
-  // form's Owner department picker.
+  // form's Owner department picker — and by `tna.manage`, which needs it to back the TNA exercise's
+  // department-targeting picker.
   fastify.get<{ Querystring: { search?: string } }>(
     "/tenant/departments",
     {
       preHandler: [
         requireTenantUserSession(),
-        requireAnyPermission("department.view", "course.manage", "business_objective.manage"),
+        requireAnyPermission("department.view", "course.manage", "business_objective.manage", "tna.manage"),
       ],
     },
     async (request) => {
@@ -102,7 +103,8 @@ const tenantDepartmentRoutes: FastifyPluginAsync = async (fastify) => {
   // Manager/Assistant Manager pickers, needed whenever creating or editing a department — gated by
   // the legacy superset or either of the two granular keys that actually use it (Granular
   // Permissions addendum), not a general user-directory permission. Also readable by `course.manage`,
-  // which needs it to back the Course Assignment audience builder's Users tab — `search` used to be
+  // which needs it to back the Course Assignment audience builder's Users tab, and by `tna.manage`,
+  // which needs it to back the TNA exercise's direct-user-targeting picker — `search` used to be
   // required (400 without it), fine for a type-to-search autocomplete but not for "browse everyone,
   // paginated" (the audience builder's actual need); now optional, returning every user ordered by
   // name when omitted, unchanged (still filtered, still un-paginated in effect) when given, so neither
@@ -113,7 +115,7 @@ const tenantDepartmentRoutes: FastifyPluginAsync = async (fastify) => {
     {
       preHandler: [
         requireTenantUserSession(),
-        requireAnyPermission("department.manage", "department.create", "department.edit", "course.manage"),
+        requireAnyPermission("department.manage", "department.create", "department.edit", "course.manage", "tna.manage"),
       ],
     },
     async (request) => {

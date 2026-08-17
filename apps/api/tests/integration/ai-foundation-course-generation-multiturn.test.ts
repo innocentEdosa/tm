@@ -20,8 +20,22 @@ import "../../src/ai/tools";
  * multi-turn tests.
  */
 
+/** `generateLessonInput.articleBody` is REQUIRED (min 300 chars) since the AI-Generated Lesson
+ * Content fix — filled in here for any lesson literal below that doesn't specify its own, so every
+ * other test here keeps testing what it was actually written to test. */
+const DEFAULT_TEST_ARTICLE_BODY =
+  "<p>This lesson walks through the core ideas for this part of the course, explaining the key terms and why they matter in practice for someone new to the topic.</p><p>It includes a worked example to reinforce the concept, then closes with a short summary of the main takeaways a learner should remember before moving on to the next lesson in this module.</p>";
+
+function withDefaultArticleBodies<T extends { modules?: unknown }>(plan: T): T {
+  const modules = (plan as { modules?: { lessons?: { articleBody?: string }[] }[] }).modules;
+  modules?.forEach((module) => module.lessons?.forEach((lesson) => {
+    if (lesson.articleBody === undefined) lesson.articleBody = DEFAULT_TEST_ARTICLE_BODY;
+  }));
+  return plan;
+}
+
 function samplePlan(overrides: Record<string, unknown> = {}) {
-  return {
+  return withDefaultArticleBodies({
     title: "Onboarding for New Employees",
     category: "Onboarding",
     deliveryMode: "self_paced",
@@ -31,7 +45,7 @@ function samplePlan(overrides: Record<string, unknown> = {}) {
       { title: "Tools and Access", lessons: [{ title: "Setting Up Accounts" }, { title: "Key Software" }] },
     ],
     ...overrides,
-  };
+  });
 }
 
 function confirmViaHttp(server: Awaited<ReturnType<typeof buildTestServer>>, tenantId: string, userId: string, executionId: string) {
@@ -82,7 +96,10 @@ describe("Course Generation AI — multi-turn scenarios (Phase 18)", () => {
         category: "Security",
         deliveryMode: "self_paced",
         duration: { value: 4, unit: "hours" },
-        modules: Array.from({ length: 4 }, (_, i) => ({ title: `Module ${i + 1}`, lessons: Array.from({ length: 3 }, (_, j) => ({ title: `Module ${i + 1} Lesson ${j + 1}` })) })),
+        modules: Array.from({ length: 4 }, (_, i) => ({
+          title: `Module ${i + 1}`,
+          lessons: Array.from({ length: 3 }, (_, j) => ({ title: `Module ${i + 1} Lesson ${j + 1}`, articleBody: DEFAULT_TEST_ARTICLE_BODY })),
+        })),
       };
       __setAiProviderForTesting(new ScriptedProvider([() => ({ content: null, toolCalls: [{ id: "c1", name: "generate_course_structure", arguments: plan }], stopReason: "tool_use", usage: usage() })]));
 

@@ -75,6 +75,15 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const canAccessBusinessObjective =
     session.permissions.includes("business_objective.manage") ||
     session.permissions.includes("business_objective.view");
+  // Training Needs Analysis (the real, HR-initiated exercise — distinct from `canAccessTna` above,
+  // which is actually Training Request's own flag, kept unrenamed since spec 020 only renamed the
+  // feature's user-facing labels, not its internal identifiers). Same single view/manage pair shape
+  // as Business Objectives, for the same reason: TNA authoring is inherently org-wide HR
+  // administration, not department-scoped self-service. A participant with a real assignment but no
+  // `tna.*` permission won't see this nav entry — they need a direct link (no notification system
+  // exists yet to hand them one automatically; see 0144's own migration comment).
+  const canAccessTnaAnalysis =
+    session.permissions.includes("tna.manage") || session.permissions.includes("tna.view");
   // Course Marketplace spec (029) — browsing and selecting reuses course.manage, no new permission
   // key (spec Clarifications, locked scope).
   const canAccessCourseMarketplace = session.permissions.includes("course.manage");
@@ -110,12 +119,12 @@ export default async function DashboardLayout({ children }: { children: React.Re
   });
 
   // "Strategy" (sidebar restructure) — replaces the former "Training Plan" group. The section itself
-  // now shows for either canAccessTna OR canAccessBusinessObjective (either feature's permission is
-  // enough to see "Strategy" at all); each real child entry is then independently included only for
-  // callers who actually hold its own permission, so e.g. a Business-Objective-only caller doesn't
-  // also see the (still permission-gated) Training Request entry. "Annual Learning Plan" and
-  // "Training Needs Analysis" remain permanent disabled stubs, unrelated to either flag.
-  if (canAccessTna || canAccessBusinessObjective) {
+  // now shows for canAccessTna, canAccessBusinessObjective, OR canAccessTnaAnalysis (any one
+  // feature's permission is enough to see "Strategy" at all); each real child entry is then
+  // independently included only for callers who actually hold its own permission, so e.g. a
+  // Business-Objective-only caller doesn't also see the (still permission-gated) Training Request
+  // or TNA entries. "Annual Learning Plan" remains a permanent disabled stub.
+  if (canAccessTna || canAccessBusinessObjective || canAccessTnaAnalysis) {
     navSections.push({
       key: "strategy",
       entries: [
@@ -128,7 +137,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
               ? [{ key: "business-objective", icon: "target" as const, label: "Business Objective", href: "/learning/business-objective" }]
               : [{ key: "business-objective", icon: "target" as const, label: "Business Objective", href: "/learning/business-objective", disabled: true, tag: "Soon" }]),
             { key: "annual-learning-plan", icon: "bookOpen", label: "Annual Learning Plan", href: "/learning/annual-learning-plan", disabled: true, tag: "Soon" },
-            { key: "tna", icon: "fileText", label: "Training Needs Analysis", href: "/learning/training-needs-analysis", disabled: true, tag: "Soon" },
+            ...(canAccessTnaAnalysis
+              ? [{ key: "tna", icon: "fileText" as const, label: "Training Needs Analysis", href: "/learning/training-needs-analysis" }]
+              : [{ key: "tna", icon: "fileText" as const, label: "Training Needs Analysis", href: "/learning/training-needs-analysis", disabled: true, tag: "Soon" }]),
             ...(canAccessTna
               ? [{ key: "training-request", icon: "clipboardList" as const, label: "Training Request", href: "/learning/training-requests" }]
               : []),

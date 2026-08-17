@@ -20,10 +20,11 @@ const tenantRoleRoutes: FastifyPluginAsync = async (fastify) => {
   // GET /tenant/roles — spec FR-001/FR-002, data-model.md "Role list row". Every role visible to
   // the tenant (RLS already scopes this), each with its permission keys, isSystem, and memberCount.
   // Also readable by `course.manage`, which needs the role list to populate the course-assignment
-  // picker's role target.
+  // picker's role target, and by `tna.manage`, which needs it for the TNA exercise's own
+  // role-targeting picker.
   fastify.get(
     "/tenant/roles",
-    { preHandler: [requireAnyPermission("manage_roles", "roles.read", "course.manage")] },
+    { preHandler: [requireAnyPermission("manage_roles", "roles.read", "course.manage", "tna.manage")] },
     async (request) => {
       const allRoles = await request.tenantDb.select().from(roles);
       const rolePerms = await request.tenantDb

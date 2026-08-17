@@ -980,6 +980,41 @@
       "when": 1786807728051,
       "tag": "0139_register_business_objective_form_type",
       "breakpoints": true
+    },
+    {
+      "idx": 140,
+      "version": "7",
+      "when": 1786911846095,
+      "tag": "0140_tna_exercises_and_assignments",
+      "breakpoints": true
+    },
+    {
+      "idx": 141,
+      "version": "7",
+      "when": 1786911846096,
+      "tag": "0141_rls_tna_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 142,
+      "version": "7",
+      "when": 1786911846097,
+      "tag": "0142_lock_tna_grants",
+      "breakpoints": true
+    },
+    {
+      "idx": 143,
+      "version": "7",
+      "when": 1786911846098,
+      "tag": "0143_seed_tna_permissions",
+      "breakpoints": true
+    },
+    {
+      "idx": 144,
+      "version": "7",
+      "when": 1786911846099,
+      "tag": "0144_register_tna_response_form_type",
+      "breakpoints": true
     }
   ]
 }

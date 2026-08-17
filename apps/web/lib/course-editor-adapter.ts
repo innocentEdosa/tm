@@ -74,6 +74,12 @@ export interface CourseEditorApi {
    * platform course's few attachments are cloned wholesale by `clone-platform-course.ts`, not picked
    * one-by-one by a Super Admin the way a tenant admin picks among their own tenant's files). */
   supportsFileManager: boolean;
+  /** AI-Assisted Course Generation — `generate_course_structure` (the AI tool this feature calls,
+   * `ai/tools/courses.ts`) is `scope: "tenant"` only; there's no platform-scoped equivalent. Gates
+   * `create-course-menu.tsx`'s "Generate with AI" entry point off entirely for platform
+   * course-marketplace authoring, same "hide the affordance rather than let it 404" convention as
+   * every other `supports*` flag here. */
+  supportsAiGeneration: boolean;
 
   /** Creates a minimal draft (title + placeholder metadata), the "Create a course" popover's
    * "Create manually"/SCORM-quick-create flows — the rest of the course is filled in on the editor
@@ -168,6 +174,7 @@ export function tenantCourseEditorApi(subdomain: string): CourseEditorApi {
     supportsScormImport: true,
     supportsMarketplaceUpdate: true,
     supportsFileManager: true,
+    supportsAiGeneration: true,
 
     async createDraftCourse(input) {
       const { data } = await tenantFetch<{ data: { id: string } }>("/courses", {
@@ -426,6 +433,7 @@ export function platformCourseEditorApi(): CourseEditorApi {
     supportsScormImport: false,
     supportsMarketplaceUpdate: false,
     supportsFileManager: false,
+    supportsAiGeneration: false,
 
     async createDraftCourse(input) {
       const { data } = await platformFetch<{ data: { id: string } }>("/admin/platform-courses", {

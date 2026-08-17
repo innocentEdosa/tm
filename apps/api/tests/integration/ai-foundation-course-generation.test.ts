@@ -20,7 +20,7 @@ import {
   type ToolInvocationResult,
 } from "../../src/ai/execution-state-machine";
 import { listTools, describeToolForProvider } from "../../src/ai/tool-registry";
-import { GENERATION_LIMITS } from "../../src/courses/course-service";
+import { CourseService, GENERATION_LIMITS } from "../../src/courses/course-service";
 import "../../src/ai/tools";
 import type { ToolContext } from "../../src/ai/types";
 
@@ -33,8 +33,23 @@ import type { ToolContext } from "../../src/ai/types";
  * reasoned about.
  */
 
+/** `generateLessonInput.articleBody` is REQUIRED (min 300 chars) since the AI-Generated Lesson
+ * Content fix — every lesson literal below that doesn't specify its own gets this filled in by
+ * `samplePlan`'s own post-processing so every other test here keeps testing what it was actually
+ * written to test, not schema validity of a field it doesn't care about. */
+const DEFAULT_TEST_ARTICLE_BODY =
+  "<p>This lesson walks through the core ideas for this part of the course, explaining the key terms and why they matter in practice for someone new to the topic.</p><p>It includes a worked example to reinforce the concept, then closes with a short summary of the main takeaways a learner should remember before moving on to the next lesson in this module.</p>";
+
+function withDefaultArticleBodies<T extends { modules?: unknown }>(plan: T): T {
+  const modules = (plan as { modules?: { lessons?: { articleBody?: string }[] }[] }).modules;
+  modules?.forEach((module) => module.lessons?.forEach((lesson) => {
+    if (lesson.articleBody === undefined) lesson.articleBody = DEFAULT_TEST_ARTICLE_BODY;
+  }));
+  return plan;
+}
+
 function samplePlan(overrides: Record<string, unknown> = {}) {
-  return {
+  return withDefaultArticleBodies({
     title: "Cybersecurity Awareness for New Employees",
     category: "Cybersecurity",
     deliveryMode: "self_paced",
@@ -45,7 +60,7 @@ function samplePlan(overrides: Record<string, unknown> = {}) {
       { title: "Passwords & Authentication", lessons: [{ title: "Password security" }, { title: "MFA" }] },
     ],
     ...overrides,
-  };
+  });
 }
 
 async function seedConversation(tenantId: string, userId: string, conversationId: string): Promise<void> {
@@ -178,14 +193,14 @@ describe("Course Generation AI — happy path creates the complete, correctly-or
     expect(module1Lessons.map((l) => l.title)).toEqual(["What is cybersecurity?", "Common security threats"]);
     expect(module1Lessons.map((l) => l.position)).toEqual([0, 1]);
     expect(module1Lessons.every((l) => l.type === "article")).toBe(true);
-    // No description given for this lesson — an honest placeholder body, not fabricated content.
-    expect((module1Lessons[0].payload as { body: string }).body).toMatch(/not been written/i);
+    // The lesson's own generated articleBody becomes its real content — not a placeholder.
+    expect((module1Lessons[0].payload as { body: string }).body).toBe(DEFAULT_TEST_ARTICLE_BODY);
 
     const module2Lessons = await readLessons(tenantId, modules[1].id);
     expect(module2Lessons.map((l) => l.title)).toEqual(["Password security", "MFA"]);
   });
 
-  it("a lesson's own generated description becomes its placeholder body, never a fabricated fact", async () => {
+  it("a lesson's own generated articleBody becomes its real payload body — never a fabricated fact, never just the short description", async () => {
     const tenantId = randomUUID();
     const userId = randomUUID();
     await seedTenant(tenantId);
@@ -194,9 +209,17 @@ describe("Course Generation AI — happy path creates the complete, correctly-or
     const conversationId = randomUUID();
     await seedConversation(tenantId, userId, conversationId);
 
+    const fullArticleBody =
+      "<p>Cloning a repository copies its full history to your machine so you can work locally.</p><p>Run <code>git clone &lt;url&gt;</code>, then <code>cd</code> into the new folder — you now have every commit, branch, and file the remote had.</p><p>In short: cloning is how you get a working copy of someone else's (or your own) repository onto your own computer.</p>";
     const plan = samplePlan({
       title: "Onboarding for Engineers",
-      modules: [{ title: "Git Basics", description: "An intro module.", lessons: [{ title: "Cloning a repo", description: "Covers how to clone a repository locally." }] }],
+      modules: [
+        {
+          title: "Git Basics",
+          description: "An intro module.",
+          lessons: [{ title: "Cloning a repo", description: "Covers how to clone a repository locally.", articleBody: fullArticleBody }],
+        },
+      ],
     });
     const proposal = await propose(tenantId, userId, plan, conversationId);
     await confirm(tenantId, userId, proposal.executionId);
@@ -204,7 +227,49 @@ describe("Course Generation AI — happy path creates the complete, correctly-or
     const [course] = await readCoursesByTitle(tenantId, "Onboarding for Engineers");
     const modules = await readModules(tenantId, course.id);
     const lessons = await readLessons(tenantId, modules[0].id);
-    expect((lessons[0].payload as { body: string }).body).toBe("Covers how to clone a repository locally.");
+    // The full articleBody is what's saved as the lesson's real content — the short `description`
+    // stays a separate, short blurb field, never conflated with the lesson's actual body anymore.
+    expect((lessons[0].payload as { body: string }).body).toBe(fullArticleBody);
+    expect(lessons[0].description).toBe("Covers how to clone a repository locally.");
+  });
+
+  it("CourseService.generateCourseStructure falls back to description, then an honest placeholder, if articleBody is absent (defense-in-depth for a caller that bypasses the AI tool's own required-field schema)", async () => {
+    const tenantId = randomUUID();
+    const userId = randomUUID();
+    await seedTenant(tenantId);
+    await seedUser(tenantId, userId);
+
+    const withDescriptionOnly = await runInOwnTransaction(tenantId, userId, (ctx) =>
+      CourseService.generateCourseStructure(ctx, {
+        title: "Service-Level Fallback Course",
+        category: "Test",
+        deliveryMode: "self_paced",
+        duration: { value: 1, unit: "hours" },
+        modules: [{ title: "M1", lessons: [{ title: "Has a description, no articleBody", description: "Just a short blurb." }] }],
+      }),
+    );
+    expect(withDescriptionOnly.ok).toBe(true);
+
+    const withNeither = await runInOwnTransaction(tenantId, userId, (ctx) =>
+      CourseService.generateCourseStructure(ctx, {
+        title: "Service-Level Fallback Course 2",
+        category: "Test",
+        deliveryMode: "self_paced",
+        duration: { value: 1, unit: "hours" },
+        modules: [{ title: "M1", lessons: [{ title: "Has neither" }] }],
+      }),
+    );
+    expect(withNeither.ok).toBe(true);
+
+    const [course1] = await readCoursesByTitle(tenantId, "Service-Level Fallback Course");
+    const [module1] = await readModules(tenantId, course1.id);
+    const [lesson1] = await readLessons(tenantId, module1.id);
+    expect((lesson1.payload as { body: string }).body).toBe("Just a short blurb.");
+
+    const [course2] = await readCoursesByTitle(tenantId, "Service-Level Fallback Course 2");
+    const [module2] = await readModules(tenantId, course2.id);
+    const [lesson2] = await readLessons(tenantId, module2.id);
+    expect((lesson2.payload as { body: string }).body).toMatch(/not been written/i);
   });
 
   it("reuses an existing category (case-insensitively) instead of creating a duplicate", async () => {

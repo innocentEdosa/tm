@@ -23,3 +23,13 @@ export function useSubdomain(): string {
   }
   return subdomain;
 }
+
+/** Non-throwing counterpart — for a component reused by BOTH a tenant tree (wrapped in
+ * `SubdomainProvider`) and a platform tree (never wrapped, since platform routes have no tenant
+ * subdomain at all), where reading the subdomain is only conditionally needed (e.g.
+ * `create-course-menu.tsx`'s AI generation call, tenant-only via `CourseEditorApi.supportsAiGeneration`).
+ * `useSubdomain()` above stays the throwing default for every tree that always has a provider — this
+ * exists only for the one genuinely-optional case, not as a blanket replacement. */
+export function useOptionalSubdomain(): string | null {
+  return useContext(SubdomainContext);
+}

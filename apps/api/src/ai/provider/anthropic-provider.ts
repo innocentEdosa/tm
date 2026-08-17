@@ -2,7 +2,11 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { AiProvider, ChatChunk, ChatInput, ChatMessage, ChatResult, ChatStopReason } from "./ai-provider";
 
 const DEFAULT_MODEL = "claude-sonnet-4-5-20250929";
-const DEFAULT_MAX_TOKENS = 4096;
+// Raised from 4096 so a chat-driven generate_course_structure call (no explicit ChatInput.maxTokens
+// of its own — only course-generation-routes.ts's one-shot call sets one) has room for every
+// lesson's full article body, not just structural metadata. Still the safe ceiling for the default
+// model without an extended-output beta header.
+const DEFAULT_MAX_TOKENS = 8192;
 
 function toAnthropicMessages(messages: ChatMessage[]): { system?: string; messages: Anthropic.MessageParam[] } {
   const systemParts = messages.filter((m) => m.role === "system").map((m) => m.content);
@@ -27,6 +31,14 @@ function toAnthropicMessages(messages: ChatMessage[]): { system?: string; messag
         blocks.push({ type: "tool_use", id: call.id, name: call.name, input: call.arguments });
       }
       return { role: "assistant", content: blocks };
+    }
+    if (m.role === "user" && m.images && m.images.length > 0) {
+      const blocks: Array<Anthropic.TextBlockParam | Anthropic.ImageBlockParam> = m.images.map((img) => ({
+        type: "image",
+        source: { type: "base64", media_type: img.mediaType as "image/jpeg" | "image/png" | "image/gif" | "image/webp", data: img.base64 },
+      }));
+      if (m.content) blocks.push({ type: "text", text: m.content });
+      return { role: "user", content: blocks };
     }
     return { role: m.role as "user" | "assistant", content: m.content };
   });

@@ -162,6 +162,11 @@ export const GENERATION_LIMITS = {
 export interface GenerateLessonInput {
   title?: string;
   description?: string | null;
+  /** The lesson's full, readable article content (Tiptap-compatible HTML) — required by the AI
+   * tool's own Zod schema (`generateLessonInput` in `ai/tools/courses.ts`), optional here only so
+   * this service-layer type doesn't hard-fail a caller that predates this field. When absent,
+   * `generateCourseStructure` falls back to the old placeholder behavior — see its own doc comment. */
+  articleBody?: string | null;
 }
 
 export interface GenerateModuleInput {
@@ -171,11 +176,12 @@ export interface GenerateModuleInput {
 }
 
 /** Deliberately narrower than `CreateCourseInput` — no `status` (always `draft`, exactly like
- * `createCourse`), and every module's lessons are structural only: `title`/`description`, never
- * `type`/`payload`. `generateCourseStructure` below hardcodes every generated lesson's `type` to
- * `"article"` with a minimal, honest placeholder body — see that method's own doc comment for why
- * (Phase 5 of the Course Generation task: "do not fabricate data," but `article` is the only content
- * type whose payload validation can be satisfied without inventing a URL/schedule/external source). */
+ * `createCourse`), and every module's lessons are structural only: `title`/`description`/
+ * `articleBody`, never `type`/`payload` directly. `generateCourseStructure` below hardcodes every
+ * generated lesson's `type` to `"article"` (the only content type whose payload validation can be
+ * satisfied without inventing a URL/schedule/external source) and its body to the lesson's own
+ * AI-generated `articleBody` — real, substantive content for a learner to read, not a placeholder —
+ * see that method's own doc comment for the fallback behavior when it's missing. */
 export interface GenerateCourseStructureInput {
   title?: string;
   description?: string | null;
@@ -1046,10 +1052,15 @@ export const CourseService = {
           const lessonInput = moduleInput.lessons[lessonIndex];
           // `article` is the only content type whose payload validation can be satisfied without
           // fabricating a URL/schedule/external source (see this method's own doc comment and
-          // `GenerateCourseStructureInput`'s). Prefers the lesson's own generated description as
-          // the body (legitimate structural content the model already produced as part of the
-          // plan) over an honest "not yet written" placeholder — never invented facts either way.
-          const body = lessonInput.description?.trim() || `Content for "${lessonInput.title!.trim()}" has not been written yet.`;
+          // `GenerateCourseStructureInput`'s). The lesson's own AI-generated `articleBody` (required
+          // by the tool's Zod schema — see `generateLessonInput` in `ai/tools/courses.ts`) is real,
+          // substantive content for a learner to read, not a placeholder. Falls back to the short
+          // `description` (or an honest "not yet written" placeholder) only for a caller that
+          // predates this field — never invented facts either way.
+          const body =
+            lessonInput.articleBody?.trim() ||
+            lessonInput.description?.trim() ||
+            `Content for "${lessonInput.title!.trim()}" has not been written yet.`;
           const [lesson] = await ctx.db
             .insert(contentItems)
             .values({

@@ -3,7 +3,9 @@ import type { ChatCompletionMessageParam, ChatCompletionMessageToolCall } from "
 import type { AiProvider, ChatChunk, ChatInput, ChatMessage, ChatResult, ChatStopReason } from "./ai-provider";
 
 const DEFAULT_MODEL = "gpt-4.1";
-const DEFAULT_MAX_TOKENS = 4096;
+// Raised from 4096 to match anthropic-provider.ts's own bump — a chat-driven generate_course_structure
+// call needs room for every lesson's full article body, not just structural metadata.
+const DEFAULT_MAX_TOKENS = 8192;
 
 /**
  * Converts our provider-agnostic history to OpenAI's shape. The one wrinkle: OpenAI's API rejects
@@ -22,7 +24,17 @@ function toOpenAiMessages(messages: ChatMessage[]): ChatCompletionMessageParam[]
     if (m.role === "system") {
       converted.push({ role: "system", content: m.content });
     } else if (m.role === "user") {
-      converted.push({ role: "user", content: m.content });
+      if (m.images && m.images.length > 0) {
+        converted.push({
+          role: "user",
+          content: [
+            ...(m.content ? [{ type: "text" as const, text: m.content }] : []),
+            ...m.images.map((img) => ({ type: "image_url" as const, image_url: { url: `data:${img.mediaType};base64,${img.base64}` } })),
+          ],
+        });
+      } else {
+        converted.push({ role: "user", content: m.content });
+      }
     } else if (m.role === "tool") {
       converted.push({ role: "tool", tool_call_id: m.toolCallId!, content: m.content });
     } else if (m.toolCalls && m.toolCalls.length > 0) {

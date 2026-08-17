@@ -18,6 +18,16 @@ const ALLOWLIST: Record<string, { contentTypes: string[]; maxSizeBytes: number }
     contentTypes: ["image/jpeg", "image/png", "image/gif", "image/webp"],
     maxSizeBytes: 5 * 1024 * 1024, // 5 MB
   },
+  /** AI-Assisted Course Generation's "Or upload document containing description" input — a syllabus
+   * PDF/DOCX, or an image the model reads as multimodal input (`ai/course-generation-routes.ts`).
+   * Not a real `file_attachments` row/entity — the upload is ephemeral (read once for its content,
+   * then deleted; see that route's own doc comment), but reuses this same allowlist mechanism rather
+   * than inventing a parallel validation path. 10 MB matches what the modal's own UI already
+   * advertises. */
+  ai_course_generation_document: {
+    contentTypes: ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "image/jpeg", "image/png", "image/webp"],
+    maxSizeBytes: 10 * 1024 * 1024, // 10 MB
+  },
 };
 
 export function validateAgainstAllowlist(

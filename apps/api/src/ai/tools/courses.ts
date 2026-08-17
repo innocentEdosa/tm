@@ -563,13 +563,23 @@ registerTool({
  *
  * Every generated lesson is hardcoded to `type: "article"` — the only content type whose payload
  * validation (`content-item-payload-validation.ts`) can be satisfied without fabricating a video
- * URL, a live-class schedule, or an external source. Its `payload.body` prefers the lesson's own
- * generated `description` (legitimate structural content, already grounded in the user's request)
- * over an honest, clearly-labeled "not yet written" placeholder — never invented facts either way.
+ * URL, a live-class schedule, or an external source. Its `payload.body` is the lesson's own
+ * REQUIRED `articleBody` — real, complete content for a learner to read, not a placeholder — same
+ * "write the actual content, never just a title/summary" bar `generate_lesson_content`'s own
+ * `articleBody` field already sets for a single lesson, reused here for consistency (verbatim
+ * language adapted, not reinvented) rather than the one-line `description`-as-body behavior this
+ * schema used to have.
  */
 const generateLessonInput = z.object({
   title: z.string().max(150).describe("The lesson's title."),
-  description: z.string().max(500).optional().describe("One or two sentences summarizing what this lesson covers — becomes the lesson's initial placeholder content (payload.body) if given; otherwise an honest 'not yet written' placeholder is used instead. Ground this in the module/course topic — never invent specific facts, statistics, or claims."),
+  description: z.string().max(500).optional().describe("One or two sentences summarizing what this lesson covers — shown as the lesson's own short blurb wherever the app lists lessons. Ground this in the module/course topic — never invent specific facts, statistics, or claims."),
+  articleBody: z
+    .string()
+    .min(300)
+    .max(3000)
+    .describe(
+      "REQUIRED — the lesson's COMPLETE article content for a learner to actually read, never a placeholder, a one-line summary, or a restatement of the title/description. Write real educational content: what this lesson covers, the key concepts explained in context, a concrete example or two, and a brief summary/key takeaways — as natural sections within this one piece of writing (there are no separate fields for them). Ground every claim in the course/module topic and the user's request — never fabricate specific facts, statistics, case studies, or sources that weren't stated or clearly implied. Format as simple HTML using ONLY these tags: <p>, <h3>, <ul>, <ol>, <li>, <strong>, <em>, <blockquote> — no <script>, no attributes, no other tags; this is rendered directly to learners and edited in a rich-text editor that only supports this tag set. Aim for roughly 150-400 words per lesson — genuinely useful, not exhaustive — and write more concisely per lesson (while still real and complete) on a course with many lessons, so every lesson still gets real content within one response.",
+    ),
 });
 
 const generateModuleInput = z.object({
@@ -613,7 +623,7 @@ registerTool({
   resource: "course",
   operation: "generate",
   description:
-    `THE DEFAULT tool for "create a course about X" / "build a course covering Y and Z" / any request for an entirely NEW course — generates a COMPLETE course (metadata, modules, AND each module's own lessons) as one single reviewable proposal. Prefer this over create_course_draft for virtually every new-course request, since a natural-language course request almost always implies real lesson content, not just bare module titles — only fall back to create_course_draft if the user explicitly wants just a module outline with no lessons at all. Do NOT use this to add modules or lessons to an EXISTING course, or to rebuild/replace one — use create_course_module/create_course_lesson for adding to an existing course, and if the user says something ambiguous like "rebuild this course," ask what they mean rather than assuming this tool applies. Every module needs at least one lesson (${GENERATION_LIMITS.minLessonsPerModule}-${GENERATION_LIMITS.maxLessonsPerModule} per module, ${GENERATION_LIMITS.minModules}-${GENERATION_LIMITS.maxModules} modules total) — if the request doesn't give you enough to work with (no topic/subject at all), ask a concise clarifying question instead of generating something arbitrary; otherwise use sensible judgment to fill in a coherent structure without over-interrogating the user. Ground every generated title, description, and objective in what the user actually asked for — never invent a cost, provider, or specific fact they didn't state or imply. The course is always created as an unpublished DRAFT (never active/published), and nothing is written to the database until the human reviewing this proposal explicitly confirms. Mutating — requires human confirmation.`,
+    `THE DEFAULT tool for "create a course about X" / "build a course covering Y and Z" / any request for an entirely NEW course — generates a COMPLETE course (metadata, modules, AND each module's own lessons, each with its own full article content) as one single reviewable proposal. Prefer this over create_course_draft for virtually every new-course request, since a natural-language course request almost always implies real lesson content, not just bare module titles — only fall back to create_course_draft if the user explicitly wants just a module outline with no lessons at all. Do NOT use this to add modules or lessons to an EXISTING course, or to rebuild/replace one — use create_course_module/create_course_lesson for adding to an existing course, and if the user says something ambiguous like "rebuild this course," ask what they mean rather than assuming this tool applies. Every module needs at least one lesson (${GENERATION_LIMITS.minLessonsPerModule}-${GENERATION_LIMITS.maxLessonsPerModule} per module, ${GENERATION_LIMITS.minModules}-${GENERATION_LIMITS.maxModules} modules total) — if the request doesn't give you enough to work with (no topic/subject at all), ask a concise clarifying question instead of generating something arbitrary; otherwise use sensible judgment to fill in a coherent structure without over-interrogating the user. EVERY lesson needs its own real, complete articleBody (see that field's own description) — never a one-line summary standing in for the lesson content; keep each lesson's content proportionally more concise on a course with many lessons so every single one still gets genuine content within this one response, rather than favoring lesson count over lesson quality — a smaller course where every lesson is genuinely readable is always better than a larger one with thin lessons. Ground every generated title, description, objective, and lesson body in what the user actually asked for — never invent a cost, provider, or specific fact they didn't state or imply. The course is always created as an unpublished DRAFT (never active/published), and nothing is written to the database until the human reviewing this proposal explicitly confirms. Mutating — requires human confirmation.`,
   inputSchema: generateCourseStructureInput,
   requiredPermissions: ["course.manage"],
   mutating: true,

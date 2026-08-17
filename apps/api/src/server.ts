@@ -21,6 +21,7 @@ import tenantDepartmentRoutes from "./departments/tenant-department-routes";
 import tenantFormRoutes from "./custom-fields/tenant-form-routes";
 import tenantTrainingNeedsRoutes from "./training-needs/tenant-training-needs-routes";
 import tenantBusinessObjectivesRoutes from "./business-objectives/tenant-business-objectives-routes";
+import tenantTnaRoutes from "./tna/tenant-tna-routes";
 import tenantCourseRoutes from "./courses/tenant-course-routes";
 import tenantCourseAuthorRoutes from "./courses/tenant-course-author-routes";
 import tenantCourseReviewRoutes from "./courses/tenant-course-review-routes";
@@ -38,6 +39,7 @@ import adminMarketplaceSelectionRoutes from "./course-marketplace/admin-marketpl
 import platformFormRoutes from "./form-builder/platform-form-routes";
 import tenantFormBuilderRoutes from "./form-builder/tenant-form-builder-routes";
 import aiRoutes from "./ai/routes";
+import courseGenerationRoutes from "./ai/course-generation-routes";
 import themeRoutes from "./platform-settings/theme-routes";
 
 export interface BuildServerOptions {
@@ -114,6 +116,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Fas
   await server.register(tenantFormRoutes);
   await server.register(tenantTrainingNeedsRoutes);
   await server.register(tenantBusinessObjectivesRoutes);
+  await server.register(tenantTnaRoutes);
   await server.register(tenantCourseRoutes);
   await server.register(tenantCourseAuthorRoutes);
   await server.register(tenantCourseReviewRoutes);
@@ -131,6 +134,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Fas
   await server.register(platformFormRoutes);
   await server.register(tenantFormBuilderRoutes);
   await server.register(aiRoutes);
+  await server.register(courseGenerationRoutes);
   await server.register(themeRoutes);
 
   server.get("/health", async () => ({

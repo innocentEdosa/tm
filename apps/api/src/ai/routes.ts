@@ -24,8 +24,10 @@ const SYSTEM_PROMPT =
  * comment on this convention. Note: `ToolInputInvalidError` reaches here only from the
  * `/ai/tool-executions/:id/confirm` route below — the in-chat message route handles it separately,
  * via `handleToolInputInvalid`, since a confirm-time failure has no "next turn" for a model to
- * recover on, but an in-chat one does. */
-function sendAiError(reply: FastifyReply, err: unknown) {
+ * recover on, but an in-chat one does. Exported so `course-generation-routes.ts` (a one-shot, no-chat
+ * caller of the same `invokeAi`/`invokeTool`/`confirmToolExecution` primitives) reuses this exact
+ * mapping instead of a second copy. */
+export function sendAiError(reply: FastifyReply, err: unknown) {
   if (err instanceof ToolNotFoundError) return reply.code(404).send({ success: false, message: err.message });
   if (err instanceof ToolPermissionDeniedError) return reply.code(403).send({ success: false, message: err.message });
   if (err instanceof ToolInputInvalidError) return reply.code(400).send({ success: false, message: "Invalid tool input", issues: err.issues });

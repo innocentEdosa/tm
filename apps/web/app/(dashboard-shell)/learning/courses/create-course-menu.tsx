@@ -1,15 +1,40 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
-import { FileText, Layers, ListChecks, Plus, Route, Sparkles, UploadCloud } from "lucide-react";
+import { FileText, FileUp, Layers, ListChecks, Plus, Route, Sparkles, UploadCloud, X } from "lucide-react";
 import { Button, Input, Modal } from "@tm/ui";
 import { useCourseEditorApi } from "@/lib/course-editor-context";
 import { uploadFileToPresignedUrl } from "@/lib/course-editor-adapter";
+import { useOptionalSubdomain } from "@/lib/subdomain-context";
+import { generateCourseFromAi } from "@/lib/ai-course-generation";
+
+// Tiptap/ProseMirror is one of the heaviest deps in @tm/ui — code-split it, same rationale as
+// course-details-panel.tsx's own dynamic import.
+const RichTextEditor = dynamic(() => import("@tm/ui").then((mod) => mod.RichTextEditor), {
+  ssr: false,
+  loading: () => <div className="h-[160px] animate-pulse rounded-lg border border-border bg-slate-50" />,
+});
 
 type ContentType = "course" | "quiz_assignment" | "learning_path";
 type CourseMethod = "ai" | "manual" | "scorm";
+
+// The "AI-Assisted Generation" supporting-document upload — this is a client-side-only accept/size
+// guard for immediate feedback; the real allowlist check (`attachment-allowlist.ts`'s
+// `ai_course_generation_document` entry) is enforced again server-side, same "trust nothing from the
+// client" posture as every other upload in this app.
+const AI_DOCUMENT_ACCEPT = ".pdf,.doc,.docx,.png,.jpg,.jpeg,.webp";
+const AI_DOCUMENT_MAX_BYTES = 10 * 1024 * 1024;
+
+/** The rich-text prompt editor's `onChange` gives back HTML (e.g. a truly empty editor is still
+ * `"<p></p>"`, not `""`) — `.trim()` alone can't tell "genuinely blank" from "just markup," so the
+ * Generate button's enabled state and this modal's own validation both need an actual visible-text
+ * check instead. */
+function hasVisibleText(html: string): boolean {
+  return html.replace(/<[^>]*>/g, "").trim().length > 0;
+}
 
 const CONTENT_TYPES: { id: ContentType; icon: ReactNode; iconBg: string; title: string; description: string }[] = [
   {
@@ -80,7 +105,10 @@ function ContentTypeCard({
  * package, unchanged from before this picker existed). The other two types have no backend concept
  * yet (no standalone quiz/assignment or learning-path entity), so they route to a "coming soon" note
  * instead of pretending to work — same convention as every other unbuilt entry point in this feature
- * (e.g. the AI modal below, `content-item-type-picker.tsx`'s own AI option).
+ * (e.g. `content-item-type-picker.tsx`'s own AI option). "Generate with AI" opens straight into the
+ * "AI-Assisted Generation" modal below — a rich-text prompt plus an optional supporting-document
+ * upload, no separate method-selection step — but nothing behind either field is wired up yet, so
+ * "Generate course" has nothing to actually call.
  */
 export default function CreateCourseMenu({
   editorBasePath = "/learning/courses",
@@ -95,15 +123,43 @@ export default function CreateCourseMenu({
 }) {
   const router = useRouter();
   const api = useCourseEditorApi();
+  // Optional, not `useSubdomain()` — this component is also rendered on the platform
+  // course-marketplace page, which has no `SubdomainProvider` at all (no tenant subdomain concept
+  // there). Only ever actually read when `api.supportsAiGeneration` is true, which is tenant-only.
+  const subdomain = useOptionalSubdomain();
   const [typeModalOpen, setTypeModalOpen] = useState(false);
   const [selectedType, setSelectedType] = useState<ContentType | null>(null);
   const [courseMethodModalOpen, setCourseMethodModalOpen] = useState(false);
   const [selectedCourseMethod, setSelectedCourseMethod] = useState<CourseMethod | null>(null);
   const [comingSoonType, setComingSoonType] = useState<ContentType | null>(null);
   const [aiModalOpen, setAiModalOpen] = useState(false);
+  // Deliberately never reset just by closing (via the X, backdrop click, or navigating back to an
+  // earlier step) — only a successful generation clears these. An admin who spent a minute writing a
+  // prompt and then closes the modal by mistake must find it exactly as they left it when they
+  // reopen "Generate with AI". `aiGenerating`/`aiGenerateError` live at this same level (not inside
+  // the modal's own JSX) for the same reason: closing the modal mid-generation must not lose track of
+  // an in-flight request — reopening shows "Generating…" still in progress rather than a blank form
+  // that looks like nothing is happening (this feature's own "user closes the modal while generation
+  // is running" requirement).
+  const [aiPrompt, setAiPrompt] = useState("");
+  const [aiDocumentFile, setAiDocumentFile] = useState<File | null>(null);
+  const [aiDocumentError, setAiDocumentError] = useState<string | null>(null);
+  const [aiGenerating, setAiGenerating] = useState(false);
+  const [aiGenerateError, setAiGenerateError] = useState<string | null>(null);
   const [scormModalOpen, setScormModalOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+
+  // Guards the async generation handler's own `setState` calls against firing after this component
+  // has unmounted (e.g. the admin navigates fully away from the courses list mid-generation) — the
+  // request itself is intentionally never aborted (this feature's own choice: a generation already
+  // in flight finishes and still creates the draft course even if its own UI is gone by then).
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   function openTypeModal() {
     setSelectedType(null);
@@ -150,6 +206,41 @@ export default function CreateCourseMenu({
     }
   }
 
+  function handleAiDocumentSelected(file: File | undefined) {
+    if (!file) return;
+    if (file.size > AI_DOCUMENT_MAX_BYTES) {
+      setAiDocumentError("That file is too large — PDF, DOCX, or images up to 10MB.");
+      return;
+    }
+    setAiDocumentError(null);
+    setAiDocumentFile(file);
+  }
+
+  async function handleGenerateCourse() {
+    if (aiGenerating) return; // guards against a duplicate submission from a double click
+    if (!hasVisibleText(aiPrompt) && !aiDocumentFile) {
+      setAiGenerateError("Describe the course or upload a document before generating.");
+      return;
+    }
+    if (!subdomain) return; // unreachable — the entry point is hidden whenever supportsAiGeneration is false
+
+    setAiGenerateError(null);
+    setAiGenerating(true);
+    try {
+      const { courseId } = await generateCourseFromAi({ subdomain, prompt: aiPrompt, documentFile: aiDocumentFile });
+      if (!isMountedRef.current) return;
+      setAiPrompt("");
+      setAiDocumentFile(null);
+      setAiModalOpen(false);
+      router.push(`${editorBasePath}/${courseId}/edit`);
+    } catch (err) {
+      if (!isMountedRef.current) return;
+      setAiGenerateError((err as Error).message);
+    } finally {
+      if (isMountedRef.current) setAiGenerating(false);
+    }
+  }
+
   return (
     <>
       {createError && <p className="banner-error mb-2">{createError}</p>}
@@ -181,17 +272,28 @@ export default function CreateCourseMenu({
         </div>
       </Modal>
 
-      <Modal open={courseMethodModalOpen} onClose={() => setCourseMethodModalOpen(false)} title="Create a course" size="lg">
+      <Modal
+        open={courseMethodModalOpen}
+        onClose={() => setCourseMethodModalOpen(false)}
+        onBack={() => {
+          setCourseMethodModalOpen(false);
+          setTypeModalOpen(true);
+        }}
+        title="Create a course"
+        size="lg"
+      >
         <div className="flex min-h-[420px] flex-col">
           <div className="grid flex-1 grid-cols-1 content-start gap-4 sm:grid-cols-2">
-            <ContentTypeCard
-              icon={<Sparkles className="h-4 w-4" />}
-              iconBg="bg-fuchsia-600"
-              title="Generate with AI"
-              description="Create a course draft with the power of AI"
-              selected={selectedCourseMethod === "ai"}
-              onClick={() => setSelectedCourseMethod("ai")}
-            />
+            {api.supportsAiGeneration && (
+              <ContentTypeCard
+                icon={<Sparkles className="h-4 w-4" />}
+                iconBg="bg-fuchsia-600"
+                title="Generate with AI"
+                description="Create a course draft with the power of AI"
+                selected={selectedCourseMethod === "ai"}
+                onClick={() => setSelectedCourseMethod("ai")}
+              />
+            )}
             <ContentTypeCard
               icon={<FileText className="h-4 w-4" />}
               iconBg="bg-emerald-600"
@@ -219,15 +321,123 @@ export default function CreateCourseMenu({
         </div>
       </Modal>
 
-      <Modal open={aiModalOpen} onClose={() => setAiModalOpen(false)} title="Coming soon">
-        <p className="text-sm text-secondary">
-          AI course generation isn&apos;t available yet. For now, use &ldquo;Create manually&rdquo;
-          {api.supportsScormImport && <> or &ldquo;Upload a SCORM package&rdquo;</>} to get started.
-        </p>
-        <div className="mt-4 flex justify-end">
-          <Button variant="secondary" onClick={() => setAiModalOpen(false)}>
-            Got it
-          </Button>
+      <Modal
+        open={aiModalOpen}
+        onClose={() => setAiModalOpen(false)}
+        onBack={() => {
+          setAiModalOpen(false);
+          setCourseMethodModalOpen(true);
+        }}
+        title="AI-Assisted Generation"
+        titleIcon={
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700">
+            <Sparkles className="h-4 w-4" />
+          </span>
+        }
+        size="lg"
+      >
+        <div className="flex min-h-[420px] flex-col">
+          <div className="flex-1 flex flex-col gap-4">
+            <p className="text-sm text-secondary">
+              Upload a syllabus document or provide a detailed description of the course you want, and our AI will draft the course
+              structure, modules, and quizzes for you to review.
+            </p>
+
+            {aiGenerateError && <p className="banner-error">{aiGenerateError}</p>}
+
+            <div>
+              <label className="field-label" htmlFor="ai-course-prompt">
+                Describe your course
+              </label>
+              <RichTextEditor
+                id="ai-course-prompt"
+                defaultValue={aiPrompt}
+                onChange={setAiPrompt}
+                placeholder="Describe the course goals, audience, and topics you want covered…"
+                readOnly={aiGenerating}
+              />
+            </div>
+
+            <div>
+              <label className="field-label" htmlFor="ai-course-document">
+                Or upload document containing description
+              </label>
+              <input
+                id="ai-course-document"
+                type="file"
+                accept={AI_DOCUMENT_ACCEPT}
+                className="hidden"
+                disabled={aiGenerating}
+                onChange={(e) => {
+                  handleAiDocumentSelected(e.target.files?.[0]);
+                  e.target.value = "";
+                }}
+              />
+              {aiDocumentError && <p className="field-error mb-1.5">{aiDocumentError}</p>}
+              {aiDocumentFile ? (
+                <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-slate-50 px-3 py-2">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <FileUp className="h-4 w-4 shrink-0 text-secondary" />
+                    <span className="truncate text-sm text-primary">{aiDocumentFile.name}</span>
+                  </div>
+                  <button
+                    type="button"
+                    aria-label="Remove document"
+                    disabled={aiGenerating}
+                    onClick={() => {
+                      setAiDocumentFile(null);
+                      setAiDocumentError(null);
+                    }}
+                    className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded text-secondary hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              ) : (
+                <label
+                  htmlFor="ai-course-document"
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    if (!aiGenerating) handleAiDocumentSelected(e.dataTransfer.files?.[0]);
+                  }}
+                  className={`flex w-full items-center gap-3 rounded-lg border border-dashed border-border bg-slate-50 px-4 py-3 text-left ${
+                    aiGenerating ? "cursor-not-allowed opacity-60" : "cursor-pointer hover:bg-slate-100"
+                  }`}
+                >
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border text-secondary">
+                    <FileUp className="h-4 w-4" />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-sm text-secondary">
+                      <span className="font-semibold underline">Click to upload</span> or drag and drop
+                    </span>
+                    <span className="block text-xs text-muted">PDF, DOCX, or images up to 10MB</span>
+                  </span>
+                </label>
+              )}
+            </div>
+
+            {aiGenerating ? (
+              <div className="banner-info flex items-center gap-3">
+                <span className="btn-spinner shrink-0 text-sky-600" aria-hidden="true" />
+                <p>
+                  <span className="font-semibold">Generating your course</span> — this can take a little while. Feel
+                  free to close this; we&apos;ll take you to it once it&apos;s ready.
+                </p>
+              </div>
+            ) : (
+              <p className="text-xs text-muted">
+                We&apos;ll draft a starting structure for you to review, edit, and publish — nothing goes live until you do.
+              </p>
+            )}
+          </div>
+
+          <div className="mt-6 flex justify-end">
+            <Button onClick={handleGenerateCourse} isLoading={aiGenerating} disabled={aiGenerating || (!hasVisibleText(aiPrompt) && !aiDocumentFile)}>
+              Generate course
+            </Button>
+          </div>
         </div>
       </Modal>
 
@@ -243,13 +453,31 @@ export default function CreateCourseMenu({
       </Modal>
 
       {api.supportsScormImport && (
-        <ScormQuickCreateModal open={scormModalOpen} onClose={() => setScormModalOpen(false)} editorBasePath={editorBasePath} />
+        <ScormQuickCreateModal
+          open={scormModalOpen}
+          onClose={() => setScormModalOpen(false)}
+          onBack={() => {
+            setScormModalOpen(false);
+            setCourseMethodModalOpen(true);
+          }}
+          editorBasePath={editorBasePath}
+        />
       )}
     </>
   );
 }
 
-function ScormQuickCreateModal({ open, onClose, editorBasePath }: { open: boolean; onClose: () => void; editorBasePath: string }) {
+function ScormQuickCreateModal({
+  open,
+  onClose,
+  onBack,
+  editorBasePath,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onBack: () => void;
+  editorBasePath: string;
+}) {
   const router = useRouter();
   const api = useCourseEditorApi();
   const [title, setTitle] = useState("");
@@ -310,6 +538,11 @@ function ScormQuickCreateModal({ open, onClose, editorBasePath }: { open: boolea
         if (uploading) return;
         reset();
         onClose();
+      }}
+      onBack={() => {
+        if (uploading) return;
+        reset();
+        onBack();
       }}
       title="Upload a SCORM package"
     >

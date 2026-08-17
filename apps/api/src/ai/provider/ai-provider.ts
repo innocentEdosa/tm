@@ -9,6 +9,13 @@ export interface ChatMessage {
   role: "system" | "user" | "assistant" | "tool";
   /** For `role: "tool"`, this is the tool's JSON-stringified result. */
   content: string;
+  /** AI-Assisted Course Generation — multimodal input, only meaningful on a `role: "user"` message.
+   * No existing vision/multimodal capability was found anywhere in this codebase prior to this
+   * (confirmed via audit); this is the minimum extension needed to let a course be generated from an
+   * uploaded image (e.g. a photographed syllabus) using each provider's own real vision support,
+   * rather than a separate OCR pipeline. Both `AnthropicProvider` and `OpenAiProvider` translate this
+   * into their own native image-content-block shape. */
+  images?: { base64: string; mediaType: string }[];
   /** Only set on a `role: "tool"` message — which prior tool call this result answers. */
   toolCallId?: string;
   /** Only set on a `role: "assistant"` message that actually invoked a tool (AI Foundation —
