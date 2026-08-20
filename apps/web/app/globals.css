@@ -43,6 +43,21 @@
   --shadow-card-lg: 0 10px 15px rgba(0, 0, 0, 0.1);
 }
 
+/* ─── Scrollbars ──────────────────────────────────────────────── */
+/* Windows (and Linux) render OS scrollbars by default, unlike macOS's auto-hiding overlay ones —
+   every scrollable element in the app (body, drawers, sidebars, dropdowns, etc.) hides its
+   scrollbar chrome here while staying fully scrollable by wheel/trackpad/touch/keyboard; nothing
+   about scroll behavior itself changes, only the bar's visibility. */
+* {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* legacy Edge/IE */
+}
+*::-webkit-scrollbar {
+  display: none; /* Chrome, Edge, Safari */
+  width: 0;
+  height: 0;
+}
+
 /* ─── Buttons ─────────────────────────────────────────────────── */
 
 .btn {
@@ -523,6 +538,9 @@ select.field-input:not([multiple]) {
 }
 .badge-accent {
   @apply bg-cta/10 text-cta;
+}
+.badge-danger {
+  @apply bg-red-50 text-red-700;
 }
 
 /* ─── Status banners ──────────────────────────────────────────── */

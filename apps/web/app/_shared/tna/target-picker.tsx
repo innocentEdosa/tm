@@ -14,7 +14,13 @@ export interface TargetRef {
  * fetches the full candidate list once (departments/roles are always tenant-bounded in size; users
  * capped at the same 100-row convention `DepartmentPicker`/Business Objectives' Owner field
  * already use) and filters client-side, since `/tenant/roles` has no server-side `search` param at
- * all and the other two lists are small enough that a round-trip per keystroke isn't worth it. */
+ * all and the other two lists are small enough that a round-trip per keystroke isn't worth it.
+ *
+ * Lives under `_shared` (not the `(dashboard-shell)` TNA list/detail folder it originally shipped
+ * in) because it's consumed both by the full-screen create/edit form (`(tna-editor)` route group,
+ * a separate top-level layout with no shared ancestor) and by the detail page's "Add participant"
+ * modal — the same cross-route-group sharing convention `_shared/form-builder` already
+ * established. */
 export default function TargetPicker({
   subdomain,
   label,

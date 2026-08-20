@@ -55,7 +55,16 @@ export default async function DashboardLayout({ children }: { children: React.Re
     session.permissions.includes("team.view.all") ||
     session.permissions.includes("team.view.department");
   const canManageAuth = session.permissions.includes("manage_authentication_settings");
-  const canManageDepartments = session.permissions.includes("department.manage");
+  // Granular Permissions addendum: department has its own create/edit/delete keys alongside the
+  // legacy `department.manage` superset (migration 0038) — this check previously tested only
+  // `department.manage`, so a role holding just `department.create` (say) never saw the nav entry
+  // at all, unlike every other module's nav check in this file, which already accounts for its own
+  // granular keys (canManageTeam, canAccessTna, etc.).
+  const canManageDepartments =
+    session.permissions.includes("department.manage") ||
+    session.permissions.includes("department.create") ||
+    session.permissions.includes("department.edit") ||
+    session.permissions.includes("department.delete");
   const canViewDepartments = canManageDepartments || session.permissions.includes("department.view");
   const canManageForms = session.permissions.includes("forms.manage.tenant") || session.permissions.includes("forms.tenant.read");
   const canManageRoles = session.permissions.includes("manage_roles") || session.permissions.includes("roles.read");
@@ -79,11 +88,15 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // which is actually Training Request's own flag, kept unrenamed since spec 020 only renamed the
   // feature's user-facing labels, not its internal identifiers). Same single view/manage pair shape
   // as Business Objectives, for the same reason: TNA authoring is inherently org-wide HR
-  // administration, not department-scoped self-service. A participant with a real assignment but no
-  // `tna.*` permission won't see this nav entry — they need a direct link (no notification system
-  // exists yet to hand them one automatically; see 0144's own migration comment).
+  // administration, not department-scoped self-service. `hasTnaAssignment` (tenant-auth/
+  // tenant-auth-routes.ts's `/tenant-auth/me`) additionally shows this entry to a plain assigned
+  // participant who holds neither `tna.manage` nor `tna.view` — reached via department manager/
+  // assistant-manager, role, or direct-user targeting, all of which resolve into the same
+  // `tna_assignments` ownership check, so one flag covers every targeting mechanism.
   const canAccessTnaAnalysis =
-    session.permissions.includes("tna.manage") || session.permissions.includes("tna.view");
+    session.permissions.includes("tna.manage") ||
+    session.permissions.includes("tna.view") ||
+    session.hasTnaAssignment;
   // Course Marketplace spec (029) — browsing and selecting reuses course.manage, no new permission
   // key (spec Clarifications, locked scope).
   const canAccessCourseMarketplace = session.permissions.includes("course.manage");
@@ -138,8 +151,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
               : [{ key: "business-objective", icon: "target" as const, label: "Business Objective", href: "/learning/business-objective", disabled: true, tag: "Soon" }]),
             { key: "annual-learning-plan", icon: "bookOpen", label: "Annual Learning Plan", href: "/learning/annual-learning-plan", disabled: true, tag: "Soon" },
             ...(canAccessTnaAnalysis
-              ? [{ key: "tna", icon: "fileText" as const, label: "Training Needs Analysis", href: "/learning/training-needs-analysis" }]
-              : [{ key: "tna", icon: "fileText" as const, label: "Training Needs Analysis", href: "/learning/training-needs-analysis", disabled: true, tag: "Soon" }]),
+              ? [{ key: "tna", icon: "fileText" as const, label: "Training Needs Analysis", href: "/strategy/training-needs-analysis" }]
+              : [{ key: "tna", icon: "fileText" as const, label: "Training Needs Analysis", href: "/strategy/training-needs-analysis", disabled: true, tag: "Soon" }]),
             ...(canAccessTna
               ? [{ key: "training-request", icon: "clipboardList" as const, label: "Training Request", href: "/learning/training-requests" }]
               : []),

@@ -1,9 +1,22 @@
 import type { MailMessage, MailSender } from "./mail-sender";
 import { ZeptoMailSender } from "./zeptomail-sender";
+import { SmtpMailSender } from "./smtp-mail-sender";
 
+// Unchanged from the original ZeptoMail-only value (research.md §3/§4's 5-second wrapper-resolves
+// guarantee, asserted by mailer.test.ts, depends on this staying well under 5000) — SmtpMailSender's
+// own internal per-phase timeouts (below this) are what actually bound an SMTP send; this remains the
+// backstop for both providers, not the primary cutoff for either.
 const SEND_TIMEOUT_MS = 3000;
 
-let activeSender: MailSender = new ZeptoMailSender();
+/** `MAIL_PROVIDER=smtp` selects `SmtpMailSender`; anything else (including unset) keeps the existing
+ * `ZeptoMailSender` default — no env change required for any environment already configured with
+ * `MAIL_API_TOKEN`/`MAIL_FROM_EMAIL`. Exported (not just used internally at module load) so this
+ * selection logic itself has a direct test seam, independent of `__setMailSenderForTesting`. */
+export function createDefaultSender(): MailSender {
+  return (process.env.MAIL_PROVIDER ?? "api").trim().toLowerCase() === "smtp" ? new SmtpMailSender() : new ZeptoMailSender();
+}
+
+let activeSender: MailSender = createDefaultSender();
 
 /** Test-only seam — never called outside tests. Lets tests install a fake `MailSender` to prove the
  * wrapper guarantees below hold independent of which provider is active (Email API Mailer spec, User

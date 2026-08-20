@@ -22,6 +22,7 @@ import tenantFormRoutes from "./custom-fields/tenant-form-routes";
 import tenantTrainingNeedsRoutes from "./training-needs/tenant-training-needs-routes";
 import tenantBusinessObjectivesRoutes from "./business-objectives/tenant-business-objectives-routes";
 import tenantTnaRoutes from "./tna/tenant-tna-routes";
+import publicTnaRoutes from "./tna/public-tna-routes";
 import tenantCourseRoutes from "./courses/tenant-course-routes";
 import tenantCourseAuthorRoutes from "./courses/tenant-course-author-routes";
 import tenantCourseReviewRoutes from "./courses/tenant-course-review-routes";
@@ -117,6 +118,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Fas
   await server.register(tenantTrainingNeedsRoutes);
   await server.register(tenantBusinessObjectivesRoutes);
   await server.register(tenantTnaRoutes);
+  await server.register(publicTnaRoutes);
   await server.register(tenantCourseRoutes);
   await server.register(tenantCourseAuthorRoutes);
   await server.register(tenantCourseReviewRoutes);

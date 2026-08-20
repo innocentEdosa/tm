@@ -148,6 +148,14 @@ export const FormRenderer = forwardRef<FormRendererHandle, FormRendererProps>(fu
   function validateFields(fields: FormField[]): Record<string, string> {
     const errs: Record<string, string> = {};
     for (const field of fields) {
+      // A system field's `fieldType`/`options`/`isRequired` are nominal placeholder labels only
+      // (see `form_fields.isSystem` doc comment, apps/api/src/db/schema/custom-fields.ts) — the
+      // consuming page always renders its own bespoke control for it via `fieldRenderers` and
+      // performs its own required/type checks before calling `validate()`. Generically validating
+      // a system field here against its nominal type would be wrong in general (e.g. a `select`
+      // system field with no configured `options` would never pass), so only real (platform/tenant)
+      // fields go through this generic check.
+      if (field.isSystem) continue;
       const message = validateFieldValue(field, values[field.fieldKey]);
       if (message) errs[field.fieldKey] = message;
     }

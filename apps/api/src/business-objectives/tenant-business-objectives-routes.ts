@@ -1,5 +1,5 @@
 import type { FastifyPluginAsync } from "fastify";
-import { eq, asc } from "drizzle-orm";
+import { eq, asc, isNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { requireTenantUserSession } from "../tenant-auth/require-tenant-user-session";
 import { requireAnyPermission } from "../permissions/require-permission";
@@ -50,6 +50,7 @@ function selectRow() {
     status: businessObjectives.status,
     createdByUserId: businessObjectives.createdByUserId,
     createdByName: creator.fullName,
+    archivedAt: businessObjectives.archivedAt,
     createdAt: businessObjectives.createdAt,
     updatedAt: businessObjectives.updatedAt,
   };
@@ -57,12 +58,12 @@ function selectRow() {
 
 interface BusinessObjectiveWriteBody {
   title?: string;
-  category?: string;
+  category?: string | null;
   description?: string | null;
   ownerDepartmentId?: string;
   dueDate?: string;
   priority?: Priority;
-  metricName?: string;
+  metricName?: string | null;
   baselineValue?: number | null;
   targetValue?: number | null;
   status?: Status;
@@ -76,22 +77,14 @@ function validateWriteBody(
   if (!partial || body.title !== undefined) {
     if (!body.title || !body.title.trim()) return "title is required";
   }
-  if (!partial || body.category !== undefined) {
-    if (!body.category || !body.category.trim()) return "category is required";
-  }
   if (!partial || body.ownerDepartmentId !== undefined) {
     if (!body.ownerDepartmentId) return "ownerDepartmentId is required";
   }
   if (!partial || body.dueDate !== undefined) {
     if (!body.dueDate || Number.isNaN(Date.parse(body.dueDate))) return "dueDate must be a valid date";
   }
-  if (!partial || body.priority !== undefined) {
-    if (!body.priority || !PRIORITIES.includes(body.priority)) {
-      return "priority must be one of low, medium, high";
-    }
-  }
-  if (!partial || body.metricName !== undefined) {
-    if (!body.metricName || !body.metricName.trim()) return "metricName is required";
+  if (body.priority !== undefined && !PRIORITIES.includes(body.priority)) {
+    return "priority must be one of low, medium, high";
   }
   if (body.targetValue !== undefined && body.targetValue !== null && Number.isNaN(Number(body.targetValue))) {
     return "targetValue must be a number";
@@ -130,6 +123,7 @@ const tenantBusinessObjectivesRoutes: FastifyPluginAsync = async (fastify) => {
         .leftJoin(businessObjectiveCategories, eq(businessObjectiveCategories.id, businessObjectives.categoryId))
         .leftJoin(departments, eq(departments.id, businessObjectives.ownerDepartmentId))
         .leftJoin(creator, eq(creator.id, businessObjectives.createdByUserId))
+        .where(isNull(businessObjectives.archivedAt))
         .orderBy(asc(businessObjectives.dueDate))
         .limit(LIST_LIMIT);
 
@@ -195,12 +189,16 @@ const tenantBusinessObjectivesRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(422).send({ success: false, message: "Owning department not found or not active" });
       }
 
-      const category = await resolveOrCreateBusinessObjectiveCategory(
-        request.tenantDb,
-        request.user!.tenantId,
-        body.category!,
-        request.user!.id,
-      );
+      const categoryId = body.category?.trim()
+        ? (
+            await resolveOrCreateBusinessObjectiveCategory(
+              request.tenantDb,
+              request.user!.tenantId,
+              body.category,
+              request.user!.id,
+            )
+          ).id
+        : null;
 
       // Validated before the insert (save-values.ts's own commit-on-response caveat) — Business
       // Objectives has no draft/submit workflow the way training_needs does, so every create
@@ -216,12 +214,12 @@ const tenantBusinessObjectivesRoutes: FastifyPluginAsync = async (fastify) => {
         .values({
           tenantId: request.user!.tenantId,
           title: body.title!.trim(),
-          categoryId: category.id,
+          categoryId,
           description: body.description?.trim() || null,
           ownerDepartmentId: body.ownerDepartmentId!,
           dueDate: body.dueDate!,
-          priority: body.priority!,
-          metricName: body.metricName!.trim(),
+          priority: body.priority ?? "medium",
+          metricName: body.metricName?.trim() || null,
           baselineValue: body.baselineValue ?? null,
           targetValue: body.targetValue ?? null,
           status: body.status ?? "not_started",
@@ -279,15 +277,18 @@ const tenantBusinessObjectivesRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
-      let categoryId: string | undefined;
+      let categoryId: string | null | undefined;
       if (body.category !== undefined) {
-        const category = await resolveOrCreateBusinessObjectiveCategory(
-          request.tenantDb,
-          request.user!.tenantId,
-          body.category,
-          request.user!.id,
-        );
-        categoryId = category.id;
+        categoryId = body.category?.trim()
+          ? (
+              await resolveOrCreateBusinessObjectiveCategory(
+                request.tenantDb,
+                request.user!.tenantId,
+                body.category,
+                request.user!.id,
+              )
+            ).id
+          : null;
       }
 
       const fields = await getFormFields(request.tenantDb, FORM_KEY);
@@ -307,7 +308,7 @@ const tenantBusinessObjectivesRoutes: FastifyPluginAsync = async (fastify) => {
           ...(body.ownerDepartmentId !== undefined ? { ownerDepartmentId: body.ownerDepartmentId } : {}),
           ...(body.dueDate !== undefined ? { dueDate: body.dueDate } : {}),
           ...(body.priority !== undefined ? { priority: body.priority } : {}),
-          ...(body.metricName !== undefined ? { metricName: body.metricName.trim() } : {}),
+          ...(body.metricName !== undefined ? { metricName: body.metricName?.trim() || null } : {}),
           ...(body.baselineValue !== undefined ? { baselineValue: body.baselineValue } : {}),
           ...(body.targetValue !== undefined ? { targetValue: body.targetValue } : {}),
           ...(body.status !== undefined ? { status: body.status } : {}),
@@ -325,6 +326,42 @@ const tenantBusinessObjectivesRoutes: FastifyPluginAsync = async (fastify) => {
           fields,
         );
       }
+
+      const [row] = await request.tenantDb
+        .select(selectRow())
+        .from(businessObjectives)
+        .leftJoin(businessObjectiveCategories, eq(businessObjectiveCategories.id, businessObjectives.categoryId))
+        .leftJoin(departments, eq(departments.id, businessObjectives.ownerDepartmentId))
+        .leftJoin(creator, eq(creator.id, businessObjectives.createdByUserId))
+        .where(eq(businessObjectives.id, businessObjectiveId));
+
+      return reply.code(200).send({ success: true, data: row });
+    },
+  );
+
+  // POST /tenant/business-objectives/:businessObjectiveId/archive — drawer's "Archive objective"
+  // action (screenshot-driven redesign). Idempotent, mirrors `POST /tenant/courses/:courseId/archive`:
+  // a reversible lifecycle change (hidden from the default list above), not a delete — re-archiving
+  // an already-archived objective just re-stamps `archivedAt`, no error.
+  fastify.post<{ Params: { businessObjectiveId: string } }>(
+    "/tenant/business-objectives/:businessObjectiveId/archive",
+    {
+      preHandler: [requireTenantUserSession(), requireAnyPermission("business_objective.manage")],
+    },
+    async (request, reply) => {
+      const { businessObjectiveId } = request.params;
+      const [existing] = await request.tenantDb
+        .select({ id: businessObjectives.id })
+        .from(businessObjectives)
+        .where(eq(businessObjectives.id, businessObjectiveId));
+      if (!existing) {
+        return reply.code(404).send({ success: false, message: "Not found" });
+      }
+
+      await request.tenantDb
+        .update(businessObjectives)
+        .set({ archivedAt: new Date(), updatedAt: new Date() })
+        .where(eq(businessObjectives.id, businessObjectiveId));
 
       const [row] = await request.tenantDb
         .select(selectRow())

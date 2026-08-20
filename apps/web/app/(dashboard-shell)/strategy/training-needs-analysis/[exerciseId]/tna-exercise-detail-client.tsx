@@ -1,13 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft } from "lucide-react";
 import { Card, Badge, Button, Drawer, Modal, Toast, type ToastVariant } from "@tm/ui";
 import { useEffectiveForm } from "@tm/form-builder";
 import { tenantFetch } from "@/lib/tenant-api-client";
-import TnaExerciseFormDrawer, { type EditableExercise } from "../tna-exercise-form-drawer";
+import TargetPicker, { type TargetRef } from "@/app/_shared/tna/target-picker";
 
 type ExerciseStatus = "draft" | "active" | "closed" | "under_review" | "committed";
 
@@ -26,9 +26,26 @@ const STATUS_BADGE: Record<ExerciseStatus, "neutral" | "warning" | "success" | "
   committed: "success",
 };
 
-interface ExerciseDetail extends EditableExercise {
+interface ExerciseTargetRow {
+  targetType: "department" | "role" | "user";
+  departmentId: string | null;
+  departmentName: string | null;
+  roleId: string | null;
+  roleName: string | null;
+  userId: string | null;
+  userName: string | null;
+}
+
+interface ExerciseDetail {
+  id: string;
+  title: string;
+  description: string | null;
+  endDate: string;
+  targetsAllDepartments: boolean;
+  targets: ExerciseTargetRow[];
   status: ExerciseStatus;
   createdByName: string | null;
+  startedAt: string | null;
   committedByName: string | null;
   committedAt: string | null;
   progress: { assigned: number; submitted: number; pending: number; completionPercent: number };
@@ -50,6 +67,10 @@ function formatDate(value: string): string {
   return date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
 
+function isPastEndDate(endDate: string): boolean {
+  return endDate < new Date().toISOString().slice(0, 10);
+}
+
 export default function TnaExerciseDetailClient({
   subdomain,
   exerciseId,
@@ -61,11 +82,16 @@ export default function TnaExerciseDetailClient({
 }) {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const [editOpen, setEditOpen] = useState(false);
   const [viewingAssignmentId, setViewingAssignmentId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; variant: ToastVariant } | null>(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [commitConfirmOpen, setCommitConfirmOpen] = useState(false);
+  const [addParticipantOpen, setAddParticipantOpen] = useState(false);
+  const [newParticipantUser, setNewParticipantUser] = useState<TargetRef[]>([]);
+  const [newParticipantDepartment, setNewParticipantDepartment] = useState<TargetRef[]>([]);
+  const [addParticipantError, setAddParticipantError] = useState<string | null>(null);
+  const [removeAssignmentId, setRemoveAssignmentId] = useState<string | null>(null);
 
   const exerciseQuery = useQuery({
     queryKey: ["tna-exercise", exerciseId, subdomain],
@@ -75,6 +101,17 @@ export default function TnaExerciseDetailClient({
     },
   });
   const exercise = exerciseQuery.data;
+
+  // One-shot success toast after redirecting back from the full-screen edit page
+  // (tna-exercise-form.tsx), matching business-objectives-client.tsx's own pattern.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("updated") === "1") {
+      setToast({ message: "TNA exercise updated.", variant: "success" });
+      router.replace(`/strategy/training-needs-analysis/${exerciseId}`);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const assignmentsQuery = useQuery({
     queryKey: ["tna-exercise-assignments", exerciseId, subdomain],
@@ -93,14 +130,25 @@ export default function TnaExerciseDetailClient({
   }
 
   const actionMutation = useMutation({
-    mutationFn: async (action: "start" | "close" | "begin-review" | "commit") => {
-      await tenantFetch(`/tna-exercises/${exerciseId}/${action}`, { method: "POST", subdomain });
+    mutationFn: async ({
+      action,
+      confirmDespitePending,
+    }: {
+      action: "start" | "close" | "reopen" | "begin-review" | "commit";
+      confirmDespitePending?: boolean;
+    }) => {
+      await tenantFetch(`/tna-exercises/${exerciseId}/${action}`, {
+        method: "POST",
+        subdomain,
+        body: action === "commit" ? { confirmDespitePending: !!confirmDespitePending } : undefined,
+      });
     },
-    onSuccess: (_data, action) => {
+    onSuccess: (_data, { action }) => {
       setActionError(null);
       const messages: Record<string, string> = {
         start: "TNA started — assignments created.",
         close: "TNA closed.",
+        reopen: "TNA reopened.",
         "begin-review": "TNA moved to review.",
         commit: "TNA committed.",
       };
@@ -110,12 +158,55 @@ export default function TnaExerciseDetailClient({
     onError: (err: Error) => setActionError(err.message),
   });
 
+  function handleCommitClick() {
+    if ((exercise?.progress.pending ?? 0) > 0) {
+      setCommitConfirmOpen(true);
+    } else {
+      actionMutation.mutate({ action: "commit" });
+    }
+  }
+
   const deleteMutation = useMutation({
     mutationFn: async () => {
       await tenantFetch(`/tna-exercises/${exerciseId}`, { method: "DELETE", subdomain });
     },
-    onSuccess: () => router.push("/learning/training-needs-analysis"),
+    onSuccess: () => router.push("/strategy/training-needs-analysis"),
     onError: (err: Error) => setActionError(err.message),
+  });
+
+  const addParticipantMutation = useMutation({
+    mutationFn: async () => {
+      if (newParticipantUser.length === 0) throw new Error("Select a person to add.");
+      await tenantFetch(`/tna-exercises/${exerciseId}/assignments`, {
+        method: "POST",
+        subdomain,
+        body: { userId: newParticipantUser[0]!.id, departmentId: newParticipantDepartment[0]?.id ?? null },
+      });
+    },
+    onSuccess: () => {
+      setAddParticipantOpen(false);
+      setNewParticipantUser([]);
+      setNewParticipantDepartment([]);
+      setAddParticipantError(null);
+      setToast({ message: "Participant added.", variant: "success" });
+      invalidate();
+    },
+    onError: (err: Error) => setAddParticipantError(err.message),
+  });
+
+  const removeAssignmentMutation = useMutation({
+    mutationFn: async (assignmentId: string) => {
+      await tenantFetch(`/tna-assignments/${assignmentId}`, { method: "DELETE", subdomain });
+    },
+    onSuccess: () => {
+      setRemoveAssignmentId(null);
+      setToast({ message: "Participant removed.", variant: "success" });
+      invalidate();
+    },
+    onError: (err: Error) => {
+      setRemoveAssignmentId(null);
+      setActionError(err.message);
+    },
   });
 
   if (exerciseQuery.isPending) {
@@ -147,7 +238,7 @@ export default function TnaExerciseDetailClient({
       <button
         type="button"
         className="mb-4 flex cursor-pointer items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-primary"
-        onClick={() => router.push("/learning/training-needs-analysis")}
+        onClick={() => router.push("/strategy/training-needs-analysis")}
       >
         <ArrowLeft className="h-4 w-4" />
         Training Needs Analysis
@@ -157,34 +248,45 @@ export default function TnaExerciseDetailClient({
         <div className="flex items-center gap-3">
           <h1 className="shell-page-header-title text-xl">{exercise.title}</h1>
           <Badge variant={STATUS_BADGE[exercise.status]}>{STATUS_LABEL[exercise.status]}</Badge>
+          {exercise.status === "active" && isPastEndDate(exercise.endDate) && <Badge variant="warning">Overdue</Badge>}
         </div>
         {canManage && (
           <div className="flex gap-2">
             {exercise.status === "draft" && (
               <>
-                <Button variant="secondary" onClick={() => setEditOpen(true)}>
+                <Button variant="secondary" onClick={() => router.push(`/strategy/training-needs-analysis/${exerciseId}/edit`)}>
                   Edit
                 </Button>
                 <Button variant="secondary" onClick={() => setDeleteConfirmOpen(true)}>
                   Delete
                 </Button>
-                <Button isLoading={actionMutation.isPending} onClick={() => actionMutation.mutate("start")}>
+                <Button isLoading={actionMutation.isPending} onClick={() => actionMutation.mutate({ action: "start" })}>
                   Start TNA
                 </Button>
               </>
             )}
+            {(exercise.status === "active" || exercise.status === "closed" || exercise.status === "under_review") && (
+              <Button variant="secondary" onClick={() => router.push(`/strategy/training-needs-analysis/${exerciseId}/edit`)}>
+                Edit dates
+              </Button>
+            )}
             {exercise.status === "active" && (
-              <Button isLoading={actionMutation.isPending} onClick={() => actionMutation.mutate("close")}>
+              <Button isLoading={actionMutation.isPending} onClick={() => actionMutation.mutate({ action: "close" })}>
                 Close
               </Button>
             )}
             {exercise.status === "closed" && (
-              <Button isLoading={actionMutation.isPending} onClick={() => actionMutation.mutate("begin-review")}>
-                Begin Review
-              </Button>
+              <>
+                <Button variant="secondary" isLoading={actionMutation.isPending} onClick={() => actionMutation.mutate({ action: "reopen" })}>
+                  Reopen
+                </Button>
+                <Button isLoading={actionMutation.isPending} onClick={() => actionMutation.mutate({ action: "begin-review" })}>
+                  Begin Review
+                </Button>
+              </>
             )}
             {exercise.status === "under_review" && (
-              <Button isLoading={actionMutation.isPending} onClick={() => actionMutation.mutate("commit")}>
+              <Button isLoading={actionMutation.isPending} onClick={handleCommitClick}>
                 Commit
               </Button>
             )}
@@ -199,11 +301,13 @@ export default function TnaExerciseDetailClient({
         {exercise.description && <p className="text-sm text-secondary">{exercise.description}</p>}
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
           <div>
-            <p className="text-xs font-medium tracking-wide text-slate-500 uppercase">Start Date</p>
-            <p className="mt-1 text-sm text-primary">{formatDate(exercise.startDate)}</p>
+            <p className="text-xs font-medium tracking-wide text-slate-500 uppercase">Started</p>
+            <p className="mt-1 text-sm text-primary">
+              {exercise.startedAt ? formatDate(exercise.startedAt.slice(0, 10)) : "Not started yet"}
+            </p>
           </div>
           <div>
-            <p className="text-xs font-medium tracking-wide text-slate-500 uppercase">End Date</p>
+            <p className="text-xs font-medium tracking-wide text-slate-500 uppercase">Deadline</p>
             <p className="mt-1 text-sm text-primary">{formatDate(exercise.endDate)}</p>
           </div>
           <div className="col-span-2">
@@ -244,8 +348,13 @@ export default function TnaExerciseDetailClient({
 
       {exercise.status !== "draft" && (
         <Card className="mt-4 overflow-hidden p-0">
-          <div className="p-4">
+          <div className="flex items-center justify-between p-4">
             <h2 className="text-sm font-semibold text-primary">Responses</h2>
+            {canManage && exercise.status !== "committed" && (
+              <Button variant="secondary" onClick={() => setAddParticipantOpen(true)}>
+                Add participant
+              </Button>
+            )}
           </div>
           {assignmentsQuery.isPending ? (
             <div className="p-8 text-center text-sm text-slate-500">Loading…</div>
@@ -287,6 +396,15 @@ export default function TnaExerciseDetailClient({
                           View
                         </button>
                       )}
+                      {row.status === "pending" && canManage && exercise.status !== "committed" && (
+                        <button
+                          type="button"
+                          className="cursor-pointer text-sm font-medium text-red-600 hover:underline"
+                          onClick={() => setRemoveAssignmentId(row.id)}
+                        >
+                          Remove
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -295,8 +413,6 @@ export default function TnaExerciseDetailClient({
           )}
         </Card>
       )}
-
-      <TnaExerciseFormDrawer subdomain={subdomain} open={editOpen} onClose={() => setEditOpen(false)} exercise={exercise} onSaved={invalidate} />
 
       <ResponseViewDrawer
         subdomain={subdomain}
@@ -314,6 +430,95 @@ export default function TnaExerciseDetailClient({
             </Button>
             <Button isLoading={deleteMutation.isPending} onClick={() => deleteMutation.mutate()}>
               Delete
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal open={commitConfirmOpen} onClose={() => setCommitConfirmOpen(false)} title="Commit with pending responses?">
+        <div className="space-y-4">
+          <p className="text-sm text-secondary">
+            {exercise.progress.pending} of {exercise.progress.assigned} assignment(s) are still pending. Committing finalizes this
+            TNA — pending assignments will never be submittable afterward. This can&apos;t be undone.
+          </p>
+          <div className="flex gap-2">
+            <Button variant="secondary" onClick={() => setCommitConfirmOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              isLoading={actionMutation.isPending}
+              onClick={() => {
+                setCommitConfirmOpen(false);
+                actionMutation.mutate({ action: "commit", confirmDespitePending: true });
+              }}
+            >
+              Commit anyway
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={addParticipantOpen}
+        onClose={() => {
+          setAddParticipantOpen(false);
+          setNewParticipantUser([]);
+          setNewParticipantDepartment([]);
+          setAddParticipantError(null);
+        }}
+        title="Add participant"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-secondary">
+            Manually add someone to this exercise&apos;s roster — for example, if a department&apos;s manager changed after Start, or
+            someone was missed by the original targeting.
+          </p>
+          {addParticipantError && <div className="banner-error">{addParticipantError}</div>}
+          <TargetPicker
+            subdomain={subdomain}
+            label="Person"
+            queryKey="tna-add-participant-users"
+            path="/users?pageSize=100"
+            nameOf={(u) => `${u.fullName as string} (${u.email as string})`}
+            selected={newParticipantUser}
+            onChange={(next) => setNewParticipantUser(next.slice(-1))}
+            placeholder="Search users…"
+          />
+          <TargetPicker
+            subdomain={subdomain}
+            label="Department context (optional)"
+            queryKey="tna-add-participant-departments"
+            path="/departments"
+            nameOf={(d) => d.name as string}
+            selected={newParticipantDepartment}
+            onChange={(next) => setNewParticipantDepartment(next.slice(-1))}
+            placeholder="Search departments…"
+          />
+          <div className="flex justify-end gap-2 border-t border-border pt-4">
+            <Button variant="secondary" onClick={() => setAddParticipantOpen(false)}>
+              Cancel
+            </Button>
+            <Button isLoading={addParticipantMutation.isPending} onClick={() => addParticipantMutation.mutate()}>
+              Add
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal open={!!removeAssignmentId} onClose={() => setRemoveAssignmentId(null)} title="Remove participant?">
+        <div className="space-y-4">
+          <p className="text-sm text-secondary">
+            They will no longer be part of this exercise&apos;s roster and won&apos;t be able to submit a response.
+          </p>
+          <div className="flex gap-2">
+            <Button variant="secondary" onClick={() => setRemoveAssignmentId(null)}>
+              Cancel
+            </Button>
+            <Button
+              isLoading={removeAssignmentMutation.isPending}
+              onClick={() => removeAssignmentId && removeAssignmentMutation.mutate(removeAssignmentId)}
+            >
+              Remove
             </Button>
           </div>
         </div>

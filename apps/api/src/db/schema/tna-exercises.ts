@@ -19,6 +19,10 @@ import { roles } from "./roles";
  * `committed`) — deliberately more states than Training Request's own `draft/submitted/approved`,
  * per explicit product direction: "Under Review" is a real, HR-triggered transition (distinct from
  * merely `closed`), not just a UI mode layered on `closed`.
+ *
+ * No `start_date` column — HR only sets a deadline (`end_date`) at creation. The exercise's actual
+ * start is `startedAt` below, recorded automatically the moment HR clicks Start; there is no
+ * separate "planned start date" concept to configure ahead of time.
  */
 export const tnaExercises = pgTable(
   "tna_exercises",
@@ -29,7 +33,6 @@ export const tnaExercises = pgTable(
       .references(() => tenants.id),
     title: text("title").notNull(),
     description: text("description"),
-    startDate: date("start_date").notNull(),
     endDate: date("end_date").notNull(),
     status: text("status").notNull().default("draft"),
     // Convenience toggle so HR doesn't have to hand-pick every department into

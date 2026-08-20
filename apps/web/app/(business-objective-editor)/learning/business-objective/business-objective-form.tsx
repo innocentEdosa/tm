@@ -36,14 +36,14 @@ type Status = "not_started" | "on_track" | "at_risk" | "done";
 interface BusinessObjectiveRow {
   id: string;
   title: string;
-  categoryId: string;
-  categoryName: string;
+  categoryId: string | null;
+  categoryName: string | null;
   description: string | null;
   ownerDepartmentId: string;
   ownerDepartmentName: string;
   dueDate: string;
   priority: Priority;
-  metricName: string;
+  metricName: string | null;
   baselineValue: number | null;
   targetValue: number | null;
   status: Status;
@@ -98,7 +98,7 @@ function TitleField({ error }: FieldRendererProps) {
   const { form, setForm } = useBoFieldContext();
   return (
     <Input
-      label="Objective Title"
+      label="Objective"
       placeholder="e.g., Expand into EMEA market"
       required
       error={error}
@@ -305,12 +305,12 @@ export default function BusinessObjectiveForm({
       const row = entryQuery.data;
       setForm({
         title: row.title,
-        category: row.categoryName,
+        category: row.categoryName ?? "",
         description: row.description ?? "",
         ownerDepartment: { id: row.ownerDepartmentId, name: row.ownerDepartmentName },
         dueDate: row.dueDate,
         priority: row.priority,
-        metricName: row.metricName,
+        metricName: row.metricName ?? "",
         baselineValue: row.baselineValue === null ? "" : String(row.baselineValue),
         targetValue: row.targetValue === null ? "" : String(row.targetValue),
         status: row.status,
@@ -368,12 +368,12 @@ export default function BusinessObjectiveForm({
     mutationFn: async () => {
       const body = {
         title: form.title.trim(),
-        category: form.category.trim(),
+        category: form.category.trim() || null,
         description: form.description.trim() || null,
         ownerDepartmentId: form.ownerDepartment?.id,
         dueDate: form.dueDate,
         priority: form.priority,
-        metricName: form.metricName.trim(),
+        metricName: form.metricName.trim() || null,
         baselineValue: form.baselineValue.trim() === "" ? null : Number(form.baselineValue),
         targetValue: form.targetValue.trim() === "" ? null : Number(form.targetValue),
         status: form.status,
@@ -412,11 +412,9 @@ export default function BusinessObjectiveForm({
 
   function handleSubmit() {
     setFormError(null);
-    if (!form.title.trim()) return setFormError("Objective title is required.");
-    if (!form.category.trim()) return setFormError("Category is required.");
+    if (!form.title.trim()) return setFormError("Objective is required.");
     if (!form.ownerDepartment) return setFormError("Owner is required.");
     if (!form.dueDate) return setFormError("Target completion date is required.");
-    if (!form.metricName.trim()) return setFormError("Success metric / KPI is required.");
     if (form.targetValue.trim() !== "" && Number.isNaN(Number(form.targetValue))) {
       return setFormError("Target value must be a number.");
     }

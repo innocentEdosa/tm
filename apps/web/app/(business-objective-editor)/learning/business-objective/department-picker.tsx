@@ -3,14 +3,23 @@
 import { useEffect, useState } from "react";
 import { tenantFetch } from "@/lib/tenant-api-client";
 
+interface DepartmentOwnerRef {
+  id: string;
+  fullName: string;
+}
+
 export interface DepartmentRef {
   id: string;
   name: string;
+  manager?: DepartmentOwnerRef | null;
+  assistantManager?: DepartmentOwnerRef | null;
 }
 
 interface DepartmentSearchResult {
   id: string;
   name: string;
+  manager: DepartmentOwnerRef | null;
+  assistantManager: DepartmentOwnerRef | null;
 }
 
 /** Search-as-you-type department picker for the objective's owning department — mirrors
@@ -56,15 +65,23 @@ export default function DepartmentPicker({
         <span className="text-red-600"> *</span>
       </label>
       {value ? (
-        <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2">
-          <span className="text-sm text-primary">{value.name}</span>
-          <button
-            type="button"
-            className="cursor-pointer text-xs font-medium text-slate-500 hover:text-primary"
-            onClick={() => onChange(null)}
-          >
-            Clear
-          </button>
+        <div className="rounded-lg border border-border px-3 py-2">
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-primary">{value.name}</span>
+            <button
+              type="button"
+              className="cursor-pointer text-xs font-medium text-slate-500 hover:text-primary"
+              onClick={() => onChange(null)}
+            >
+              Clear
+            </button>
+          </div>
+          {(value.manager || value.assistantManager) && (
+            <p className="mt-1 text-xs text-slate-500">
+              Primary owners:{" "}
+              {[value.manager?.fullName, value.assistantManager?.fullName].filter(Boolean).join(", ")}
+            </p>
+          )}
         </div>
       ) : (
         <div className="relative">
@@ -84,7 +101,7 @@ export default function DepartmentPicker({
                   type="button"
                   className="block w-full cursor-pointer px-3 py-2 text-left text-sm text-secondary hover:bg-slate-50"
                   onClick={() => {
-                    onChange({ id: d.id, name: d.name });
+                    onChange({ id: d.id, name: d.name, manager: d.manager, assistantManager: d.assistantManager });
                     setQuery("");
                     setResults([]);
                   }}

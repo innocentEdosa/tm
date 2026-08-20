@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, ArrowDown, MoreHorizontal, Plus } from "lucide-react";
+import { ArrowUp, ArrowDown, MoreHorizontal, MoreVertical, Plus, Target, Archive } from "lucide-react";
 import { PageHeader, Card, Badge, Modal, Drawer, Button, Pagination, Toast, type ToastVariant } from "@tm/ui";
 
 const API_BASE = "/tenant-api/tenant";
@@ -14,10 +14,10 @@ type Priority = "low" | "medium" | "high";
 type Status = "not_started" | "on_track" | "at_risk" | "done";
 
 const PRIORITY_LABEL: Record<Priority, string> = { low: "Low", medium: "Medium", high: "High" };
-const PRIORITY_BADGE: Record<Priority, "neutral" | "warning" | "accent"> = {
+const PRIORITY_BADGE: Record<Priority, "neutral" | "warning" | "danger"> = {
   low: "neutral",
   medium: "warning",
-  high: "accent",
+  high: "danger",
 };
 
 const STATUS_LABEL: Record<Status, string> = {
@@ -38,19 +38,20 @@ class ForbiddenError extends Error {}
 interface BusinessObjectiveRow {
   id: string;
   title: string;
-  categoryId: string;
+  categoryId: string | null;
   categoryName: string | null;
   description: string | null;
   ownerDepartmentId: string;
   ownerDepartmentName: string | null;
   dueDate: string;
   priority: Priority;
-  metricName: string;
+  metricName: string | null;
   baselineValue: number | null;
   targetValue: number | null;
   status: Status;
   createdByUserId: string | null;
   createdByName: string | null;
+  archivedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -61,9 +62,63 @@ function formatDate(value: string): string {
   return date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
 
-function formatMetricValue(value: number | null): string {
-  if (value === null) return "—";
-  return new Intl.NumberFormat().format(value);
+/** "in 8 days" / "8 days overdue" / "Due today" — relative framing for the drawer's Due Date field,
+ * calendar-day based (not a raw hour diff) so "today" reads as today regardless of time of day. */
+function formatDueDateRelative(value: string): string {
+  const due = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(due.getTime())) return "";
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const diffDays = Math.round((due.getTime() - today.getTime()) / 86_400_000);
+  if (diffDays === 0) return "Due today";
+  if (diffDays > 0) return `in ${diffDays} day${diffDays === 1 ? "" : "s"}`;
+  const overdue = Math.abs(diffDays);
+  return `${overdue} day${overdue === 1 ? "" : "s"} overdue`;
+}
+
+/** Baseline and target are the only two data points a Business Objective carries toward its
+ * metric — there's no separately-tracked "current" value — so baseline-as-a-share-of-target is
+ * the only percentage derivable from what's actually stored. Both need to be set (and target
+ * non-zero) to mean anything; anything else (missing baseline/target, or a zero target) has no
+ * sensible percentage, so callers should render a blank rather than a misleading number. */
+function computeProgressPercent(baselineValue: number | null, targetValue: number | null): number | null {
+  if (baselineValue === null || targetValue === null || targetValue === 0) return null;
+  return Math.max(0, Math.min(100, Math.round((baselineValue / targetValue) * 100)));
+}
+
+function CircularProgress({
+  percent,
+  size = 32,
+  strokeWidth = 4,
+  children,
+}: {
+  percent: number;
+  size?: number;
+  strokeWidth?: number;
+  children?: ReactNode;
+}) {
+  const radius = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference * (1 - percent / 100);
+  return (
+    <div className="relative inline-flex shrink-0 items-center justify-center" style={{ width: size, height: size }}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="-rotate-90">
+        <circle cx={size / 2} cy={size / 2} r={radius} fill="none" strokeWidth={strokeWidth} className="stroke-slate-100" />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          strokeWidth={strokeWidth}
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
+          strokeLinecap="round"
+          className="stroke-cta transition-all"
+        />
+      </svg>
+      {children && <div className="absolute inset-0 flex items-center justify-center">{children}</div>}
+    </div>
+  );
 }
 
 type SortField = "title" | "dueDate" | "priority";
@@ -169,6 +224,79 @@ function RowActionsMenu({ onEdit, onDelete }: { onEdit: () => void; onDelete: ()
               }}
             >
               Delete
+            </button>
+          </div>,
+          document.body,
+        )}
+    </div>
+  );
+}
+
+const OBJECTIVE_ACTIONS_MENU_WIDTH = 200;
+
+// Drawer's own "⋮" actions menu (distinct from the table row's `RowActionsMenu` above) — same
+// portal/click-outside pattern, but only "Archive objective" for now (screenshot's mock also shows
+// Duplicate/Mark as complete/Delete, deliberately left out until those actions actually exist).
+function ObjectiveActionsMenu({ onArchive }: { onArchive: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handleClickOutside(event: MouseEvent) {
+      const target = event.target as Node;
+      if (
+        buttonRef.current &&
+        !buttonRef.current.contains(target) &&
+        menuRef.current &&
+        !menuRef.current.contains(target)
+      ) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [open]);
+
+  function toggleOpen() {
+    if (!open && buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect();
+      setPosition({ top: rect.bottom + 4, left: rect.right - OBJECTIVE_ACTIONS_MENU_WIDTH });
+    }
+    setOpen((prev) => !prev);
+  }
+
+  return (
+    <div>
+      <button
+        ref={buttonRef}
+        type="button"
+        aria-label="Objective actions"
+        className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-lg border border-border text-secondary hover:bg-slate-50 hover:text-primary"
+        onClick={toggleOpen}
+      >
+        <MoreVertical className="h-4 w-4" />
+      </button>
+      {open &&
+        position &&
+        createPortal(
+          <div
+            ref={menuRef}
+            style={{ top: position.top, left: position.left, width: OBJECTIVE_ACTIONS_MENU_WIDTH }}
+            className="fixed z-50 rounded-lg border border-border bg-white py-1 shadow-card-md"
+          >
+            <button
+              type="button"
+              className="flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left text-sm text-secondary hover:bg-slate-50 hover:text-primary"
+              onClick={() => {
+                setOpen(false);
+                onArchive();
+              }}
+            >
+              <Archive className="h-4 w-4" />
+              Archive objective
             </button>
           </div>,
           document.body,
@@ -285,6 +413,25 @@ export default function BusinessObjectivesClient({ subdomain, canManage }: { sub
     deleteMutation.mutate(deleteTarget);
   }
 
+  const archiveMutation = useMutation({
+    mutationFn: async (target: BusinessObjectiveRow) => {
+      const res = await fetch(
+        `${API_BASE}/business-objectives/${target.id}/archive?subdomain=${encodeURIComponent(subdomain)}`,
+        { method: "POST", credentials: "include" },
+      );
+      if (!res.ok) {
+        const json = (await res.json().catch(() => null)) as { message?: string } | null;
+        throw new Error(json?.message ?? "Couldn't archive this business objective.");
+      }
+    },
+    onSuccess: () => {
+      setViewTarget(null);
+      setToast({ message: "Objective archived.", variant: "success" });
+      queryClient.invalidateQueries({ queryKey: ["business-objectives", subdomain] });
+    },
+    onError: (err: Error) => setToast({ message: err.message, variant: "error" }),
+  });
+
   return (
     <main className="px-8 py-8">
       <div className="flex items-start justify-between">
@@ -361,8 +508,17 @@ export default function BusinessObjectivesClient({ subdomain, canManage }: { sub
                   <td className="px-4 py-3 text-sm">
                     <Badge variant={PRIORITY_BADGE[row.priority]}>{PRIORITY_LABEL[row.priority]}</Badge>
                   </td>
-                  <td className="px-4 py-3 text-sm text-secondary whitespace-nowrap">
-                    {formatMetricValue(row.baselineValue)} → {formatMetricValue(row.targetValue)}
+                  <td className="px-4 py-3 text-sm whitespace-nowrap">
+                    {(() => {
+                      const percent = computeProgressPercent(row.baselineValue, row.targetValue);
+                      if (percent === null) return <span className="text-secondary">—</span>;
+                      return (
+                        <div className="flex items-center gap-2">
+                          <CircularProgress percent={percent} size={26} strokeWidth={3} />
+                          <span className="text-xs text-secondary">{percent}%</span>
+                        </div>
+                      );
+                    })()}
                   </td>
                   {canManage && (
                     <td className="px-4 py-3 text-right text-sm">
@@ -388,69 +544,102 @@ export default function BusinessObjectivesClient({ subdomain, canManage }: { sub
         <Pagination className="mt-3" page={page} pageSize={DISPLAY_PAGE_SIZE} total={sorted.length} onPageChange={setPage} />
       )}
 
-      <Drawer open={!!viewTarget} onClose={() => setViewTarget(null)} side="right" title={viewTarget?.title ?? ""}>
+      <Drawer
+        open={!!viewTarget}
+        onClose={() => setViewTarget(null)}
+        side="right"
+        title=""
+        ariaLabel={viewTarget?.title ?? ""}
+      >
         {viewTarget && (
           <div className="space-y-5">
-            {viewTarget.description && (
-              <div>
-                <p className="text-xs font-medium tracking-wide text-slate-500 uppercase">Description</p>
-                <p className="mt-1 text-sm text-primary">{viewTarget.description}</p>
+            <div className="flex items-center gap-3">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-cta/10 text-cta">
+                <Target className="h-6 w-6" />
+              </div>
+              <h2 className="text-lg font-semibold text-primary">{viewTarget.title}</h2>
+            </div>
+
+            {canManage && (
+              <div className="flex items-center gap-2">
+                <Button onClick={() => router.push(`/learning/business-objective/${viewTarget.id}/edit`)}>
+                  Edit objective
+                </Button>
+                <ObjectiveActionsMenu onArchive={() => archiveMutation.mutate(viewTarget)} />
               </div>
             )}
 
+            <hr className="border-t border-border" />
+
+            {viewTarget.description && (
+              <div>
+                <p className="text-xs font-normal tracking-wide text-slate-500 uppercase">Description</p>
+                <p className="mt-1 text-sm font-semibold text-primary">{viewTarget.description}</p>
+              </div>
+            )}
+
+            <div>
+              <p className="text-xs font-normal tracking-wide text-slate-500 uppercase">Focus</p>
+              <p className="mt-1 text-sm font-semibold text-primary">{viewTarget.categoryName ?? "—"}</p>
+            </div>
+
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <p className="text-xs font-medium tracking-wide text-slate-500 uppercase">Category</p>
-                <p className="mt-1 text-sm text-primary">{viewTarget.categoryName ?? "—"}</p>
+                <p className="text-xs font-normal tracking-wide text-slate-500 uppercase">Due date</p>
+                <p className="mt-1 text-sm font-semibold text-primary">{formatDate(viewTarget.dueDate)}</p>
+                <p className="text-xs text-slate-500">{formatDueDateRelative(viewTarget.dueDate)}</p>
               </div>
               <div>
-                <p className="text-xs font-medium tracking-wide text-slate-500 uppercase">Owner</p>
-                <p className="mt-1 text-sm text-primary">{viewTarget.ownerDepartmentName ?? "—"}</p>
-              </div>
-              <div>
-                <p className="text-xs font-medium tracking-wide text-slate-500 uppercase">Due date</p>
-                <p className="mt-1 text-sm text-primary">{formatDate(viewTarget.dueDate)}</p>
-              </div>
-              <div>
-                <p className="text-xs font-medium tracking-wide text-slate-500 uppercase">Priority</p>
+                <p className="text-xs font-normal tracking-wide text-slate-500 uppercase">Priority</p>
                 <p className="mt-1">
                   <Badge variant={PRIORITY_BADGE[viewTarget.priority]}>{PRIORITY_LABEL[viewTarget.priority]}</Badge>
                 </p>
               </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
               <div>
-                <p className="text-xs font-medium tracking-wide text-slate-500 uppercase">Status</p>
+                <p className="text-xs font-normal tracking-wide text-slate-500 uppercase">Status</p>
                 <p className="mt-1">
                   <Badge variant={STATUS_BADGE[viewTarget.status]}>{STATUS_LABEL[viewTarget.status]}</Badge>
                 </p>
               </div>
               <div>
-                <p className="text-xs font-medium tracking-wide text-slate-500 uppercase">Progress</p>
-                <p className="mt-1 text-sm text-primary">
-                  {formatMetricValue(viewTarget.baselineValue)} → {formatMetricValue(viewTarget.targetValue)}
+                <p className="text-xs font-normal tracking-wide text-slate-500 uppercase">Progress</p>
+                {(() => {
+                  const percent = computeProgressPercent(viewTarget.baselineValue, viewTarget.targetValue);
+                  return (
+                    <div className="mt-1 flex items-center">
+                      {percent === null ? (
+                        <p className="text-sm text-primary">—</p>
+                      ) : (
+                        <CircularProgress percent={percent} size={44} strokeWidth={5}>
+                          <span className="text-[10px] font-semibold text-primary">{percent}%</span>
+                        </CircularProgress>
+                      )}
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+
+            {viewTarget.metricName && (
+              <div>
+                <p className="text-xs font-normal tracking-wide text-slate-500 uppercase">Metric / Key Result</p>
+                <p className="mt-1 text-sm font-semibold text-primary">{viewTarget.metricName}</p>
+              </div>
+            )}
+
+            <hr className="border-t border-border" />
+
+            <div className="space-y-1">
+              {viewTarget.createdByName && (
+                <p className="text-xs text-slate-500">
+                  Created by {viewTarget.createdByName} on {formatDate(viewTarget.createdAt.slice(0, 10))}
                 </p>
-              </div>
+              )}
+              <p className="text-xs text-slate-500">Last updated {formatDate(viewTarget.updatedAt.slice(0, 10))}</p>
             </div>
-
-            <div>
-              <p className="text-xs font-medium tracking-wide text-slate-500 uppercase">Metric / Key Result</p>
-              <p className="mt-1 text-sm text-primary">{viewTarget.metricName}</p>
-            </div>
-
-            {viewTarget.createdByName && (
-              <p className="text-xs text-slate-500">
-                Created by {viewTarget.createdByName} on {formatDate(viewTarget.createdAt.slice(0, 10))}
-              </p>
-            )}
-
-            {canManage && (
-              <div className="flex justify-end border-t border-border pt-4">
-                <Button
-                  onClick={() => router.push(`/learning/business-objective/${viewTarget.id}/edit`)}
-                >
-                  Edit
-                </Button>
-              </div>
-            )}
           </div>
         )}
       </Drawer>

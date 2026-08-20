@@ -12,7 +12,7 @@ export default async function TnaExerciseDetailPage({ params }: { params: Promis
 
   const canManage = permissions.includes("tna.manage");
   const canView = canManage || permissions.includes("tna.view");
-  if (!canView) redirect("/learning/training-needs-analysis");
+  if (!canView) redirect("/strategy/training-needs-analysis");
 
   return <TnaExerciseDetailClient subdomain={subdomain} exerciseId={exerciseId} canManage={canManage} />;
 }

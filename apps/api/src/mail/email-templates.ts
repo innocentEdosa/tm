@@ -220,3 +220,28 @@ export function buildCourseUpdateAvailableEmail(input: CourseUpdateAvailableEmai
 
   return { subject: `Update available: ${input.courseTitle}`, text, html };
 }
+
+export interface TnaAssignmentEmailInput {
+  exerciseTitle: string;
+  endDate: string;
+  respondUrl: string;
+}
+
+/** Training Needs Analysis — sent to each participant once, at the moment an exercise moves from
+ * `draft` to `active` and their `tna_assignments` row is created (tna-assignment-mailer.ts). This is
+ * the only notification this feature sends — no deadline-reminder cron exists in this codebase, so a
+ * participant otherwise has to already hold `tna.manage`/`tna.view` (to see the Strategy nav entry)
+ * or be handed a direct link to discover a role-/user-targeted assignment. */
+export function buildTnaAssignmentEmail(input: TnaAssignmentEmailInput): EmailTemplateResult {
+  const heading = `You have a Training Needs Analysis to complete: ${input.exerciseTitle}`;
+  const blocks: EmailBlock[] = [
+    paragraph(
+      `Your organization has asked you to complete <strong>${escapeHtml(input.exerciseTitle)}</strong>, due by <strong>${escapeHtml(input.endDate)}</strong>.`,
+    ),
+    ctaButton(input.respondUrl, "Complete Training Needs Analysis"),
+  ];
+  const footerNote = "You can save your progress and come back before the deadline.";
+  const { html, text } = renderShell(heading, blocks, footerNote);
+
+  return { subject: `Action needed: ${input.exerciseTitle}`, text, html };
+}

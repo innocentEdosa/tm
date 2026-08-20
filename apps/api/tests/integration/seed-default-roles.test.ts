@@ -73,6 +73,12 @@ describe("seedDefaultRolesForTenant", () => {
         // Course Creation spec (0073_seed_course_permissions.sql):
         "course.view",
         "course.manage",
+        // Training Needs Analysis (0143_seed_tna_permissions.sql):
+        "tna.manage",
+        "tna.view",
+        // Business Objectives:
+        "business_objective.manage",
+        "business_objective.view",
       ].sort(),
     );
   });

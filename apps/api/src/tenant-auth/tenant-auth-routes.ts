@@ -174,6 +174,26 @@ const tenantAuthRoutes: FastifyPluginAsync = async (fastify) => {
       }
       const roleEntries = Array.from(roleMap.values());
 
+      // TNA sidebar/nav visibility (Training Needs Analysis feature): a participant reached by
+      // department-manager/assistant-manager, role, or direct-user targeting all resolve into the
+      // same `tna_assignments` row per resolve-tna-participants.ts — a single ownership check here
+      // covers all three targeting mechanisms at once, no per-mechanism branching needed. This lets
+      // the dashboard shell show the nav entry to an assigned participant even when they hold
+      // neither `tna.manage` nor `tna.view` (no notification system exists yet to hand them a direct
+      // link some other way — see tenant-tna-routes.ts's own `notifyTnaParticipants` comment).
+      // Joined against tna_exercises and excludes 'draft' — assignments now exist as soon as HR sets
+      // targets (syncTnaAssignments, tenant-tna-routes.ts), but a participant must not see the nav
+      // entry (or anything else about the exercise) until HR has actually clicked Start.
+      const [{ exists: hasTnaAssignment }] = (
+        await request.tenantDb.execute<{ exists: boolean }>(
+          sql`SELECT EXISTS(
+            SELECT 1 FROM tna_assignments
+            JOIN tna_exercises ON tna_exercises.id = tna_assignments.tna_exercise_id
+            WHERE tna_assignments.user_id = ${request.user!.id} AND tna_exercises.status != 'draft'
+          ) AS exists`,
+        )
+      ).rows;
+
       return {
         success: true,
         data: {
@@ -182,6 +202,7 @@ const tenantAuthRoutes: FastifyPluginAsync = async (fastify) => {
           mustChangePassword: request.mustChangePassword,
           roleName: roleEntries[0]?.roleName ?? null,
           permissions: resolveEffectivePermissions(roleEntries),
+          hasTnaAssignment,
         },
       };
     },

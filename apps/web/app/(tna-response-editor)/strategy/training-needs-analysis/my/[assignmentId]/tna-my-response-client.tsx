@@ -29,7 +29,6 @@ interface AssignmentDetail {
   exerciseTitle: string;
   exerciseDescription: string | null;
   exerciseStatus: ExerciseStatus;
-  startDate: string;
   endDate: string;
   responseValues: Record<string, unknown>;
 }
@@ -127,20 +126,39 @@ export default function TnaMyResponseClient({ subdomain, assignmentId }: { subdo
     submitMutation.mutate();
   }
 
+  function backToList() {
+    router.push("/strategy/training-needs-analysis");
+  }
+
   if (assignmentQuery.isPending) {
     return (
-      <main className="px-8 py-8">
+      <div className="flex min-h-screen items-center justify-center">
         <div className="p-8 text-center text-sm text-slate-500">Loading…</div>
-      </main>
+      </div>
     );
   }
 
   const assignment = assignmentQuery.data;
   if (!assignment) {
     return (
-      <main className="px-8 py-8">
-        <div className="banner-error">This Training Needs Analysis assignment couldn&apos;t be found.</div>
-      </main>
+      <div className="flex min-h-screen flex-col bg-slate-50">
+        <header className="sticky top-0 z-20 flex items-center justify-between border-b border-border bg-white px-8 py-4">
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              aria-label="Back to Training Needs Analysis"
+              className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg text-secondary hover:bg-slate-50 hover:text-primary"
+              onClick={backToList}
+            >
+              <ArrowLeft className="h-5 w-5" />
+            </button>
+            <h1 className="shell-page-header-title text-xl">Training Needs Analysis</h1>
+          </div>
+        </header>
+        <main className="mx-auto w-full max-w-3xl px-8 py-8">
+          <div className="banner-error">This Training Needs Analysis assignment couldn&apos;t be found.</div>
+        </main>
+      </div>
     );
   }
 
@@ -148,46 +166,29 @@ export default function TnaMyResponseClient({ subdomain, assignmentId }: { subdo
   const canRespond = assignment.exerciseStatus === "active";
 
   return (
-    <main className="mx-auto max-w-3xl px-8 py-8">
-      <button
-        type="button"
-        className="mb-4 flex cursor-pointer items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-primary"
-        onClick={() => router.push("/learning/training-needs-analysis")}
-      >
-        <ArrowLeft className="h-4 w-4" />
-        Training Needs Analysis
-      </button>
-
-      <div className="flex items-center gap-3">
-        <h1 className="shell-page-header-title text-xl">{assignment.exerciseTitle}</h1>
-        <Badge variant={isReadOnly ? "success" : "warning"}>{isReadOnly ? "Submitted" : "Pending"}</Badge>
-      </div>
-      {assignment.exerciseDescription && <p className="mt-1.5 text-sm text-slate-600">{assignment.exerciseDescription}</p>}
-      <p className="mt-2 text-xs text-slate-500">
-        {assignment.departmentName && <>Department: {assignment.departmentName} · </>}
-        Deadline: {formatDate(assignment.endDate)} · Exercise status: {STATUS_LABEL[assignment.exerciseStatus]}
-      </p>
-
-      <Card className="mt-6 p-6">
-        {formError && <div className="banner-error mb-4">{formError}</div>}
-        {!isReadOnly && !canRespond && (
-          <div className="banner-error mb-4">This Training Needs Analysis is not currently accepting responses.</div>
-        )}
-
-        <FormRenderer
-          ref={formRendererRef}
-          form={effectiveForm}
-          values={values}
-          onChange={handleChange}
-          onSubmit={() => {}}
-          errors={errors}
-          readOnly={isReadOnly}
-          hideActions
-          subdomain={subdomain}
-        />
-
+    <div className="flex min-h-screen flex-col bg-slate-50">
+      <header className="sticky top-0 z-20 flex items-center justify-between border-b border-border bg-white px-8 py-4">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            aria-label="Back to Training Needs Analysis"
+            className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg text-secondary hover:bg-slate-50 hover:text-primary"
+            onClick={backToList}
+          >
+            <ArrowLeft className="h-5 w-5" />
+          </button>
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="shell-page-header-title text-xl">{assignment.exerciseTitle}</h1>
+              <Badge variant={isReadOnly ? "success" : "warning"}>{isReadOnly ? "Submitted" : "Pending"}</Badge>
+            </div>
+          </div>
+        </div>
         {!isReadOnly && (
-          <div className="mt-8 flex justify-end gap-2 border-t border-border pt-6">
+          <div className="flex gap-2">
+            <Button variant="secondary" onClick={backToList}>
+              Cancel
+            </Button>
             <Button
               variant="secondary"
               isLoading={saveDraftMutation.isPending}
@@ -201,7 +202,34 @@ export default function TnaMyResponseClient({ subdomain, assignmentId }: { subdo
             </Button>
           </div>
         )}
-      </Card>
-    </main>
+      </header>
+
+      <main className="mx-auto w-full max-w-3xl px-8 py-8">
+        {assignment.exerciseDescription && <p className="text-sm text-slate-600">{assignment.exerciseDescription}</p>}
+        <p className="mt-2 text-xs text-slate-500">
+          {assignment.departmentName && <>Department: {assignment.departmentName} · </>}
+          Deadline: {formatDate(assignment.endDate)} · Exercise status: {STATUS_LABEL[assignment.exerciseStatus]}
+        </p>
+
+        <Card className="mt-6 p-6">
+          {formError && <div className="banner-error mb-4">{formError}</div>}
+          {!isReadOnly && !canRespond && (
+            <div className="banner-error mb-4">This Training Needs Analysis is not currently accepting responses.</div>
+          )}
+
+          <FormRenderer
+            ref={formRendererRef}
+            form={effectiveForm}
+            values={values}
+            onChange={handleChange}
+            onSubmit={() => {}}
+            errors={errors}
+            readOnly={isReadOnly}
+            hideActions
+            subdomain={subdomain}
+          />
+        </Card>
+      </main>
+    </div>
   );
 }

@@ -50,8 +50,7 @@ export default function BusinessObjectiveCategoryCombobox({
   return (
     <div className="relative">
       <label className="field-label" htmlFor={id}>
-        Category
-        <span className="text-red-600"> *</span>
+        Focus
       </label>
       <input
         id={id}
@@ -68,7 +67,7 @@ export default function BusinessObjectiveCategoryCombobox({
         }}
         onBlur={() => setTimeout(() => setOpen(false), 150)}
         autoComplete="off"
-        placeholder="Type to search or create a category"
+        placeholder="Type to search or create a focus area"
       />
       {open && (matches.length > 0 || (trimmed && !exactMatch)) && (
         <ul className="surface-card absolute z-10 mt-1 max-h-48 w-full overflow-auto p-1">

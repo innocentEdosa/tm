@@ -1,0 +1,1 @@
+ALTER TABLE "business_objectives" ADD COLUMN "archived_at" timestamp with time zone;

@@ -14,6 +14,11 @@ export type TenantSession =
       email: string;
       roleName: string | null;
       permissions: string[];
+      /** True whenever this user holds at least one `tna_assignments` row — via department
+       * manager/assistant-manager, role, or direct-user targeting, all of which resolve into the
+       * same table. Lets the dashboard shell show the TNA nav entry to an assigned participant even
+       * when they hold neither `tna.manage` nor `tna.view`. */
+      hasTnaAssignment: boolean;
     };
 
 /**
@@ -49,6 +54,7 @@ export const getTenantSession = cache(async (subdomain: string): Promise<TenantS
       mustChangePassword: boolean;
       roleName: string | null;
       permissions: string[];
+      hasTnaAssignment: boolean;
     };
   };
 
@@ -62,5 +68,6 @@ export const getTenantSession = cache(async (subdomain: string): Promise<TenantS
     email: body.data.email,
     roleName: body.data.roleName,
     permissions: body.data.permissions,
+    hasTnaAssignment: body.data.hasTnaAssignment,
   };
 });

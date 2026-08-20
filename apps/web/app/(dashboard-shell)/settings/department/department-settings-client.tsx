@@ -1,24 +1,14 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type ComponentType, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { MoreHorizontal, Plus } from "lucide-react";
-import { PageHeader, Card, Badge, Modal, Drawer, Button, Input } from "@tm/ui";
-import { FormRenderer, useEffectiveForm, type FieldRendererProps, type FormField as EffectiveFormField } from "@tm/form-builder";
+import { PageHeader, Card, Badge, Modal, Drawer, Button, Input, Toast, type ToastVariant } from "@tm/ui";
+import { useEffectiveForm } from "@tm/form-builder";
 
 const API_BASE = "/tenant-api/tenant";
-
-// Form Builder spec (033) — replaces the old Custom Fields Framework's per-page
-// `renderSystemField`/`renderCustomField`/`renderFormField` switch entirely. This page now only
-// requests the effective form (`useEffectiveForm("department", subdomain)`) and hands it to the
-// shared `<FormRenderer>`. Department's own bespoke controls (Name/Parent/Description/Status/
-// Manager/Assistant Manager all need feature-specific behavior a generic input can't provide —
-// e.g. Manager is a person-search widget, Parent excludes descendants) are supplied through
-// `FormRenderer`'s documented escape hatch (`fieldRenderers`, spec FR-029), never a page-local
-// generic field-type switch. Custom (platform/tenant) fields render entirely generically, with
-// zero Department-specific code.
-type CustomFieldDefinition = EffectiveFormField;
 
 interface UserRef {
   id: string;
@@ -37,52 +27,9 @@ interface DepartmentRow {
   assistantManager: UserRef | null;
 }
 
-interface UserSearchResult {
-  id: string;
-  fullName: string;
-  email: string;
-}
-
 type DeleteBlock =
   | { reason: "has_members"; memberCount: number; message: string; membersListHref: string }
   | { reason: "has_children"; message: string };
-
-function computeDepth(id: string, byId: Map<string, DepartmentRow>): number {
-  let depth = 1;
-  let current = byId.get(id);
-  while (current?.parentDepartmentId) {
-    depth++;
-    current = byId.get(current.parentDepartmentId);
-  }
-  return depth;
-}
-
-function computeExcludedParentIds(all: DepartmentRow[], editingId: string | null): Set<string> {
-  const excluded = new Set<string>();
-  const byId = new Map(all.map((r) => [r.id, r]));
-
-  if (editingId) {
-    excluded.add(editingId);
-    const stack = [editingId];
-    while (stack.length > 0) {
-      const current = stack.pop()!;
-      for (const row of all) {
-        if (row.parentDepartmentId === current && !excluded.has(row.id)) {
-          excluded.add(row.id);
-          stack.push(row.id);
-        }
-      }
-    }
-  }
-
-  for (const row of all) {
-    if (computeDepth(row.id, byId) >= 3) {
-      excluded.add(row.id);
-    }
-  }
-
-  return excluded;
-}
 
 /** A read-only detail value that's empty reads as a deliberate, described absence ("No manager
  * assigned") rather than a bare "—" — the same descriptive-fallback treatment "Parent department"
@@ -94,247 +41,27 @@ function FieldValue({ value, placeholder }: { value: React.ReactNode; placeholde
   return <p className="text-sm text-secondary">{value}</p>;
 }
 
-interface PersonPickerProps {
-  label: string;
-  subdomain: string;
-  value: UserRef | null;
-  onChange: (user: UserRef | null) => void;
-  excludeUserId?: string;
-}
-
-function PersonPicker({ label, subdomain, value, onChange, excludeUserId }: PersonPickerProps) {
-  const [query, setQuery] = useState("");
-  const [results, setResults] = useState<UserSearchResult[]>([]);
-
-  useEffect(() => {
-    if (!query.trim()) {
-      setResults([]);
-      return;
-    }
-    const handle = setTimeout(async () => {
-      const res = await fetch(
-        `${API_BASE}/users?search=${encodeURIComponent(query)}&subdomain=${encodeURIComponent(subdomain)}`,
-        { credentials: "include" },
-      );
-      if (!res.ok) return;
-      const json = (await res.json()) as { data: UserSearchResult[] };
-      setResults(json.data.filter((u) => u.id !== excludeUserId));
-    }, 250);
-    return () => clearTimeout(handle);
-  }, [query, subdomain, excludeUserId]);
-
-  return (
-    <div>
-      <p className="field-label">{label}</p>
-      {value ? (
-        <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2">
-          <span className="text-sm text-primary">{value.fullName}</span>
-          <button
-            type="button"
-            className="text-xs font-medium text-slate-500 hover:text-primary cursor-pointer"
-            onClick={() => onChange(null)}
-          >
-            Clear
-          </button>
-        </div>
-      ) : (
-        <div className="relative">
-          <input
-            className="field-input"
-            placeholder="Search by name or email…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-          {results.length > 0 && (
-            <div className="absolute z-10 mt-1 w-full rounded-lg border border-border bg-white py-1 shadow-card-md">
-              {results.map((u) => (
-                <button
-                  key={u.id}
-                  type="button"
-                  className="block w-full px-3 py-2 text-left text-sm text-secondary hover:bg-slate-50 cursor-pointer"
-                  onClick={() => {
-                    onChange({ id: u.id, fullName: u.fullName });
-                    setQuery("");
-                    setResults([]);
-                  }}
-                >
-                  {u.fullName} <span className="text-slate-400">({u.email})</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-interface DepartmentFormState {
-  name: string;
-  parentDepartmentId: string;
-  description: string;
-  status: "active" | "archived";
-  manager: UserRef | null;
-  assistantManager: UserRef | null;
-}
-
-interface DepartmentFieldContextValue {
-  form: DepartmentFormState;
-  setForm: Dispatch<SetStateAction<DepartmentFormState>>;
-  departments: DepartmentRow[];
-  excludedParentIds: Set<string>;
-  editingId: string | null;
-  subdomain: string;
-}
-
-/** Backs Department's `fieldRenderers` overrides (spec FR-029) with the page's own live
- * `form`/`setForm` state, `departments` list, etc. Module-level context (not props recreated
- * every render) so `DEPARTMENT_FIELD_RENDERERS`'s component identities stay stable across
- * renders — defining components inline in the render body would remount every field (and drop
- * focus) on every keystroke. */
-const DepartmentFieldContext = createContext<DepartmentFieldContextValue | null>(null);
-
-function useDepartmentFieldContext(): DepartmentFieldContextValue {
-  const ctx = useContext(DepartmentFieldContext);
-  if (!ctx) throw new Error("Department field renderers must be used inside DepartmentFieldContext");
-  return ctx;
-}
-
-function NameField({ error }: FieldRendererProps) {
-  const { form, setForm } = useDepartmentFieldContext();
-  return <Input label="Name" required error={error} value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />;
-}
-
-function ParentDepartmentField() {
-  const { form, setForm, departments, excludedParentIds } = useDepartmentFieldContext();
-  return (
-    <div>
-      <label className="field-label" htmlFor="parentDepartmentId">
-        Parent department
-      </label>
-      <select
-        id="parentDepartmentId"
-        className="field-input"
-        value={form.parentDepartmentId}
-        onChange={(e) => setForm((f) => ({ ...f, parentDepartmentId: e.target.value }))}
-      >
-        <option value="">— None (top-level) —</option>
-        {departments
-          .filter((d) => !excludedParentIds.has(d.id))
-          .map((d) => (
-            <option key={d.id} value={d.id}>
-              {d.name}
-            </option>
-          ))}
-      </select>
-    </div>
-  );
-}
-
-function DescriptionField() {
-  const { form, setForm } = useDepartmentFieldContext();
-  return (
-    <div>
-      <label className="field-label" htmlFor="description">
-        Description
-      </label>
-      <textarea
-        id="description"
-        className="field-input"
-        rows={3}
-        value={form.description}
-        onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-      />
-    </div>
-  );
-}
-
-function StatusField() {
-  const { form, setForm, editingId } = useDepartmentFieldContext();
-  if (!editingId) return null;
-  return (
-    <div>
-      <label className="field-label" htmlFor="status">
-        Status
-      </label>
-      <select
-        id="status"
-        className="field-input"
-        value={form.status}
-        onChange={(e) => setForm((f) => ({ ...f, status: e.target.value as "active" | "archived" }))}
-      >
-        <option value="active">Active</option>
-        <option value="archived">Archived</option>
-      </select>
-    </div>
-  );
-}
-
-function ManagerField() {
-  const { form, setForm, subdomain } = useDepartmentFieldContext();
-  return (
-    <PersonPicker
-      label="Manager"
-      subdomain={subdomain}
-      value={form.manager}
-      onChange={(u) => setForm((f) => ({ ...f, manager: u }))}
-      excludeUserId={form.assistantManager?.id}
-    />
-  );
-}
-
-function AssistantManagerField() {
-  const { form, setForm, subdomain } = useDepartmentFieldContext();
-  return (
-    <PersonPicker
-      label="Assistant Manager"
-      subdomain={subdomain}
-      value={form.assistantManager}
-      onChange={(u) => setForm((f) => ({ ...f, assistantManager: u }))}
-      excludeUserId={form.manager?.id}
-    />
-  );
-}
-
-/** The `fieldRenderers` map passed to `<FormRenderer>` (spec FR-029) — every one of Department's
- * system fields needs feature-specific behavior a generic input can't provide (person search,
- * descendant-exclusion, edit-only visibility), so all six are overridden here. Custom
- * (platform/tenant) fields are never in this map — they render entirely generically. */
-const DEPARTMENT_FIELD_RENDERERS: Record<string, ComponentType<FieldRendererProps>> = {
-  name: NameField,
-  parent_department_id: ParentDepartmentField,
-  description: DescriptionField,
-  status: StatusField,
-  manager_id: ManagerField,
-  assistant_manager_id: AssistantManagerField,
-};
-
-const EMPTY_FORM: DepartmentFormState = {
-  name: "",
-  parentDepartmentId: "",
-  description: "",
-  status: "active",
-  manager: null,
-  assistantManager: null,
-};
-
 interface RowActionsMenuProps {
   status: "active" | "archived";
-  onEdit: () => void;
-  onArchiveToggle: () => void;
-  onDelete: () => void;
+  onEdit?: () => void;
+  onArchiveToggle?: () => void;
+  onDelete?: () => void;
 }
 
 const ROW_ACTIONS_MENU_WIDTH = 160;
-const ROW_ACTIONS_MENU_HEIGHT = 116;
 
 class ForbiddenError extends Error {}
 
+/** Every menu item is independently optional (`canEdit`/`canDelete`, resolved by the caller) — a
+ * user holding only `department.view` (no create/edit/delete/manage) never sees an action that
+ * would just 403 when clicked. */
 function RowActionsMenu({ status, onEdit, onArchiveToggle, onDelete }: RowActionsMenuProps) {
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const itemCount = [onEdit, onArchiveToggle, onDelete].filter(Boolean).length;
+  const menuHeight = itemCount * 36 + (onDelete && (onEdit || onArchiveToggle) ? 9 : 0) + 8;
 
   useEffect(() => {
     if (!open) return;
@@ -355,18 +82,16 @@ function RowActionsMenu({ status, onEdit, onArchiveToggle, onDelete }: RowAction
 
   function toggleOpen() {
     if (!open && buttonRef.current) {
-      // Portaled to <body> so the Card's `overflow-hidden` (needed to round the table's corners)
-      // never clips this menu — fixed-positioned from the trigger button's own rect, flipped
-      // upward when there isn't room below the viewport.
       const rect = buttonRef.current.getBoundingClientRect();
       const spaceBelow = window.innerHeight - rect.bottom;
-      const top =
-        spaceBelow < ROW_ACTIONS_MENU_HEIGHT ? rect.top - ROW_ACTIONS_MENU_HEIGHT : rect.bottom + 4;
+      const top = spaceBelow < menuHeight ? rect.top - menuHeight : rect.bottom + 4;
       const left = rect.right - ROW_ACTIONS_MENU_WIDTH;
       setPosition({ top, left });
     }
     setOpen((prev) => !prev);
   }
+
+  if (itemCount === 0) return null;
 
   return (
     <div data-row-actions>
@@ -388,37 +113,45 @@ function RowActionsMenu({ status, onEdit, onArchiveToggle, onDelete }: RowAction
             style={{ top: position.top, left: position.left, width: ROW_ACTIONS_MENU_WIDTH }}
             className="fixed z-50 rounded-lg border border-border bg-white py-1 shadow-card-md"
           >
-            <button
-              type="button"
-              className="block w-full cursor-pointer px-3 py-2 text-left text-sm text-secondary hover:bg-slate-50 hover:text-primary"
-              onClick={() => {
-                setOpen(false);
-                onEdit();
-              }}
-            >
-              Edit
-            </button>
-            <button
-              type="button"
-              className="block w-full cursor-pointer px-3 py-2 text-left text-sm text-secondary hover:bg-slate-50 hover:text-primary"
-              onClick={() => {
-                setOpen(false);
-                onArchiveToggle();
-              }}
-            >
-              {status === "active" ? "Archive" : "Unarchive"}
-            </button>
-            <div className="my-1 border-t border-border" />
-            <button
-              type="button"
-              className="block w-full cursor-pointer px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50"
-              onClick={() => {
-                setOpen(false);
-                onDelete();
-              }}
-            >
-              Delete
-            </button>
+            {onEdit && (
+              <button
+                type="button"
+                className="block w-full cursor-pointer px-3 py-2 text-left text-sm text-secondary hover:bg-slate-50 hover:text-primary"
+                onClick={() => {
+                  setOpen(false);
+                  onEdit();
+                }}
+              >
+                Edit
+              </button>
+            )}
+            {onArchiveToggle && (
+              <button
+                type="button"
+                className="block w-full cursor-pointer px-3 py-2 text-left text-sm text-secondary hover:bg-slate-50 hover:text-primary"
+                onClick={() => {
+                  setOpen(false);
+                  onArchiveToggle();
+                }}
+              >
+                {status === "active" ? "Archive" : "Unarchive"}
+              </button>
+            )}
+            {onDelete && (
+              <>
+                {(onEdit || onArchiveToggle) && <div className="my-1 border-t border-border" />}
+                <button
+                  type="button"
+                  className="block w-full cursor-pointer px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50"
+                  onClick={() => {
+                    setOpen(false);
+                    onDelete();
+                  }}
+                >
+                  Delete
+                </button>
+              </>
+            )}
           </div>,
           document.body,
         )}
@@ -426,30 +159,49 @@ function RowActionsMenu({ status, onEdit, onArchiveToggle, onDelete }: RowAction
   );
 }
 
-export default function DepartmentSettingsClient({ subdomain }: { subdomain: string }) {
+export default function DepartmentSettingsClient({
+  subdomain,
+  canCreate,
+  canEdit,
+  canDelete,
+}: {
+  subdomain: string;
+  canCreate: boolean;
+  canEdit: boolean;
+  canDelete: boolean;
+}) {
+  const router = useRouter();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  const [formOpen, setFormOpen] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState<DepartmentFormState>(EMPTY_FORM);
-  const [formError, setFormError] = useState<string | null>(null);
-
   const [deleteTarget, setDeleteTarget] = useState<DepartmentRow | null>(null);
   const [deleteBlock, setDeleteBlock] = useState<DeleteBlock | null>(null);
 
   const [viewTargetId, setViewTargetId] = useState<string | null>(null);
-
-  const [customFieldValues, setCustomFieldValues] = useState<Record<string, unknown>>({});
-  const [customFieldErrors, setCustomFieldErrors] = useState<Record<string, string>>({});
   const [viewCustomFieldValues, setViewCustomFieldValues] = useState<Record<string, unknown>>({});
+
+  const [toast, setToast] = useState<{ message: string; variant: ToastVariant } | null>(null);
 
   useEffect(() => {
     const handle = setTimeout(() => setDebouncedSearch(search), 250);
     return () => clearTimeout(handle);
   }, [search]);
+
+  // One-shot success toast after redirecting back from the full-screen create/edit page
+  // (department-form.tsx), matching business-objectives-client.tsx's own pattern.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("created") === "1") {
+      setToast({ message: "Department created.", variant: "success" });
+      router.replace("/settings/department");
+    } else if (params.get("updated") === "1") {
+      setToast({ message: "Department updated.", variant: "success" });
+      router.replace("/settings/department");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const departmentsQuery = useQuery({
     queryKey: ["departments", subdomain, debouncedSearch],
@@ -473,36 +225,14 @@ export default function DepartmentSettingsClient({ subdomain }: { subdomain: str
     queryClient.invalidateQueries({ queryKey: ["departments", subdomain] });
   }
 
-  // The whole form's layout (system + platform + tenant fields, steps, sections) — fetched once,
-  // independent of which drawer is open, since both the create/edit drawer AND the view drawer
-  // need it. `getEffectiveForm` (apps/api/src/form-builder/get-effective-form.ts) has already
-  // merged and ordered everything; this page never sorts or merges anything itself.
+  // Still needed here for the read-only View drawer's custom-field display — the create/edit form
+  // itself (and its own `useEffectiveForm` call) now lives entirely in department-form.tsx.
   const { form: effectiveForm } = useEffectiveForm("department", subdomain);
   const layoutFields = useMemo(
     () => effectiveForm?.steps.flatMap((step) => step.sections.flatMap((section) => section.fields)) ?? [],
     [effectiveForm],
   );
-
-  const editCustomFieldValuesQuery = useQuery({
-    queryKey: ["department-custom-field-values", editingId, subdomain],
-    queryFn: async () => {
-      const res = await fetch(
-        `${API_BASE}/custom-field-values?formKey=department&entityId=${editingId}&subdomain=${encodeURIComponent(subdomain)}`,
-        { credentials: "include" },
-      );
-      const json = (await res.json()) as { data: Record<string, unknown> };
-      return json.data;
-    },
-    enabled: formOpen && !!editingId,
-  });
-
-  useEffect(() => {
-    if (!formOpen || !editingId) {
-      setCustomFieldValues({});
-      return;
-    }
-    if (editCustomFieldValuesQuery.data) setCustomFieldValues(editCustomFieldValuesQuery.data);
-  }, [formOpen, editingId, editCustomFieldValuesQuery.data]);
+  const customFields = useMemo(() => layoutFields.filter((f) => !f.isSystem), [layoutFields]);
 
   const viewCustomFieldValuesQuery = useQuery({
     queryKey: ["department-custom-field-values", viewTargetId, subdomain],
@@ -520,27 +250,6 @@ export default function DepartmentSettingsClient({ subdomain }: { subdomain: str
   useEffect(() => {
     setViewCustomFieldValues(viewTargetId ? (viewCustomFieldValuesQuery.data ?? {}) : {});
   }, [viewTargetId, viewCustomFieldValuesQuery.data]);
-
-  const customFields = useMemo(() => layoutFields.filter((f) => !f.isSystem), [layoutFields]);
-
-  function validateCustomFields(): boolean {
-    const errors: Record<string, string> = {};
-    for (const field of customFields) {
-      const value = customFieldValues[field.fieldKey];
-      const isEmpty = value === undefined || value === null || value === "";
-      if (isEmpty) {
-        if (field.isRequired) {
-          errors[field.fieldKey] = `${field.label} is required`;
-        }
-        continue;
-      }
-      if (field.fieldType === "number" && typeof value !== "number") {
-        errors[field.fieldKey] = `${field.label} must be a number`;
-      }
-    }
-    setCustomFieldErrors(errors);
-    return Object.keys(errors).length === 0;
-  }
 
   const byId = useMemo(() => new Map((departments ?? []).map((d) => [d.id, d])), [departments]);
   const viewTarget = viewTargetId ? (byId.get(viewTargetId) ?? null) : null;
@@ -567,100 +276,8 @@ export default function DepartmentSettingsClient({ subdomain }: { subdomain: str
     });
   }
 
-  function openCreate() {
-    setEditingId(null);
-    setForm(EMPTY_FORM);
-    setFormError(null);
-    setFormOpen(true);
-  }
-
   function openView(dept: DepartmentRow) {
     setViewTargetId(dept.id);
-  }
-
-  function openEdit(dept: DepartmentRow) {
-    setEditingId(dept.id);
-    setForm({
-      name: dept.name,
-      parentDepartmentId: dept.parentDepartmentId ?? "",
-      description: dept.description ?? "",
-      status: dept.status,
-      manager: dept.manager,
-      assistantManager: dept.assistantManager,
-    });
-    setFormError(null);
-    setFormOpen(true);
-  }
-
-  const saveMutation = useMutation({
-    mutationFn: async () => {
-      const body = {
-        name: form.name.trim(),
-        parentDepartmentId: form.parentDepartmentId || null,
-        description: form.description || undefined,
-        ...(editingId ? { status: form.status } : {}),
-        managerId: form.manager?.id ?? null,
-        assistantManagerId: form.assistantManager?.id ?? null,
-        customFieldValues,
-      };
-      const url = editingId
-        ? `${API_BASE}/departments/${editingId}?subdomain=${encodeURIComponent(subdomain)}`
-        : `${API_BASE}/departments?subdomain=${encodeURIComponent(subdomain)}`;
-      const res = await fetch(url, {
-        method: editingId ? "PATCH" : "POST",
-        credentials: "include",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) {
-        const json = (await res.json().catch(() => null)) as
-          | { message?: string; errors?: { fieldKey: string; message: string }[] }
-          | null;
-        throw { json };
-      }
-    },
-    onSuccess: () => {
-      setFormOpen(false);
-      reloadDepartments();
-    },
-    onError: (err: { json?: { message?: string; errors?: { fieldKey: string; message: string }[] } | null }) => {
-      const json = err?.json;
-      if (json?.errors) {
-        setCustomFieldErrors(Object.fromEntries(json.errors.map((e) => [e.fieldKey, e.message])));
-        setFormError("Some custom fields need attention.");
-        return;
-      }
-      setFormError(json?.message ?? "Couldn't save this department. Try again.");
-    },
-  });
-
-  // Called from `<FormRenderer onSubmit={...}>` — FormRenderer has already run its own
-  // client-side required/type validation (mirroring `validateFieldValue`) against every field,
-  // including custom ones, before ever calling this; the checks below are Department's own
-  // additional business rules (duplicate name, manager != assistant manager) that a generic
-  // form-field validator has no way to know about.
-  function handleFormSubmit() {
-    setFormError(null);
-    const trimmedName = form.name.trim();
-    if (!trimmedName) {
-      setFormError("Name is required.");
-      return;
-    }
-    const isDuplicate = (departments ?? []).some(
-      (d) => d.id !== editingId && d.name.toLowerCase() === trimmedName.toLowerCase(),
-    );
-    if (isDuplicate) {
-      setFormError("A department with this name already exists.");
-      return;
-    }
-    if (form.manager && form.assistantManager && form.manager.id === form.assistantManager.id) {
-      setFormError("Manager and Assistant Manager must be different people.");
-      return;
-    }
-    if (!validateCustomFields()) {
-      return;
-    }
-    saveMutation.mutate();
   }
 
   const archiveToggleMutation = useMutation({
@@ -706,40 +323,6 @@ export default function DepartmentSettingsClient({ subdomain }: { subdomain: str
     deleteMutation.mutate(deleteTarget);
   }
 
-  const excludedParentIds = useMemo(
-    () => computeExcludedParentIds(departments ?? [], editingId),
-    [departments, editingId],
-  );
-
-  // FormRenderer needs one flat `values` object keyed by `fieldKey` for its own client-side
-  // required/type validation (spec FR-030 mirror) — system field values still live in `form.*`
-  // state (owned by this page, per the `fieldRenderers` overrides below), custom field values in
-  // `customFieldValues`; this is just the merged read view FormRenderer is handed each render.
-  const rendererValues = useMemo(
-    () => ({
-      name: form.name,
-      parent_department_id: form.parentDepartmentId,
-      description: form.description,
-      status: form.status,
-      manager_id: form.manager,
-      assistant_manager_id: form.assistantManager,
-      ...customFieldValues,
-    }),
-    [form, customFieldValues],
-  );
-
-  // Only a custom (platform/tenant) field ever reaches this — every system field's override
-  // component (DEPARTMENT_FIELD_RENDERERS below) calls `setForm` directly via context instead of
-  // routing through FormRenderer's generic onChange.
-  function handleFieldChange(fieldKey: string, value: unknown) {
-    setCustomFieldValues((v) => ({ ...v, [fieldKey]: value }));
-  }
-
-  const departmentFieldContextValue = useMemo(
-    () => ({ form, setForm, departments: departments ?? [], excludedParentIds, editingId, subdomain }),
-    [form, departments, excludedParentIds, editingId, subdomain],
-  );
-
   function renderRows(parentId: string | null, depth: number): React.ReactNode[] {
     const rows = childrenByParent.get(parentId) ?? [];
     return rows.flatMap((dept) => {
@@ -781,19 +364,25 @@ export default function DepartmentSettingsClient({ subdomain }: { subdomain: str
             </Badge>
           </td>
           <td className="px-4 py-3 text-sm text-secondary">{dept.manager?.fullName ?? "—"}</td>
-          <td className="px-4 py-3 text-right text-sm">
-            <div className="flex justify-end">
-              <RowActionsMenu
-                status={dept.status}
-                onEdit={() => openEdit(dept)}
-                onArchiveToggle={() => handleArchiveToggle(dept)}
-                onDelete={() => {
-                  setDeleteTarget(dept);
-                  setDeleteBlock(null);
-                }}
-              />
-            </div>
-          </td>
+          {(canEdit || canDelete) && (
+            <td className="px-4 py-3 text-right text-sm">
+              <div className="flex justify-end">
+                <RowActionsMenu
+                  status={dept.status}
+                  onEdit={canEdit ? () => router.push(`/settings/department/${dept.id}/edit`) : undefined}
+                  onArchiveToggle={canEdit ? () => handleArchiveToggle(dept) : undefined}
+                  onDelete={
+                    canDelete
+                      ? () => {
+                          setDeleteTarget(dept);
+                          setDeleteBlock(null);
+                        }
+                      : undefined
+                  }
+                />
+              </div>
+            </td>
+          )}
         </tr>
       );
       const childRows = isExpanded ? renderRows(dept.id, depth + 1) : [];
@@ -810,10 +399,12 @@ export default function DepartmentSettingsClient({ subdomain }: { subdomain: str
           title="Departments"
           subtitle="Organize your team into departments and sub-departments."
         />
-        <Button onClick={openCreate}>
-          <Plus className="h-4 w-4" />
-          Add department
-        </Button>
+        {canCreate && (
+          <Button onClick={() => router.push("/settings/department/new")}>
+            <Plus className="h-4 w-4" />
+            Add department
+          </Button>
+        )}
       </div>
 
       <Input
@@ -832,7 +423,9 @@ export default function DepartmentSettingsClient({ subdomain }: { subdomain: str
           <div className="p-8 text-center text-sm text-slate-500">
             {search
               ? "No departments match your search."
-              : "No departments yet — create your first department to start organizing your team."}
+              : canCreate
+                ? "No departments yet — create your first department to start organizing your team."
+                : "No departments yet."}
           </div>
         ) : topLevelCount === 0 ? (
           <div className="p-8 text-center text-sm text-slate-500">No departments match your search.</div>
@@ -845,32 +438,13 @@ export default function DepartmentSettingsClient({ subdomain }: { subdomain: str
                 <th className="px-4 py-2 text-left font-medium text-slate-600">Parent department</th>
                 <th className="px-4 py-2 text-left font-medium text-slate-600">Status</th>
                 <th className="px-4 py-2 text-left font-medium text-slate-600">Manager</th>
-                <th className="px-4 py-2 text-right font-medium text-slate-600">Actions</th>
+                {(canEdit || canDelete) && <th className="px-4 py-2 text-right font-medium text-slate-600">Actions</th>}
               </tr>
             </thead>
             <tbody>{renderRows(null, 0)}</tbody>
           </table>
         )}
       </Card>
-
-      <Drawer open={formOpen} onClose={() => setFormOpen(false)} side="right" title={editingId ? "Edit department" : "Add department"}>
-        <div className="space-y-4">
-          {formError && <div className="banner-error">{formError}</div>}
-          <DepartmentFieldContext.Provider value={departmentFieldContextValue}>
-            <FormRenderer
-              form={effectiveForm}
-              values={rendererValues}
-              onChange={handleFieldChange}
-              onSubmit={handleFormSubmit}
-              errors={customFieldErrors}
-              isSubmitting={saveMutation.isPending}
-              fieldRenderers={DEPARTMENT_FIELD_RENDERERS}
-              submitLabel={editingId ? "Save changes" : "Create department"}
-              subdomain={subdomain}
-            />
-          </DepartmentFieldContext.Provider>
-        </div>
-      </Drawer>
 
       <Drawer open={!!viewTarget} onClose={() => setViewTargetId(null)} side="right" title="Department details">
         {viewTarget && (
@@ -939,16 +513,11 @@ export default function DepartmentSettingsClient({ subdomain }: { subdomain: str
               </div>
             )}
 
-            <Button
-              onClick={() => {
-                const target = viewTarget;
-                setViewTargetId(null);
-                openEdit(target);
-              }}
-              className="w-full"
-            >
-              Edit department
-            </Button>
+            {canEdit && (
+              <Button onClick={() => router.push(`/settings/department/${viewTarget.id}/edit`)} className="w-full">
+                Edit department
+              </Button>
+            )}
           </div>
         )}
       </Drawer>
@@ -979,7 +548,7 @@ export default function DepartmentSettingsClient({ subdomain }: { subdomain: str
               >
                 Cancel
               </Button>
-              {deleteTarget && (
+              {deleteTarget && canEdit && (
                 <Button onClick={() => handleArchiveToggle(deleteTarget)}>Archive instead</Button>
               )}
             </div>
@@ -999,11 +568,15 @@ export default function DepartmentSettingsClient({ subdomain }: { subdomain: str
               >
                 Cancel
               </Button>
-              <Button onClick={handleDeleteConfirm}>Delete</Button>
+              <Button isLoading={deleteMutation.isPending} onClick={handleDeleteConfirm}>
+                Delete
+              </Button>
             </div>
           </div>
         )}
       </Modal>
+
+      {toast && <Toast message={toast.message} variant={toast.variant} onDismiss={() => setToast(null)} />}
     </main>
   );
 }
