@@ -4,8 +4,8 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, ArrowDown, MoreHorizontal, MoreVertical, Plus, Target, Archive } from "lucide-react";
-import { PageHeader, Card, Badge, Modal, Drawer, Button, Pagination, Toast, type ToastVariant } from "@tm/ui";
+import { ArrowUp, ArrowDown, MoreHorizontal, MoreVertical, Plus, Target, Trash2, Flag, Calendar } from "lucide-react";
+import { Card, Badge, Modal, Drawer, Button, Pagination, Toast, type ToastVariant } from "@tm/ui";
 
 const API_BASE = "/tenant-api/tenant";
 const DISPLAY_PAGE_SIZE = 10;
@@ -76,6 +76,18 @@ function formatDueDateRelative(value: string): string {
   return `${overdue} day${overdue === 1 ? "" : "s"} overdue`;
 }
 
+/** Calendar-quarter check for the "Due this quarter" summary stat — today's actual quarter, not a
+ * fixed/rolling 90-day window, so it matches how "this quarter" reads on a calendar. */
+function isDueThisQuarter(dueDate: string): boolean {
+  const due = new Date(`${dueDate}T00:00:00`);
+  if (Number.isNaN(due.getTime())) return false;
+  const today = new Date();
+  const quarterStartMonth = Math.floor(today.getMonth() / 3) * 3;
+  const start = new Date(today.getFullYear(), quarterStartMonth, 1);
+  const end = new Date(today.getFullYear(), quarterStartMonth + 3, 1);
+  return due >= start && due < end;
+}
+
 /** Baseline and target are the only two data points a Business Objective carries toward its
  * metric — there's no separately-tracked "current" value — so baseline-as-a-share-of-target is
  * the only percentage derivable from what's actually stored. Both need to be set (and target
@@ -118,6 +130,31 @@ function CircularProgress({
       </svg>
       {children && <div className="absolute inset-0 flex items-center justify-center">{children}</div>}
     </div>
+  );
+}
+
+function StatCard({
+  icon,
+  iconClassName,
+  label,
+  value,
+  sublabel,
+}: {
+  icon: ReactNode;
+  iconClassName: string;
+  label: string;
+  value: number;
+  sublabel: string;
+}) {
+  return (
+    <Card className="flex items-start gap-3 p-5">
+      <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${iconClassName}`}>{icon}</div>
+      <div>
+        <p className="text-sm text-secondary">{label}</p>
+        <p className="mt-1 text-[28px] font-bold text-primary">{value}</p>
+        <p className="mt-1 text-[13px] text-slate-500">{sublabel}</p>
+      </div>
+    </Card>
   );
 }
 
@@ -235,9 +272,9 @@ function RowActionsMenu({ onEdit, onDelete }: { onEdit: () => void; onDelete: ()
 const OBJECTIVE_ACTIONS_MENU_WIDTH = 200;
 
 // Drawer's own "⋮" actions menu (distinct from the table row's `RowActionsMenu` above) — same
-// portal/click-outside pattern, but only "Archive objective" for now (screenshot's mock also shows
-// Duplicate/Mark as complete/Delete, deliberately left out until those actions actually exist).
-function ObjectiveActionsMenu({ onArchive }: { onArchive: () => void }) {
+// portal/click-outside pattern, but only "Delete objective" for now (screenshot's mock also shows
+// Duplicate/Mark as complete/Archive, deliberately left out until those actions actually exist).
+function ObjectiveActionsMenu({ onDelete }: { onDelete: () => void }) {
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -274,7 +311,7 @@ function ObjectiveActionsMenu({ onArchive }: { onArchive: () => void }) {
         ref={buttonRef}
         type="button"
         aria-label="Objective actions"
-        className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-lg border border-border text-secondary hover:bg-slate-50 hover:text-primary"
+        className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg border border-border text-secondary hover:bg-slate-50 hover:text-primary"
         onClick={toggleOpen}
       >
         <MoreVertical className="h-4 w-4" />
@@ -289,14 +326,14 @@ function ObjectiveActionsMenu({ onArchive }: { onArchive: () => void }) {
           >
             <button
               type="button"
-              className="flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left text-sm text-secondary hover:bg-slate-50 hover:text-primary"
+              className="flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50"
               onClick={() => {
                 setOpen(false);
-                onArchive();
+                onDelete();
               }}
             >
-              <Archive className="h-4 w-4" />
-              Archive objective
+              <Trash2 className="h-4 w-4" />
+              Delete objective
             </button>
           </div>,
           document.body,
@@ -357,6 +394,24 @@ export default function BusinessObjectivesClient({ subdomain, canManage }: { sub
         ? (rowsQuery.error as Error).message
         : null;
 
+  const stats = useMemo(() => {
+    const all = rows ?? [];
+    const total = all.length;
+    const onTrack = all.filter((r) => r.status === "on_track").length;
+    const completed = all.filter((r) => r.status === "done").length;
+    const dueThisQuarter = all.filter((r) => isDueThisQuarter(r.dueDate)).length;
+    const pct = (count: number) => (total === 0 ? 0 : Math.round((count / total) * 100));
+    return {
+      total,
+      onTrack,
+      onTrackPct: pct(onTrack),
+      completed,
+      completedPct: pct(completed),
+      dueThisQuarter,
+      dueThisQuarterPct: pct(dueThisQuarter),
+    };
+  }, [rows]);
+
   const sorted = useMemo(() => {
     if (!rows) return [];
     const copy = [...rows];
@@ -401,6 +456,7 @@ export default function BusinessObjectivesClient({ subdomain, canManage }: { sub
     },
     onSuccess: () => {
       setDeleteTarget(null);
+      setViewTarget(null);
       setToast({ message: "Objective deleted.", variant: "success" });
       queryClient.invalidateQueries({ queryKey: ["business-objectives", subdomain] });
     },
@@ -413,29 +469,17 @@ export default function BusinessObjectivesClient({ subdomain, canManage }: { sub
     deleteMutation.mutate(deleteTarget);
   }
 
-  const archiveMutation = useMutation({
-    mutationFn: async (target: BusinessObjectiveRow) => {
-      const res = await fetch(
-        `${API_BASE}/business-objectives/${target.id}/archive?subdomain=${encodeURIComponent(subdomain)}`,
-        { method: "POST", credentials: "include" },
-      );
-      if (!res.ok) {
-        const json = (await res.json().catch(() => null)) as { message?: string } | null;
-        throw new Error(json?.message ?? "Couldn't archive this business objective.");
-      }
-    },
-    onSuccess: () => {
-      setViewTarget(null);
-      setToast({ message: "Objective archived.", variant: "success" });
-      queryClient.invalidateQueries({ queryKey: ["business-objectives", subdomain] });
-    },
-    onError: (err: Error) => setToast({ message: err.message, variant: "error" }),
-  });
-
   return (
     <main className="px-8 py-8">
       <div className="flex items-start justify-between">
-        <PageHeader title="Business objectives" subtitle="Company-level goals, their owners, and progress toward target." />
+        <div className="mb-6">
+          {/* Local override, not @tm/ui's shared PageHeader — 28px/700 per this page's own
+              typography spec, kept separate from `.shell-page-header-title` (20px) used elsewhere. */}
+          <h1 className="text-[28px] font-bold tracking-tight text-primary">Business objectives</h1>
+          <p className="mt-1.5 text-sm text-slate-600">
+            Company-level goals, their owners, and progress toward target.
+          </p>
+        </div>
         {canManage && (
           <Button onClick={() => router.push("/learning/business-objective/new")}>
             <Plus className="h-4 w-4" />
@@ -444,9 +488,42 @@ export default function BusinessObjectivesClient({ subdomain, canManage }: { sub
         )}
       </div>
 
+      {rows !== null && (
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <StatCard
+            icon={<Target className="h-5 w-5" />}
+            iconClassName="bg-cta/10 text-cta"
+            label="Total objectives"
+            value={stats.total}
+            sublabel="Company-wide"
+          />
+          <StatCard
+            icon={<Flag className="h-5 w-5" />}
+            iconClassName="bg-slate-100 text-slate-700"
+            label="On track"
+            value={stats.onTrack}
+            sublabel={`${stats.onTrackPct}% of total`}
+          />
+          {/* <StatCard
+            icon={<CircularProgress percent={stats.completedPct} size={26} strokeWidth={3} />}
+            iconClassName="bg-cta/10"
+            label="Completed"
+            value={stats.completed}
+            sublabel={`${stats.completedPct}% of total`}
+          /> */}
+          <StatCard
+            icon={<Calendar className="h-5 w-5" />}
+            iconClassName="bg-amber-50 text-amber-600"
+            label="Due this quarter"
+            value={stats.dueThisQuarter}
+            sublabel={`${stats.dueThisQuarterPct}% of total`}
+          />
+        </div>
+      )}
+
       {listError && <div className="banner-error mt-4">{listError}</div>}
 
-      <Card className="mt-4 overflow-hidden p-0">
+      <Card className="mt-14 overflow-hidden p-0">
         {rows === null ? (
           <div className="p-8 text-center text-sm text-slate-500">Loading…</div>
         ) : rows.length === 0 ? (
@@ -492,11 +569,11 @@ export default function BusinessObjectivesClient({ subdomain, canManage }: { sub
                   }}
                 >
                   <td className="px-4 py-3">
-                    <div className="truncate text-sm font-medium text-primary" title={row.title}>
+                    <div className="truncate text-sm font-medium text-primary capitalize" title={row.title}>
                       {row.title}
                     </div>
                     {row.description && (
-                      <div className="truncate text-xs text-slate-500" title={row.description}>
+                      <div className="truncate text-[13px] text-slate-500" title={row.description}>
                         {row.description}
                       </div>
                     )}
@@ -540,7 +617,7 @@ export default function BusinessObjectivesClient({ subdomain, canManage }: { sub
         )}
       </Card>
 
-      {sorted.length > 0 && (
+      {sorted.length > 10 && (
         <Pagination className="mt-3" page={page} pageSize={DISPLAY_PAGE_SIZE} total={sorted.length} onPageChange={setPage} />
       )}
 
@@ -557,15 +634,23 @@ export default function BusinessObjectivesClient({ subdomain, canManage }: { sub
               <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-cta/10 text-cta">
                 <Target className="h-6 w-6" />
               </div>
-              <h2 className="text-lg font-semibold text-primary">{viewTarget.title}</h2>
+              <h2 className="text-lg font-semibold text-primary capitalize">{viewTarget.title}</h2>
             </div>
 
             {canManage && (
               <div className="flex items-center gap-2">
-                <Button onClick={() => router.push(`/learning/business-objective/${viewTarget.id}/edit`)}>
+                <Button
+                  size="sm"
+                  onClick={() => router.push(`/learning/business-objective/${viewTarget.id}/edit`)}
+                >
                   Edit objective
                 </Button>
-                <ObjectiveActionsMenu onArchive={() => archiveMutation.mutate(viewTarget)} />
+                <ObjectiveActionsMenu
+                  onDelete={() => {
+                    setDeleteError(null);
+                    setDeleteTarget(viewTarget);
+                  }}
+                />
               </div>
             )}
 
@@ -573,24 +658,24 @@ export default function BusinessObjectivesClient({ subdomain, canManage }: { sub
 
             {viewTarget.description && (
               <div>
-                <p className="text-xs font-normal tracking-wide text-slate-500 uppercase">Description</p>
+                <p className="text-[13px] font-normal tracking-wide text-slate-500 uppercase">Description</p>
                 <p className="mt-1 text-sm font-semibold text-primary">{viewTarget.description}</p>
               </div>
             )}
 
             <div>
-              <p className="text-xs font-normal tracking-wide text-slate-500 uppercase">Focus</p>
+              <p className="text-[13px] font-normal tracking-wide text-slate-500 uppercase">Focus</p>
               <p className="mt-1 text-sm font-semibold text-primary">{viewTarget.categoryName ?? "—"}</p>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <p className="text-xs font-normal tracking-wide text-slate-500 uppercase">Due date</p>
+                <p className="text-[13px] font-normal tracking-wide text-slate-500 uppercase">Due date</p>
                 <p className="mt-1 text-sm font-semibold text-primary">{formatDate(viewTarget.dueDate)}</p>
-                <p className="text-xs text-slate-500">{formatDueDateRelative(viewTarget.dueDate)}</p>
+                <p className="text-[13px] text-slate-500">{formatDueDateRelative(viewTarget.dueDate)}</p>
               </div>
               <div>
-                <p className="text-xs font-normal tracking-wide text-slate-500 uppercase">Priority</p>
+                <p className="text-[13px] font-normal tracking-wide text-slate-500 uppercase">Priority</p>
                 <p className="mt-1">
                   <Badge variant={PRIORITY_BADGE[viewTarget.priority]}>{PRIORITY_LABEL[viewTarget.priority]}</Badge>
                 </p>
@@ -599,13 +684,13 @@ export default function BusinessObjectivesClient({ subdomain, canManage }: { sub
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <p className="text-xs font-normal tracking-wide text-slate-500 uppercase">Status</p>
+                <p className="text-[13px] font-normal tracking-wide text-slate-500 uppercase">Status</p>
                 <p className="mt-1">
                   <Badge variant={STATUS_BADGE[viewTarget.status]}>{STATUS_LABEL[viewTarget.status]}</Badge>
                 </p>
               </div>
               <div>
-                <p className="text-xs font-normal tracking-wide text-slate-500 uppercase">Progress</p>
+                <p className="text-[13px] font-normal tracking-wide text-slate-500 uppercase">Progress</p>
                 {(() => {
                   const percent = computeProgressPercent(viewTarget.baselineValue, viewTarget.targetValue);
                   return (
@@ -613,7 +698,7 @@ export default function BusinessObjectivesClient({ subdomain, canManage }: { sub
                       {percent === null ? (
                         <p className="text-sm text-primary">—</p>
                       ) : (
-                        <CircularProgress percent={percent} size={44} strokeWidth={5}>
+                        <CircularProgress percent={percent} size={44} strokeWidth={2}>
                           <span className="text-[10px] font-semibold text-primary">{percent}%</span>
                         </CircularProgress>
                       )}
@@ -625,7 +710,7 @@ export default function BusinessObjectivesClient({ subdomain, canManage }: { sub
 
             {viewTarget.metricName && (
               <div>
-                <p className="text-xs font-normal tracking-wide text-slate-500 uppercase">Metric / Key Result</p>
+                <p className="text-[13px] font-normal tracking-wide text-slate-500 uppercase">Metric / Key Result</p>
                 <p className="mt-1 text-sm font-semibold text-primary">{viewTarget.metricName}</p>
               </div>
             )}
@@ -634,11 +719,11 @@ export default function BusinessObjectivesClient({ subdomain, canManage }: { sub
 
             <div className="space-y-1">
               {viewTarget.createdByName && (
-                <p className="text-xs text-slate-500">
+                <p className="text-[13px] text-slate-500">
                   Created by {viewTarget.createdByName} on {formatDate(viewTarget.createdAt.slice(0, 10))}
                 </p>
               )}
-              <p className="text-xs text-slate-500">Last updated {formatDate(viewTarget.updatedAt.slice(0, 10))}</p>
+              <p className="text-[13px] text-slate-500">Last updated {formatDate(viewTarget.updatedAt.slice(0, 10))}</p>
             </div>
           </div>
         )}
