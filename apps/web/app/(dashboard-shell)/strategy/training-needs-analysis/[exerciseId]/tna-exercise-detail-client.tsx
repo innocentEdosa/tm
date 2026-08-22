@@ -3,9 +3,9 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, ChevronDown, Users } from "lucide-react";
 import { Card, Badge, Button, Drawer, Modal, Toast, type ToastVariant } from "@tm/ui";
-import { useEffectiveForm } from "@tm/form-builder";
+import { useEffectiveForm, type FormField } from "@tm/form-builder";
 import { tenantFetch } from "@/lib/tenant-api-client";
 import TargetPicker, { type TargetRef } from "@/app/_shared/tna/target-picker";
 
@@ -529,6 +529,70 @@ export default function TnaExerciseDetailClient({
   );
 }
 
+interface AdminResponseSummary {
+  id: string;
+  status: "draft" | "submitted";
+  submittedAt: string | null;
+  values: Record<string, unknown>;
+}
+
+function formatDateTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const datePart = date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  const timePart = date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  return `${datePart} · ${timePart}`;
+}
+
+/** `people_select` stores an array of `{ type, id, label, sublabel? }` (`PersonOrRoleSelection`,
+ * `@tm/form-builder`) — plain `String(value)` on that array stringifies each entry to
+ * `[object Object]` instead of showing who was actually selected, so this field type needs its own
+ * formatting the same way `FormRenderer` itself displays a `people_select` value. `entity_select`
+ * (`business_objective`) stores just the objective's raw id — `objectiveTitleById` resolves it to
+ * the title the same way the fill-in forms' own `BusinessObjectiveField` does, since there's no
+ * generic way to know how to display a dynamic reference without the caller's own lookup. Every
+ * other field type here (including `multiselect`, an array of plain strings) already stringifies
+ * correctly on its own. */
+function formatFieldValue(fieldType: string, value: unknown, objectiveTitleById: Map<string, string>): string {
+  if (value === undefined || value === null || value === "") return "—";
+  if (fieldType === "people_select" && Array.isArray(value)) {
+    const labels = (value as { label?: string }[]).map((entry) => entry?.label).filter((label): label is string => !!label);
+    return labels.length > 0 ? labels.join(", ") : "—";
+  }
+  if (fieldType === "entity_select" && typeof value === "string") {
+    return objectiveTitleById.get(value) ?? value;
+  }
+  return String(value);
+}
+
+/** Picks which fields summarize a response in its collapsed card header — by `fieldType`, not
+ * hardcoded field keys, since the TNA form's actual fields vary by tenant/version (Form Builder
+ * edits keep changing them). The badge takes the first answered `select`/`radio` field (e.g.
+ * Priority); the stat takes the first answered `number` field, omitted entirely when the form has
+ * none; the highlight takes the first answered `text`/`textarea` field, shown as the right-aligned
+ * "label + bold value" pair. */
+function pickBadgeField(fields: FormField[], values: Record<string, unknown>): FormField | null {
+  return fields.find((f) => (f.fieldType === "select" || f.fieldType === "radio") && !!values[f.fieldKey]) ?? null;
+}
+
+/** `affected_individuals` (relabeled "Employees Affected") is a `people_select` — its "count" is
+ * how many people/roles were picked, not a `number` field's own value (this form has none). */
+function pickEmployeesAffectedCount(fields: FormField[], values: Record<string, unknown>): number | null {
+  const field = fields.find((f) => f.fieldKey === "affected_individuals");
+  if (!field) return null;
+  const value = values[field.fieldKey];
+  return Array.isArray(value) ? value.length : null;
+}
+
+function findField(fields: FormField[], fieldKey: string): FormField | null {
+  return fields.find((f) => f.fieldKey === fieldKey) ?? null;
+}
+
+/** A department can have more than one training need, so one participant's assignment can hold any
+ * number of submitted responses — the drawer lists every one of them, numbered in submission order,
+ * rather than assuming exactly one (see tna-shared.ts's `listTnaResponses`). A `draft` response (one
+ * still in progress, not yet submitted) is intentionally excluded — HR only ever reviews finished
+ * answers here. */
 function ResponseViewDrawer({
   subdomain,
   exerciseId,
@@ -545,7 +609,7 @@ function ResponseViewDrawer({
   const responseQuery = useQuery({
     queryKey: ["tna-response", exerciseId, assignmentId, subdomain],
     queryFn: async () => {
-      const { data } = await tenantFetch<{ data: { userName: string | null; responseValues: Record<string, unknown> } }>(
+      const { data } = await tenantFetch<{ data: { userName: string | null; responses: AdminResponseSummary[] } }>(
         `/tna-exercises/${exerciseId}/assignments/${assignmentId}`,
         { subdomain },
       );
@@ -554,23 +618,96 @@ function ResponseViewDrawer({
     enabled: !!assignmentId,
   });
 
+  // Same session-only, no-extra-permission source the fill-in forms' own `BusinessObjectiveField`
+  // use (`GET /tenant/tna-assignments/business-objectives`) — a TNA reviewer doesn't necessarily
+  // hold `business_objective.view`, so this deliberately isn't `GET /tenant/business-objectives`.
+  const objectivesQuery = useQuery({
+    queryKey: ["tna-response-business-objectives", subdomain],
+    queryFn: () => tenantFetch<{ data: { id: string; title: string }[] }>("/tna-assignments/business-objectives", { subdomain }),
+    enabled: !!assignmentId,
+  });
+  const objectiveTitleById = new Map((objectivesQuery.data?.data ?? []).map((o) => [o.id, o.title]));
+
+  // Every response opens collapsed to its summary card — a reviewer expands only the ones they
+  // want the full answer breakdown for, rather than scrolling past every field of every response.
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  function toggleExpanded(id: string) {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
   const fields = effectiveForm?.steps.flatMap((s) => s.sections.flatMap((sec) => sec.fields)) ?? [];
+  const submittedResponses = responseQuery.data?.responses.filter((r) => r.status === "submitted") ?? [];
 
   return (
     <Drawer open={!!assignmentId} onClose={onClose} side="right" title={responseQuery.data?.userName ?? "Response"}>
       {responseQuery.isPending ? (
         <div className="p-4 text-center text-sm text-slate-500">Loading…</div>
+      ) : submittedResponses.length === 0 ? (
+        <div className="p-4 text-center text-sm text-slate-500">No submitted responses.</div>
       ) : (
         <div className="space-y-4">
-          {fields.map((field) => {
-            const value = responseQuery.data?.responseValues[field.fieldKey];
+          {submittedResponses.map((response, index) => {
+            const isExpanded = expandedIds.has(response.id);
+            const badgeField = pickBadgeField(fields, response.values);
+            const employeesAffected = pickEmployeesAffectedCount(fields, response.values);
+            const skillGapField = findField(fields, "skill_gap");
+            const skillGapValue = skillGapField ? response.values[skillGapField.fieldKey] : undefined;
+            const title = typeof skillGapValue === "string" && skillGapValue.trim() !== "" ? skillGapValue : `Response ${index + 1}`;
+            const objectiveField = findField(fields, "business_objective");
+            const objectiveValue = objectiveField ? response.values[objectiveField.fieldKey] : undefined;
+
             return (
-              <div key={field.fieldKey}>
-                <p className="text-xs font-medium tracking-wide text-slate-500 uppercase">{field.label}</p>
-                <p className="mt-1 text-sm text-primary whitespace-pre-wrap">
-                  {value === undefined || value === null || value === "" ? "—" : String(value)}
-                </p>
-              </div>
+              <Card key={response.id} className="overflow-hidden border-l-4 border-l-amber-400 p-0">
+                <button
+                  type="button"
+                  className="flex w-full cursor-pointer items-center justify-between gap-4 p-3 text-left"
+                  onClick={() => toggleExpanded(response.id)}
+                  aria-expanded={isExpanded}
+                >
+                  <div className="min-w-0">
+                    <h3 className="text-base font-semibold text-primary">{title}</h3>
+                    {response.submittedAt && <p className="text-xs text-slate-500">Submitted {formatDateTime(response.submittedAt)}</p>}
+                    <div className="mt-1.5 flex flex-wrap items-center gap-3">
+                      {badgeField && (
+                        <Badge variant="warning">{formatFieldValue(badgeField.fieldType, response.values[badgeField.fieldKey], objectiveTitleById)}</Badge>
+                      )}
+                      {employeesAffected !== null && (
+                        <span className="inline-flex items-center gap-1.5 text-xs text-slate-500">
+                          <Users className="h-3.5 w-3.5" />
+                          {employeesAffected} employees affected
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-4">
+                    {objectiveField && objectiveValue != null && objectiveValue !== "" && !isExpanded && (
+                      <div className="hidden text-right sm:block">
+                        <p className="text-xs text-slate-500">Business objective</p>
+                        <p className="text-sm font-semibold text-primary">{formatFieldValue(objectiveField.fieldType, objectiveValue, objectiveTitleById)}</p>
+                      </div>
+                    )}
+                    <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
+                  </div>
+                </button>
+                {isExpanded && (
+                  <div className="space-y-4 border-t border-border p-4">
+                    {fields.map((field) => {
+                      const value = response.values[field.fieldKey];
+                      return (
+                        <div key={field.fieldKey}>
+                          <p className="text-xs font-medium tracking-wide text-slate-500 uppercase">{field.label}</p>
+                          <p className="mt-1 text-sm text-primary whitespace-pre-wrap">{formatFieldValue(field.fieldType, value, objectiveTitleById)}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </Card>
             );
           })}
         </div>

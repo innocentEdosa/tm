@@ -149,13 +149,12 @@ describe("TNA: permission gating (tna.manage / tna.view / assignment ownership)"
       });
       expect(notOwned.statusCode).toBe(404);
 
-      const notOwnedPatch = await server.inject({
-        method: "PATCH",
-        url: `/tenant/tna-assignments/${managerAssignment.id}`,
+      const notOwnedStart = await server.inject({
+        method: "POST",
+        url: `/tenant/tna-assignments/${managerAssignment.id}/responses`,
         headers: otherHeaders,
-        payload: { values: { skill_gaps: "Should not save" } },
       });
-      expect(notOwnedPatch.statusCode).toBe(404);
+      expect(notOwnedStart.statusCode).toBe(404);
     } finally {
       await server.close();
     }

@@ -28,6 +28,7 @@ interface PatchFormTypeBody {
   description?: string;
   icon?: string;
   status?: "active" | "archived";
+  allowMultipleResponses?: boolean;
 }
 
 interface PatchVersionBody {
@@ -74,13 +75,18 @@ const platformFormRoutes: FastifyPluginAsync = async (fastify) => {
     },
   );
 
-  fastify.get<{ Querystring: { page?: string; pageSize?: string; search?: string } }>(
+  fastify.get<{ Querystring: { page?: string; pageSize?: string; search?: string; builtInFirst?: string } }>(
     "/platform/forms",
     { preHandler: [requireSuperAdminSession] },
     async (request) => {
       const page = request.query.page ? parseInt(request.query.page, 10) : undefined;
       const pageSize = request.query.pageSize ? parseInt(request.query.pageSize, 10) : undefined;
-      const result = await listFormTypes(request.superAdminDb!, { page, pageSize, search: request.query.search });
+      const result = await listFormTypes(request.superAdminDb!, {
+        page,
+        pageSize,
+        search: request.query.search,
+        builtInFirst: request.query.builtInFirst === "true",
+      });
       return { success: true, data: result };
     },
   );
@@ -117,6 +123,7 @@ const platformFormRoutes: FastifyPluginAsync = async (fastify) => {
           ...(body.description !== undefined ? { description: body.description } : {}),
           ...(body.icon !== undefined ? { icon: body.icon } : {}),
           ...(body.status !== undefined ? { status: body.status } : {}),
+          ...(body.allowMultipleResponses !== undefined ? { allowMultipleResponses: body.allowMultipleResponses } : {}),
           updatedAt: new Date(),
         })
         .where(eq(formDefinitions.id, request.params.id))

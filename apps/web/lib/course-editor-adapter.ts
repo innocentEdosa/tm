@@ -10,6 +10,7 @@ import type {
   CourseModule,
   Curriculum,
   TenantFile,
+  VideoUploadStart,
 } from "@/lib/course-api-types";
 
 const PLATFORM_API_BASE = "/platform-api";
@@ -66,6 +67,11 @@ export interface CourseEditorApi {
   supportsItemStatusToggle: boolean;
   supportsResourceLinks: boolean;
   supportsScormImport: boolean;
+  /** Video Lesson Upload — `false` on the platform side for the same reason `supportsScormImport` is:
+   * the underlying multipart/attachment plumbing isn't platform-specific, but wiring it onto
+   * `platform_file_attachments`/`platform_course_content_items` too is deliberately deferred rather
+   * than bundled in here. */
+  supportsVideoUpload: boolean;
   /** Course Marketplace Updates — only a tenant's own cloned course can have an available update to
    * apply/dismiss; a platform course is the marketplace source itself, never a clone of one. */
   supportsMarketplaceUpdate: boolean;
@@ -154,6 +160,22 @@ export interface CourseEditorApi {
   /** Only called when `supportsScormImport` is true. */
   getScormUploadUrl?(contentItemId: string, sizeBytes: number): Promise<{ uploadUrl: string; storageKey: string }>;
   importScormPackage?(contentItemId: string, storageKey: string): Promise<void>;
+
+  /** Only called when `supportsVideoUpload` is true. Starts (or restarts — a retry auto-cleans up any
+   * stale prior attempt server-side) a video upload for a `type: "video"` content item; the server
+   * decides single-PUT vs. multipart purely from `meta.sizeBytes`. */
+  startVideoUpload?(contentItemId: string, meta: { fileName: string; contentType: string; sizeBytes: number }): Promise<VideoUploadStart>;
+  /** Only called when `supportsVideoUpload` is true, and only for a `strategy: "multipart"` upload —
+   * presigns a small batch of part numbers at a time (never the whole upload up front). */
+  getVideoPartUploadUrls?(attachmentId: string, partNumbers: number[]): Promise<Record<number, string>>;
+  /** Only called when `supportsVideoUpload` is true. Finishes EITHER strategy — `parts` is required
+   * (and only meaningful) for a multipart upload. Also what makes the lesson's payload actually start
+   * pointing at this video, and cleans up any video it replaces. */
+  completeVideoUpload?(attachmentId: string, parts?: { partNumber: number; eTag: string }[]): Promise<{ attachment: Attachment }>;
+  /** Only called when `supportsVideoUpload` is true. Cancels a still-`pending` upload (aborting its
+   * multipart session, if any, and deleting the attachment row) — the content item itself is left
+   * untouched, ready for a different file to be picked. */
+  abortVideoUpload?(attachmentId: string): Promise<void>;
 }
 
 export { uploadFileToPresignedUrl };
@@ -172,6 +194,7 @@ export function tenantCourseEditorApi(subdomain: string): CourseEditorApi {
     supportsItemStatusToggle: true,
     supportsResourceLinks: true,
     supportsScormImport: true,
+    supportsVideoUpload: true,
     supportsMarketplaceUpdate: true,
     supportsFileManager: true,
     supportsAiGeneration: true,
@@ -309,6 +332,34 @@ export function tenantCourseEditorApi(subdomain: string): CourseEditorApi {
     async importScormPackage(contentItemId, storageKey) {
       await tenantFetch(`/content-items/${contentItemId}/scorm/import`, { method: "POST", subdomain, body: { storageKey } });
     },
+
+    async startVideoUpload(contentItemId, meta) {
+      const { data } = await tenantFetch<{ data: VideoUploadStart }>(`/content-items/${contentItemId}/video/upload`, {
+        method: "POST",
+        subdomain,
+        body: meta,
+      });
+      return data;
+    },
+    async getVideoPartUploadUrls(attachmentId, partNumbers) {
+      const { data } = await tenantFetch<{ data: { urls: Record<number, string> } }>(`/attachments/${attachmentId}/video/parts`, {
+        method: "POST",
+        subdomain,
+        body: { partNumbers },
+      });
+      return data.urls;
+    },
+    async completeVideoUpload(attachmentId, parts) {
+      const { data } = await tenantFetch<{ data: { attachment: Attachment } }>(`/attachments/${attachmentId}/video/complete`, {
+        method: "POST",
+        subdomain,
+        body: { parts },
+      });
+      return data;
+    },
+    async abortVideoUpload(attachmentId) {
+      await tenantFetch(`/attachments/${attachmentId}/video/abort`, { method: "POST", subdomain });
+    },
   };
 }
 
@@ -431,6 +482,7 @@ export function platformCourseEditorApi(): CourseEditorApi {
     supportsItemStatusToggle: false,
     supportsResourceLinks: true,
     supportsScormImport: false,
+    supportsVideoUpload: false,
     supportsMarketplaceUpdate: false,
     supportsFileManager: false,
     supportsAiGeneration: false,

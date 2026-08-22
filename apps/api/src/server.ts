@@ -29,6 +29,7 @@ import tenantCourseReviewRoutes from "./courses/tenant-course-review-routes";
 import tenantCourseAssignmentRoutes from "./course-assignments/tenant-course-assignment-routes";
 import tenantCourseContentRoutes from "./course-content/tenant-course-content-routes";
 import tenantAttachmentRoutes from "./attachments/tenant-attachment-routes";
+import tenantVideoUploadRoutes from "./attachments/tenant-video-upload-routes";
 import tenantProgressRoutes from "./progress/tenant-progress-routes";
 import tenantScormUploadRoutes from "./scorm/tenant-scorm-upload-routes";
 import tenantScormRuntimeRoutes from "./scorm/tenant-scorm-runtime-routes";
@@ -42,6 +43,7 @@ import tenantFormBuilderRoutes from "./form-builder/tenant-form-builder-routes";
 import aiRoutes from "./ai/routes";
 import courseGenerationRoutes from "./ai/course-generation-routes";
 import themeRoutes from "./platform-settings/theme-routes";
+import tenantNotificationRoutes from "./notifications/tenant-notification-routes";
 
 export interface BuildServerOptions {
   /**
@@ -125,6 +127,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Fas
   await server.register(tenantCourseAssignmentRoutes);
   await server.register(tenantCourseContentRoutes);
   await server.register(tenantAttachmentRoutes);
+  await server.register(tenantVideoUploadRoutes);
   await server.register(tenantProgressRoutes);
   await server.register(tenantScormUploadRoutes);
   await server.register(tenantScormRuntimeRoutes);
@@ -138,6 +141,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Fas
   await server.register(aiRoutes);
   await server.register(courseGenerationRoutes);
   await server.register(themeRoutes);
+  await server.register(tenantNotificationRoutes);
 
   server.get("/health", async () => ({
     status: "ok",

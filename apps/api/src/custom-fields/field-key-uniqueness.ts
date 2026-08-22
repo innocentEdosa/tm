@@ -10,6 +10,7 @@ export interface MergedFieldRow {
   label: string;
   fieldType: string;
   options: unknown;
+  validation: unknown;
   isRequired: boolean;
   displayOrder: number;
   scope: "system" | "global" | "tenant";
@@ -123,6 +124,7 @@ export async function getFormFields(tenantDb: Db, formKey: string): Promise<Merg
       label: row.label,
       fieldType: row.fieldType,
       options: row.options,
+      validation: row.validation,
       isRequired: row.isRequired,
       displayOrder: overrideByFieldId.get(row.id)?.displayOrder ?? row.displayOrder,
       scope: scopeOf(row),

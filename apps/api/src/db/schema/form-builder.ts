@@ -102,6 +102,11 @@ export const formSections = pgTable(
     key: text("key").notNull(),
     title: text("title").notNull(),
     description: text("description"),
+    /** An icon name from `@tm/form-builder`'s own curated registry (`packages/form-builder/src/icons.ts`)
+     * — purely presentational, rendered next to the section title/description in `<FormRenderer>`'s
+     * section header. Optional (a form's forms/sections predating this column, or one a Super
+     * Admin never bothered to set, just render without one). */
+    icon: text("icon"),
     displayOrder: integer("display_order").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

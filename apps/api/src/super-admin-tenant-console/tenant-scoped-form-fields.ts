@@ -93,6 +93,7 @@ export async function getFormFieldsForTenant(
       label: row.label,
       fieldType: row.fieldType,
       options: row.options,
+      validation: row.validation,
       isRequired: row.isRequired,
       displayOrder: overrideByFieldId.get(row.id)?.displayOrder ?? row.displayOrder,
       scope: scopeOf(row),

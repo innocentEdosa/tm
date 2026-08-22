@@ -9,6 +9,7 @@ import { slugify } from "../custom-fields/field-validation";
 import { getEffectiveForm } from "./get-effective-form";
 import { assertFieldCanBeHidden, FieldCannotBeHiddenError } from "./visibility-rules";
 import { FormService, type FieldType } from "./form-service";
+import { searchPeopleAndRoles, resolvePeopleAndRoles } from "./people-search";
 
 /** Maps a `FormService` failure to the exact same status code/message every route here already
  * used before the Phase 1 (AI Foundation) extraction — behavior-preserving, not a new contract. */
@@ -92,6 +93,42 @@ const tenantFormBuilderRoutes: FastifyPluginAsync = async (fastify) => {
         .where(or(sql`${users.fullName} ILIKE ${pattern}`, sql`${users.email} ILIKE ${pattern}`))
         .limit(20);
       return { success: true, data: rows };
+    },
+  );
+
+  // GET /tenant/forms/people-search — backs `people_select`'s default renderer (`PeopleSelectField`,
+  // multiple form responses feature follow-up): searches both users and roles in one call, the
+  // same "session alone is enough, no form-management permission needed" gate as `user-search`
+  // above (any tenant user filling out any form with this field type needs to search). `ids`
+  // (comma-separated `type:id` pairs, e.g. `user:<uuid>,role:<uuid>`) resolves a previously-
+  // selected value back into display info; `search` powers the type-ahead.
+  fastify.get<{ Querystring: { search?: string; ids?: string } }>(
+    "/tenant/forms/people-search",
+    { preHandler: [requireTenantUserSession()] },
+    async (request, reply) => {
+      const { search, ids } = request.query;
+      if (ids) {
+        const parsed = ids
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)
+          .map((entry) => {
+            const [type, id] = entry.split(":");
+            return { type, id };
+          })
+          .filter((e): e is { type: "user" | "role"; id: string } => (e.type === "user" || e.type === "role") && !!e.id);
+        const userIds = parsed.filter((e) => e.type === "user").map((e) => e.id);
+        const roleIds = parsed.filter((e) => e.type === "role").map((e) => e.id);
+        const results = await resolvePeopleAndRoles(request.tenantDb, userIds, roleIds);
+        return { success: true, data: results };
+      }
+
+      const trimmed = search?.trim();
+      if (!trimmed) {
+        return reply.code(400).send({ success: false, message: "search or ids is required" });
+      }
+      const results = await searchPeopleAndRoles(request.tenantDb, trimmed);
+      return { success: true, data: results };
     },
   );
 

@@ -77,12 +77,22 @@ function daysUntil(endDate: string): number {
 
 /** The deadline "N days left" / "Overdue" pill — amber while there's still runway, red once past
  * due, matching the reference design's color language (amber = attention, not yet urgent). */
+/** Red once overdue (or due today — no time left to act), amber inside a week (still doable but
+ * needs attention soon), green otherwise (comfortable runway) — so urgency reads at a glance
+ * across the whole table instead of every upcoming deadline looking the same. */
 function DeadlineBadge({ endDate }: { endDate: string }) {
   const days = daysUntil(endDate);
   if (days < 0) return <Badge variant="danger">{Math.abs(days)} day{Math.abs(days) === 1 ? "" : "s"} overdue</Badge>;
-  if (days === 0) return <Badge variant="warning">Due today</Badge>;
+  if (days === 0) return <Badge variant="danger">Due today</Badge>;
+  if (days <= 7) {
+    return (
+      <Badge variant="warning">
+        {days} day{days === 1 ? "" : "s"} left
+      </Badge>
+    );
+  }
   return (
-    <Badge variant="warning">
+    <Badge variant="success">
       {days} day{days === 1 ? "" : "s"} left
     </Badge>
   );
@@ -223,11 +233,13 @@ function RowActionsMenu({ actions }: { actions: RowAction[] }) {
  * (still pending) uses the gold/amber accent; a completed one below uses green instead, same shape.
  * Deliberately not the shared `Card`/`surface-card` styling (hairline border, no shadow, per the
  * Desktop Shell Visual Language spec) — this card needs a real drop shadow and a solid rounded
- * accent strip instead, so it's hand-built rather than fighting that shared component's own look. */
+ * accent strip instead, so it's hand-built rather than fighting that shared component's own look.
+ * Uses the subtle `shadow-card-sm` (not `-md`) so the drop shadow reads as a light lift, not a
+ * heavy one. */
 function MyAssignmentCard({ row, onOpen }: { row: MyAssignmentRow; onOpen: () => void }) {
   const isPending = row.status === "pending";
   return (
-    <div className="flex overflow-hidden rounded-xl bg-white shadow-card-md">
+    <div className="flex overflow-hidden rounded-xl bg-white shadow-card-sm">
       <div className={`w-1.5 shrink-0 ${isPending ? "bg-amber-400" : "bg-green-400"}`} />
       <div className="flex flex-1 flex-col gap-6 p-8 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center flex-grow gap-4 ">
@@ -271,7 +283,7 @@ function MyAssignmentCard({ row, onOpen }: { row: MyAssignmentRow; onOpen: () =>
           </div>
 
           <Button size="md" onClick={onOpen}>
-            {isPending ? "Complete assessment" : "View response"}
+            {isPending ? "Complete assessment" : "Manage responses"}
             <ArrowRight className="h-4 w-4" />
           </Button>
         </div>
@@ -284,6 +296,7 @@ const TRANSITION_SUCCESS_MESSAGE: Record<string, string> = {
   start: "TNA started — assignments created.",
   close: "TNA closed.",
   reopen: "TNA reopened.",
+  archive: "TNA archived.",
   "begin-review": "TNA moved to review.",
   commit: "TNA committed.",
 };
@@ -299,6 +312,7 @@ export default function TnaListClient({ subdomain, canManage, canView }: { subdo
   const [yearFilter, setYearFilter] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<ExerciseRow | null>(null);
   const [commitTarget, setCommitTarget] = useState<ExerciseRow | null>(null);
+  const [archiveTarget, setArchiveTarget] = useState<ExerciseRow | null>(null);
 
   // One-shot success toast after redirecting back from the full-screen create page
   // (tna-exercise-form.tsx), matching business-objectives-client.tsx's own pattern. Edits redirect
@@ -334,6 +348,7 @@ export default function TnaListClient({ subdomain, canManage, canView }: { subdo
       invalidateExercises();
       setToast({ message: TRANSITION_SUCCESS_MESSAGE[variables.action] ?? "TNA updated.", variant: "success" });
       setCommitTarget(null);
+      setArchiveTarget(null);
     },
     onError: (err: Error) => setToast({ message: err.message, variant: "error" }),
   });
@@ -374,6 +389,7 @@ export default function TnaListClient({ subdomain, canManage, canView }: { subdo
         { label: "Edit dates", onClick: goEdit },
         { label: "Reopen", onClick: () => transitionMutation.mutate({ id: row.id, action: "reopen" }) },
         { label: "Begin review", onClick: () => transitionMutation.mutate({ id: row.id, action: "begin-review" }) },
+        { label: "Archive", onClick: () => setArchiveTarget(row) },
       ];
     }
     if (row.status === "under_review") {
@@ -648,6 +664,26 @@ export default function TnaListClient({ subdomain, canManage, canView }: { subdo
               }
             >
               Commit anyway
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal open={!!archiveTarget} onClose={() => setArchiveTarget(null)} title={`Archive "${archiveTarget?.title ?? ""}"?`}>
+        <div className="space-y-4">
+          <p className="text-sm text-secondary">
+            It will be hidden from this list. Its responses and data aren&apos;t deleted, but there&apos;s no way to unarchive it
+            from here.
+          </p>
+          <div className="flex gap-2">
+            <Button variant="secondary" onClick={() => setArchiveTarget(null)}>
+              Cancel
+            </Button>
+            <Button
+              isLoading={transitionMutation.isPending}
+              onClick={() => archiveTarget && transitionMutation.mutate({ id: archiveTarget.id, action: "archive" })}
+            >
+              Archive
             </Button>
           </div>
         </div>

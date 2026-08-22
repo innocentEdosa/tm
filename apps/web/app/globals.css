@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @source "../../../packages/ui/src";
+@source "../../../packages/form-builder/src";
 
 /*
  * Design system lock (2026-07-04, Tenant Authentication Configuration spec — design-system/tm/).
@@ -97,7 +98,7 @@
 
 .field-input {
   @apply block w-full rounded-lg border border-border bg-white px-4 py-2.5 text-base text-text
-         placeholder:text-slate-400 transition-colors duration-200
+         placeholder:text-xs placeholder:text-slate-400 transition-colors duration-200
          focus:outline-none focus:border-primary focus:ring-3 focus:ring-primary/10
          disabled:bg-slate-50 disabled:text-slate-400;
 }
@@ -137,7 +138,7 @@ select.field-input:not([multiple]) {
 }
 
 .field-hint {
-  @apply mt-1.5 text-sm text-slate-500;
+  @apply mt-1.5 mb-2 text-sm text-slate-500;
 }
 
 /* Form Builder's 12-column field grid (packages/form-builder FieldGrid) — mobile-first: every

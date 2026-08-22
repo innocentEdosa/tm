@@ -5,6 +5,7 @@ import { Button } from "@tm/ui";
 import type { EffectiveForm, FormField, FormSection } from "../../types/form";
 import { FIELD_TYPE_COMPONENTS, type FieldRendererProps } from "../../fields";
 import { validateFieldValue } from "./validate-field";
+import { resolveFormIcon } from "../../icons";
 
 export interface FormRendererProps {
   form: EffectiveForm | null;
@@ -44,8 +45,19 @@ function allFields(form: EffectiveForm): FormField[] {
   return form.steps.flatMap((step) => step.sections.flatMap((section) => section.fields));
 }
 
+/** An array element with a `label` — the shape every `PersonOrRoleSelection` (`people_select`'s
+ * stored value) has. Plain `.join(", ")` calls `String()` on each element, which for an object
+ * gives `[object Object]` instead of the person/role's name, so that shape needs its own join. */
+function hasStringLabel(entry: unknown): entry is { label: string } {
+  return typeof entry === "object" && entry !== null && typeof (entry as { label?: unknown }).label === "string";
+}
+
 function ReadOnlyFieldValue({ field, value }: { field: FormField; value: unknown }) {
-  const display = Array.isArray(value) ? value.join(", ") : ((value as string | number | boolean | undefined) ?? "");
+  const display = Array.isArray(value)
+    ? value.every(hasStringLabel)
+      ? value.map((entry) => entry.label).join(", ")
+      : value.join(", ")
+    : ((value as string | number | boolean | undefined) ?? "");
   return (
     <div>
       <p className="field-label">{field.label}</p>
@@ -76,13 +88,28 @@ function FieldGrid({
   subdomain?: string;
 }) {
   return (
-    <div className="field-grid grid grid-cols-12 gap-4">
+    <div className="field-grid grid grid-cols-12 gap-6">
       {fields.map((field) => {
         // Full width below the container's own `field-grid` breakpoint (globals.css) regardless
         // of the authored `colSpan` — on a real phone, or a narrow window, a two-up column layout
         // just cramps every input; multi-column only kicks in once there's genuinely room for it.
         const style = { "--field-col-span": field.layout.colSpan } as CSSProperties;
         if (readOnly) {
+          // A consuming feature's own `fieldRenderers` override (spec FR-029) is the only thing
+          // that can resolve a dynamic reference (e.g. `entity_select`'s stored id) to a readable
+          // value, so an override still gets to render itself — with `readOnly` — instead of being
+          // skipped in favor of the generic `ReadOnlyFieldValue` fallback. A field with no override
+          // still goes through `ReadOnlyFieldValue` (its stored value is either display-ready
+          // already, or `ReadOnlyFieldValue` itself now knows how to display it — see
+          // `hasStringLabel` above for `people_select`).
+          const Override = fieldRenderers[field.fieldKey];
+          if (Override) {
+            return (
+              <div key={field.id} className="field-grid-item min-w-0" style={style}>
+                <Override field={field} value={values[field.fieldKey]} onChange={() => {}} readOnly subdomain={subdomain} />
+              </div>
+            );
+          }
           return (
             <div key={field.id} className="field-grid-item min-w-0" style={style}>
               <ReadOnlyFieldValue field={field} value={values[field.fieldKey]} />
@@ -118,12 +145,23 @@ function SectionBlock(props: {
 }) {
   const { section } = props;
   if (section.fields.length === 0) return null;
+  const Icon = resolveFormIcon(section.icon);
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       {section.title && (
-        <div>
-          <h3 className="text-sm font-semibold text-primary">{section.title}</h3>
-          {section.description && <p className="text-sm text-slate-500">{section.description}</p>}
+        <div className="space-y-4">
+          <div className="flex items-center gap-4">
+            {Icon && (
+              <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-cta/10 text-cta">
+                <Icon className="h-6 w-6" />
+              </span>
+            )}
+            <div className="min-w-0">
+              <h3 className="text-lg font-semibold text-primary">{section.title}</h3>
+              {section.description && <p className="mt-0.5 text-sm text-slate-500">{section.description}</p>}
+            </div>
+          </div>
+          <div className="border-t border-slate-50" />
         </div>
       )}
       <FieldGrid fields={section.fields} {...props} />
@@ -244,7 +282,7 @@ export const FormRenderer = forwardRef<FormRendererHandle, FormRendererProps>(fu
 
       {isWizard && currentStep.description && <p className="text-sm text-slate-500">{currentStep.description}</p>}
 
-      <div className="space-y-6">
+      <div className="space-y-10">
         {sectionsToRender.map((section) => (
           <SectionBlock
             key={section.key}

@@ -104,9 +104,11 @@ describe("TNA: mid-campaign participant remediation", () => {
 
       // Submit it, then confirm it can no longer be removed.
       const missedHeaders = { "x-test-user-id": missedUserId, "x-test-tenant-id": tenantId };
+      const started = await server.inject({ method: "POST", url: `/tenant/tna-assignments/${assignmentId}/responses`, headers: missedHeaders });
+      const responseId = started.json().data.id;
       const submit = await server.inject({
         method: "POST",
-        url: `/tenant/tna-assignments/${assignmentId}/submit`,
+        url: `/tenant/tna-assignments/${assignmentId}/responses/${responseId}/submit`,
         headers: missedHeaders,
         payload: { values: { skill_gaps: "Gap", priority: "Low" } },
       });

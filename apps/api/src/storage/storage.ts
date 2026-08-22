@@ -28,12 +28,28 @@ export function headObject(key: string): Promise<{ exists: boolean; sizeBytes?: 
   return activeClient.headObject(key);
 }
 
-export function createPresignedDownloadUrl(key: string): Promise<string> {
-  return activeClient.createPresignedDownloadUrl(key);
+export function createPresignedDownloadUrl(key: string, expirySecondsOverride?: number): Promise<string> {
+  return activeClient.createPresignedDownloadUrl(key, expirySecondsOverride);
 }
 
 export function deleteObject(key: string): Promise<void> {
   return activeClient.deleteObject(key);
+}
+
+export function createMultipartUpload(key: string, contentType: string): Promise<string> {
+  return activeClient.createMultipartUpload(key, contentType);
+}
+
+export function createPresignedUploadPartUrls(key: string, uploadId: string, partNumbers: number[]): Promise<Record<number, string>> {
+  return activeClient.createPresignedUploadPartUrls(key, uploadId, partNumbers);
+}
+
+export function completeMultipartUpload(key: string, uploadId: string, parts: { partNumber: number; eTag: string }[]): Promise<void> {
+  return activeClient.completeMultipartUpload(key, uploadId, parts);
+}
+
+export function abortMultipartUpload(key: string, uploadId: string): Promise<void> {
+  return activeClient.abortMultipartUpload(key, uploadId);
 }
 
 export function putObject(key: string, body: Buffer, contentType: string): Promise<void> {

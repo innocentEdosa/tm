@@ -10,4 +10,6 @@ export type { FieldRendererProps } from "./fields";
 export type { EffectiveForm, FormCta } from "./types/form";
 export type { FormStep } from "./types/step";
 export type { FormSection } from "./types/section";
-export type { FormField, FieldType, FieldScope, FieldValidationConfig, FieldLayout } from "./types/field";
+export type { FormField, FieldType, FieldScope, FieldValidationConfig, FieldLayout, PersonOrRoleSelection } from "./types/field";
+export { FORM_ICONS, resolveFormIcon, isFormIconName } from "./icons";
+export type { FormIconName } from "./icons";

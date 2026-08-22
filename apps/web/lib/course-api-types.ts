@@ -64,6 +64,13 @@ export interface ContentItemPayload {
   externalUrl?: string;
   scheduledAt?: string;
   sourceType?: string;
+  /** Video Lesson Upload — an uploaded video (a durable `file_attachments.id`), the alternative to
+   * `url` (an external video link) for `type: "video"` content items. Never a presigned URL. */
+  videoAttachmentId?: string;
+  /** `type: "video"` only — a real upload is in progress (or was abandoned) and no real content
+   * exists yet. A valid DRAFT-only placeholder; the backend refuses to let a lesson in this state be
+   * published (`course-service.ts`'s `updateLesson`). */
+  uploadPending?: boolean;
 }
 
 export interface ContentItem {
@@ -159,6 +166,14 @@ export interface Attachment {
 export interface TenantFile extends Attachment {
   thumbnailUrl: string | null;
 }
+
+/** `POST .../video/upload`'s response — which strategy the server chose (purely a function of file
+ * size, `apps/api/src/storage/multipart-config.ts`) and exactly what that strategy needs next. The
+ * client branches on `strategy` once, in `uploadVideoFile()`; nothing else in the UI needs to know
+ * which one is in play. */
+export type VideoUploadStart =
+  | { id: string; strategy: "single"; uploadUrl: string }
+  | { id: string; strategy: "multipart"; partSize: number; partCount: number };
 
 export interface CourseAuthor {
   id: string;

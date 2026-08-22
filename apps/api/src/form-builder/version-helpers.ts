@@ -31,6 +31,7 @@ export interface ExpandedSection {
   key: string;
   title: string;
   description: string | null;
+  icon: string | null;
   displayOrder: number;
   fields: ExpandedField[];
 }
@@ -116,6 +117,7 @@ export async function expandVersion(db: Db, versionId: string): Promise<Expanded
     key: s.key,
     title: s.title,
     description: s.description,
+    icon: s.icon,
     displayOrder: s.displayOrder,
     fields: fieldsBySectionId.get(s.id) ?? [],
   });
@@ -158,6 +160,7 @@ export interface SectionInput {
   key: string;
   title: string;
   description?: string | null;
+  icon?: string | null;
   displayOrder: number;
 }
 export interface FieldInput {
@@ -262,6 +265,7 @@ export async function replaceDraftStructure(
         key: section.key,
         title: section.title,
         description: section.description ?? null,
+        icon: section.icon ?? null,
         displayOrder: section.displayOrder,
       })
       .returning();
@@ -373,6 +377,7 @@ export async function cloneVersionInto(db: Db, sourceVersionId: string, targetVe
     key: s.key,
     title: s.title,
     description: s.description,
+    icon: s.icon,
     displayOrder: s.displayOrder,
   }));
   const nonSystemFields: FieldInput[] = allSourceSections.flatMap((s) =>

@@ -13,6 +13,7 @@ import { validateAgainstAllowlist } from "./attachment-allowlist";
 import { revertToDraftIfPublished } from "../courses/revert-course-to-draft";
 import * as storage from "../storage/storage";
 import { resolveTenantStorageFolder } from "../storage/tenant-storage-path";
+import { VIDEO_DOWNLOAD_URL_EXPIRY_SECONDS } from "../storage/multipart-config";
 import type { Db } from "../db/client";
 
 type FileAttachmentRow = typeof fileAttachments.$inferSelect;
@@ -57,6 +58,26 @@ interface CreateAttachmentBody {
  * reference the object; documented as a known residual gap rather than solved here (would need a
  * cross-tenant, RLS-bypassing query — out of scope for this pass).
  */
+/**
+ * Video Lesson Upload — a `pending` attachment with a multipart session in progress has no real R2
+ * object yet (`completeMultipartUpload` never ran), so `deleteObjectIfUnreferenced`'s plain
+ * `deleteObject` call wouldn't clean it up: R2 tracks an in-progress multipart upload separately from
+ * any object at that key, and DeleteObject has nothing to affect until the upload is completed or
+ * explicitly aborted. Shared by the single-attachment DELETE route, `deleteAllAttachmentsForEntity`
+ * (so deleting an abandoned draft lesson cleans up its incomplete upload too), and the video upload
+ * routes' own "replace" and "abort" actions — the one place this cleanup step lives, rather than
+ * reimplemented at each call site. Best-effort: an error here (e.g. the upload was already
+ * completed/aborted by the time this runs) must never block the row/data cleanup that matters more.
+ */
+export async function abortMultipartIfPending(row: { storageKey: string | null; multipartUploadId: string | null }): Promise<void> {
+  if (!row.multipartUploadId || !row.storageKey) return;
+  try {
+    await storage.abortMultipartUpload(row.storageKey, row.multipartUploadId);
+  } catch (err) {
+    console.error(`Failed to abort multipart upload ${row.multipartUploadId} for ${row.storageKey}:`, err);
+  }
+}
+
 async function deleteObjectIfUnreferenced(tenantDb: Db, storageKey: string): Promise<void> {
   await tenantDb.execute(sql`select pg_advisory_xact_lock(hashtext(${storageKey}))`);
 
@@ -125,11 +146,15 @@ export async function deleteAllAttachmentsForEntity(
   entityId: string,
 ): Promise<void> {
   const rows = await tenantDb
-    .select({ id: fileAttachments.id, storageKey: fileAttachments.storageKey })
+    .select({ id: fileAttachments.id, storageKey: fileAttachments.storageKey, multipartUploadId: fileAttachments.multipartUploadId })
     .from(fileAttachments)
     .where(and(eq(fileAttachments.entityType, entityType), eq(fileAttachments.entityId, entityId)));
 
   if (rows.length === 0) return;
+
+  for (const row of rows) {
+    await abortMultipartIfPending(row);
+  }
 
   await tenantDb.delete(fileAttachments).where(inArray(fileAttachments.id, rows.map((r) => r.id)));
 
@@ -139,48 +164,57 @@ export async function deleteAllAttachmentsForEntity(
   }
 }
 
+/** Shared by both this file's own routes and the video upload routes (`tenant-video-upload-routes.ts`)
+ * — resolving a content item's parent course is a plain `tenantDb` lookup with no route/request
+ * context of its own. */
+export async function resolveContentItem(tenantDb: Db, contentItemId: string) {
+  const [item] = await tenantDb.select({ id: contentItems.id, courseId: contentItems.courseId }).from(contentItems).where(eq(contentItems.id, contentItemId));
+  return item ?? null;
+}
+
+/** Course Content Draft-Reversion, applied to the polymorphic `file_attachments` table — resolves
+ * which course (if any) an attachment row belongs to and reverts it, covering both a course's own
+ * image (`entityType: "course"`, `entityId` IS the courseId) and a lesson resource/image
+ * (`entityType: "content_item"`, one lookup to its parent course). Every other `entityType`
+ * (`course_author`, and the platform-side ones this route never touches) isn't course content, so
+ * it's a no-op — the caller doesn't need to branch on `entityType` itself. Exported for reuse by the
+ * video upload routes (uploading/replacing a lesson's video is exactly this same "attachment changed"
+ * event). */
+export async function revertCourseForAttachment(tenantDb: Db, attachment: FileAttachmentRow): Promise<void> {
+  if (attachment.entityType === "course") {
+    await revertToDraftIfPublished(tenantDb, attachment.entityId);
+  } else if (attachment.entityType === "content_item") {
+    const item = await resolveContentItem(tenantDb, attachment.entityId);
+    if (item) await revertToDraftIfPublished(tenantDb, item.courseId);
+  }
+}
+
+/** Shared response-row shape for a `file_attachments` row — used by this file's own routes and by
+ * the video upload routes, which return the same attachment shape from their `complete` endpoint. */
+export async function toAttachmentResponseRow(tenantDb: Db, row: FileAttachmentRow) {
+  let createdBy: { id: string; fullName: string } | null = null;
+  if (row.createdByUserId) {
+    const [u] = await tenantDb.select({ id: users.id, fullName: users.fullName }).from(users).where(eq(users.id, row.createdByUserId));
+    createdBy = u ?? null;
+  }
+  return {
+    id: row.id,
+    kind: row.kind,
+    fileName: row.fileName,
+    contentType: row.contentType,
+    sizeBytes: row.sizeBytes,
+    url: row.url,
+    status: row.status,
+    createdBy,
+    createdAt: row.createdAt,
+  };
+}
+
 /** contracts/file-attachment-api.md. All routes operate through `request.tenantDb` (RLS-scoped) — no
  * route ever takes or trusts a client-supplied tenant id. Reuses `course.view`/`course.manage` — no
  * new permission keys (research.md §8's spec, FR-011). */
 const tenantAttachmentRoutes: FastifyPluginAsync = async (fastify) => {
-  async function toResponseRow(tenantDb: typeof fastify.db, row: FileAttachmentRow) {
-    let createdBy: { id: string; fullName: string } | null = null;
-    if (row.createdByUserId) {
-      const [u] = await tenantDb.select({ id: users.id, fullName: users.fullName }).from(users).where(eq(users.id, row.createdByUserId));
-      createdBy = u ?? null;
-    }
-    return {
-      id: row.id,
-      kind: row.kind,
-      fileName: row.fileName,
-      contentType: row.contentType,
-      sizeBytes: row.sizeBytes,
-      url: row.url,
-      status: row.status,
-      createdBy,
-      createdAt: row.createdAt,
-    };
-  }
-
-  async function resolveContentItem(tenantDb: typeof fastify.db, contentItemId: string) {
-    const [item] = await tenantDb.select({ id: contentItems.id, courseId: contentItems.courseId }).from(contentItems).where(eq(contentItems.id, contentItemId));
-    return item ?? null;
-  }
-
-  /** Course Content Draft-Reversion, applied to the polymorphic `file_attachments` table — resolves
-   * which course (if any) an attachment row belongs to and reverts it, covering both a course's own
-   * image (`entityType: "course"`, `entityId` IS the courseId) and a lesson resource/image
-   * (`entityType: "content_item"`, one lookup to its parent course). Every other `entityType`
-   * (`course_author`, and the platform-side ones this route never touches) isn't course content, so
-   * it's a no-op — the caller doesn't need to branch on `entityType` itself. */
-  async function revertCourseForAttachment(tenantDb: typeof fastify.db, attachment: FileAttachmentRow): Promise<void> {
-    if (attachment.entityType === "course") {
-      await revertToDraftIfPublished(tenantDb, attachment.entityId);
-    } else if (attachment.entityType === "content_item") {
-      const item = await resolveContentItem(tenantDb, attachment.entityId);
-      if (item) await revertToDraftIfPublished(tenantDb, item.courseId);
-    }
-  }
+  const toResponseRow = toAttachmentResponseRow;
 
   // POST /tenant/content-items/:contentItemId/attachments — spec FR-001/FR-002/FR-005/FR-012, contracts
   // §POST. Extended with a `kind:"link"` variant (a lesson resource can be a plain external URL, no
@@ -447,7 +481,11 @@ const tenantAttachmentRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(404).send({ success: false, message: "Not found" });
       }
 
-      const downloadUrl = existing.kind === "link" ? existing.url! : await storage.createPresignedDownloadUrl(existing.storageKey!);
+      const isVideo = existing.contentType?.startsWith("video/") ?? false;
+      const downloadUrl =
+        existing.kind === "link"
+          ? existing.url!
+          : await storage.createPresignedDownloadUrl(existing.storageKey!, isVideo ? VIDEO_DOWNLOAD_URL_EXPIRY_SECONDS : undefined);
       return { success: true, data: { downloadUrl } };
     },
   );
@@ -466,6 +504,7 @@ const tenantAttachmentRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(404).send({ success: false, message: "Not found" });
       }
 
+      await abortMultipartIfPending(existing);
       await request.tenantDb.delete(fileAttachments).where(eq(fileAttachments.id, attachmentId));
       if (existing.storageKey) {
         await deleteObjectIfUnreferenced(request.tenantDb, existing.storageKey);

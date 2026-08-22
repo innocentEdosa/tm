@@ -67,8 +67,20 @@ function ResourceRow({ kind, title, onRemove }: { kind: "file" | "link"; title: 
   );
 }
 
-/** A click-or-drag file dropzone for the "Downloadable file" resource type. */
-function FileDropzone({ onFileSelected, disabled }: { onFileSelected: (file: File) => void; disabled: boolean }) {
+/** A click-or-drag file dropzone — the "Downloadable file" resource type's own picker, generalized
+ * (accept/hint text) so other upload UIs (the video-lesson upload method) reuse the exact same
+ * click-or-drag mechanics and visual treatment rather than a second dropzone implementation. */
+export function FileDropzone({
+  onFileSelected,
+  disabled,
+  accept = RESOURCE_ALLOWLIST_ACCEPT,
+  hint = "Images or PDF, up to 25 MB",
+}: {
+  onFileSelected: (file: File) => void;
+  disabled: boolean;
+  accept?: string;
+  hint?: string;
+}) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [isDragOver, setIsDragOver] = useState(false);
 
@@ -98,11 +110,11 @@ function FileDropzone({ onFileSelected, disabled }: { onFileSelected: (file: Fil
       <p className="text-sm">
         <span className="font-semibold text-primary">Click to upload</span> <span className="text-muted">or drag and drop</span>
       </p>
-      <p className="text-xs text-muted">Images or PDF, up to 25 MB</p>
+      <p className="text-xs text-muted">{hint}</p>
       <input
         ref={inputRef}
         type="file"
-        accept={RESOURCE_ALLOWLIST_ACCEPT}
+        accept={accept}
         className="hidden"
         disabled={disabled}
         onChange={(e) => {
@@ -122,8 +134,14 @@ function FileDropzone({ onFileSelected, disabled }: { onFileSelected: (file: Fil
  * Content" fields above. The add-resource form is collapsed behind a "+ Add a resource" text
  * button rather than always open — it closes again as soon as a resource is added. Files go through
  * the real presigned-upload-then-confirm flow; links insert directly (no storage involved).
+ *
+ * `excludeAttachmentId` — a video lesson's own uploaded video is a `file_attachments` row on this
+ * SAME content item (no separate table), fetched through this exact query. Without excluding it, the
+ * video would also show up here as if it were just another downloadable resource; the video form
+ * passes its own `payload.videoAttachmentId` here to filter it out, rather than this component
+ * needing any special knowledge of video lessons itself.
  */
-export function LessonResourcesSection({ contentItemId }: { contentItemId: string | null }) {
+export function LessonResourcesSection({ contentItemId, excludeAttachmentId }: { contentItemId: string | null; excludeAttachmentId?: string | null }) {
   const api = useCourseEditorApi();
   const queryClient = useQueryClient();
   const attachmentsQuery = useQuery({
@@ -131,7 +149,7 @@ export function LessonResourcesSection({ contentItemId }: { contentItemId: strin
     queryFn: () => api.fetchAttachments(contentItemId!),
     enabled: !!contentItemId,
   });
-  const resources = attachmentsQuery.data ?? [];
+  const resources = (attachmentsQuery.data ?? []).filter((r) => r.id !== excludeAttachmentId);
 
   const [showAddForm, setShowAddForm] = useState(false);
   const [resourceType, setResourceType] = useState<"file" | "link">("file");

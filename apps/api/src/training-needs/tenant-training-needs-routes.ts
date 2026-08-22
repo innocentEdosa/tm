@@ -17,6 +17,9 @@ import {
 } from "./training-need-visibility";
 import { getFormFields } from "../custom-fields/field-key-uniqueness";
 import { validateCustomFieldValues, writeCustomFieldValues } from "../custom-fields/save-values";
+import { getAllowMultipleResponses } from "../form-builder/response-policy";
+import { listUsersWithPermission } from "../permissions/require-permission";
+import { createNotification, createNotifications, truncateForNotification } from "../notifications/notification-service";
 
 const DEFAULT_PAGE_SIZE = 25;
 const FORM_KEY = "training_needs_analysis";
@@ -39,6 +42,51 @@ async function hasPermission(tenantDb: Db, callerUserId: string, permissionKey: 
     .innerJoin(permissions, eq(permissions.id, rolePermissions.permissionId))
     .where(and(eq(userRoles.userId, callerUserId), eq(permissions.key, permissionKey)));
   return !!row;
+}
+
+/** Notifies everyone holding `training_request.approve` that a request needs their attention —
+ * fired on every submit (both create-as-submitted and edit-then-submit), never on a plain draft save.
+ * Uses the same `listUsersWithPermission` helper `require-permission.ts` already exposes for Course
+ * Marketplace's own "who holds this permission" fan-out, rather than inventing a second way to
+ * resolve recipients by permission.
+ *
+ * Self-contained try/catch (mirrors `tna/tenant-tna-routes.ts`'s `notifyTnaParticipants` convention)
+ * — a notification failure must never fail the submit itself, so callers just `await` this and don't
+ * need their own error handling. */
+async function notifyApprovers(tenantDb: Db, tenantId: string, trainingNeedId: string, title: string): Promise<void> {
+  try {
+    const approvers = await listUsersWithPermission(tenantDb, "training_request.approve");
+    if (approvers.length === 0) return;
+    await createNotifications(tenantDb, {
+      tenantId,
+      recipientIds: approvers.map((a) => a.id),
+      type: "training_request_submitted",
+      title: "Training request awaiting approval",
+      message: `"${truncateForNotification(title)}" was submitted and needs your approval.`,
+      metadata: { entityType: "training_need", entityId: trainingNeedId },
+      actionUrl: `/learning/training-requests/${trainingNeedId}`,
+    });
+  } catch (err) {
+    console.error("Failed to create training request submitted notifications:", err);
+  }
+}
+
+/** Notifies the request's own creator once it's approved — same self-contained try/catch reasoning
+ * as `notifyApprovers` above. */
+async function notifyCreatorOfApproval(tenantDb: Db, tenantId: string, trainingNeedId: string, title: string, creatorUserId: string): Promise<void> {
+  try {
+    await createNotification(tenantDb, {
+      tenantId,
+      recipientId: creatorUserId,
+      type: "training_request_approved",
+      title: "Training request approved",
+      message: `Your training request "${truncateForNotification(title)}" has been approved.`,
+      metadata: { entityType: "training_need", entityId: trainingNeedId },
+      actionUrl: `/learning/training-requests/${trainingNeedId}`,
+    });
+  } catch (err) {
+    console.error("Failed to create training request approved notification:", err);
+  }
 }
 
 /** research.md §9 — a row is only ever within scope (visible or manageable) at all if it's within
@@ -276,6 +324,28 @@ const tenantTrainingNeedsRoutes: FastifyPluginAsync = async (fastify) => {
         targetDepartmentId = caller.departmentId;
       }
 
+      // Multiple form responses feature (form_definitions.allow_multiple_responses) — a
+      // respondent (the caller creating this entry, `request.user!.id`) may hold at most one
+      // training_needs row while the form type's setting is off. Existing tenants keep today's
+      // unrestricted behavior unchanged (migration 0154 backfills this form type's flag to
+      // `true`); a Super Admin who later flips it off for this form type is the one opting into
+      // this limit. Checked against every status (draft/submitted/approved) — a still-open draft
+      // already counts as "your one response", same as a finished one, so the guidance below
+      // always points at something the caller can actually go edit.
+      if (!(await getAllowMultipleResponses(request.tenantDb, FORM_KEY))) {
+        const [existingResponse] = await request.tenantDb
+          .select({ id: trainingNeeds.id })
+          .from(trainingNeeds)
+          .where(and(eq(trainingNeeds.tenantId, request.user!.tenantId), eq(trainingNeeds.createdByUserId, request.user!.id)));
+        if (existingResponse) {
+          return reply.code(409).send({
+            success: false,
+            message: "You already have a training request. Edit your existing request, or ask an admin to enable multiple responses for this form.",
+            existingResponseId: existingResponse.id,
+          });
+        }
+      }
+
       const desiredStatus = status === "submitted" ? "submitted" : "draft";
 
       // Validated before the insert (save-values.ts's own commit-on-response caveat) — Drafts may
@@ -316,6 +386,10 @@ const tenantTrainingNeedsRoutes: FastifyPluginAsync = async (fastify) => {
         .select({ name: departments.name })
         .from(departments)
         .where(eq(departments.id, created.departmentId));
+
+      if (desiredStatus === "submitted") {
+        await notifyApprovers(request.tenantDb, request.user!.tenantId, created.id, created.title);
+      }
 
       return reply.code(201).send({ success: true, data: { ...created, departmentName: department?.name ?? null } });
     },
@@ -394,6 +468,10 @@ const tenantTrainingNeedsRoutes: FastifyPluginAsync = async (fastify) => {
         .from(departments)
         .where(eq(departments.id, updated.departmentId));
 
+      if (willSubmit) {
+        await notifyApprovers(request.tenantDb, request.user!.tenantId, updated.id, updated.title);
+      }
+
       return reply.code(200).send({ success: true, data: { ...updated, departmentName: department?.name ?? null } });
     },
   );
@@ -423,7 +501,8 @@ const tenantTrainingNeedsRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       // Already-approved -> approve is a no-op, not an error (mirrors PATCH's own re-submit
-      // precedent) — the original approver/timestamp is preserved, not overwritten.
+      // precedent) — the original approver/timestamp is preserved, not overwritten. Notifying the
+      // creator only happens on the actual transition, not on a repeat no-op call.
       if (existing.status !== "approved") {
         await request.tenantDb
           .update(trainingNeeds)
@@ -434,6 +513,11 @@ const tenantTrainingNeedsRoutes: FastifyPluginAsync = async (fastify) => {
             updatedAt: new Date(),
           })
           .where(eq(trainingNeeds.id, trainingNeedId));
+
+        // createdByUserId can be null (creator's account was later deleted) — nothing to notify.
+        if (existing.createdByUserId) {
+          await notifyCreatorOfApproval(request.tenantDb, request.user!.tenantId, trainingNeedId, existing.title, existing.createdByUserId);
+        }
       }
 
       const [row] = await request.tenantDb

@@ -596,7 +596,12 @@ export default function TenantFormBuilderClient({ formKey, subdomain }: { formKe
 
   function toCanvasField(field: FieldRow): CanvasField {
     const canEdit = field.scope === "tenant";
-    const canHide = field.scope === "global" && !field.isSystem && !field.isRequired;
+    // A system field is only about who *owns* the field's definition, not whether it's mandatory
+    // — that's `isRequired`, which already accurately reflects the consuming feature's own real
+    // validation (e.g. Department's optional `manager_id`/`status` system fields). So a Tenant
+    // Admin can hide any field they don't own — system or platform — once it's optional; a
+    // required field, system or not, stays permanently visible.
+    const canHide = (field.scope === "global" || field.scope === "system") && !field.isRequired;
     const canEditHelpText = field.scope === "system" || field.scope === "global";
 
     const badges: CanvasBadge[] = [];

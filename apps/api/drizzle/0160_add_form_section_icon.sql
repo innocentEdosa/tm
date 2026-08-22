@@ -1,0 +1,1 @@
+ALTER TABLE "form_sections" ADD COLUMN "icon" text;

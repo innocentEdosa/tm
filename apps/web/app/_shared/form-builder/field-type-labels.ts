@@ -14,7 +14,9 @@ export type FieldType =
   | "checkbox"
   | "toggle"
   | "file"
-  | "user_select";
+  | "user_select"
+  | "people_select"
+  | "entity_select";
 
 export const FIELD_TYPE_LABELS: Record<FieldType, string> = {
   text: "Single-line text",
@@ -31,4 +33,6 @@ export const FIELD_TYPE_LABELS: Record<FieldType, string> = {
   toggle: "Toggle",
   file: "File upload",
   user_select: "User (search & select)",
+  people_select: "People or roles (search & select multiple)",
+  entity_select: "Dynamic reference (custom-rendered by the consuming page)",
 };

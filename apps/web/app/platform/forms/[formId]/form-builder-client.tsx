@@ -20,7 +20,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { ArrowDown, ArrowLeft, ArrowUp, Pencil, Trash2 } from "lucide-react";
 import { Card, Badge, Drawer, Modal, Button, Input, Toggle } from "@tm/ui";
-import { FormPreview, type EffectiveForm, type FormField as RendererField } from "@tm/form-builder";
+import { FormPreview, FORM_ICONS, type EffectiveForm, type FormField as RendererField, type FormIconName } from "@tm/form-builder";
 import { FormBuilderCanvas, CtaEditor, FIELD_TYPE_LABELS, type FieldType, type CanvasAction, type CanvasField, type CanvasSection, type CanvasStep } from "../../../_shared/form-builder";
 
 const API_BASE = "/platform-api";
@@ -33,6 +33,7 @@ interface FormTypeRow {
   icon: string | null;
   status: "active" | "archived";
   activeVersionId: string | null;
+  allowMultipleResponses: boolean;
 }
 
 interface VersionSummary {
@@ -51,6 +52,7 @@ interface ExpandedField {
   placeholder: string | null;
   fieldType: string;
   options: string[] | null;
+  validation: { allowCustomOptions?: boolean; optionColors?: Record<string, string>; optionIcons?: Record<string, string> } | null;
   isRequired: boolean;
   displayOrder: number;
   layout: { colSpan?: number } | null;
@@ -66,6 +68,7 @@ interface ExpandedSection {
   key: string;
   title: string;
   description: string | null;
+  icon: string | null;
   displayOrder: number;
   fields: ExpandedField[];
 }
@@ -95,7 +98,7 @@ interface ExpandedVersion {
 /** Adapts the authoring `ExpandedVersion` shape into the `EffectiveForm` shape `<FormPreview>`
  * (and every production consumer) expects — every field here is platform-authored, so `scope`/
  * `isSystem`/`needsReview` are trivially fixed rather than resolved from tenant data. */
-function toPreviewForm(version: ExpandedVersion | null): EffectiveForm | null {
+function toPreviewForm(version: ExpandedVersion | null, allowMultipleResponses: boolean): EffectiveForm | null {
   if (!version) return null;
   const toField = (f: ExpandedField): RendererField => ({
     id: f.id,
@@ -106,7 +109,7 @@ function toPreviewForm(version: ExpandedVersion | null): EffectiveForm | null {
     fieldType: f.fieldType as RendererField["fieldType"],
     options: f.options,
     defaultValue: null,
-    validation: null,
+    validation: f.validation,
     isRequired: f.isRequired,
     displayOrder: f.displayOrder,
     layout: { colSpan: f.layout?.colSpan ?? 12 },
@@ -114,7 +117,7 @@ function toPreviewForm(version: ExpandedVersion | null): EffectiveForm | null {
     isSystem: f.isSystem,
     needsReview: false,
   });
-  const toSection = (s: ExpandedSection) => ({ key: s.key, title: s.title, description: s.description, fields: s.fields.map(toField) });
+  const toSection = (s: ExpandedSection) => ({ key: s.key, title: s.title, description: s.description, icon: s.icon, fields: s.fields.map(toField) });
   // A section with no step (`version.sections`) would otherwise vanish from the preview entirely
   // once any step exists — nothing else here ever renders `version.sections` in that case. Folding
   // it into step 1 keeps every field visible instead of silently dropping it, matching the same
@@ -129,7 +132,7 @@ function toPreviewForm(version: ExpandedVersion | null): EffectiveForm | null {
           sections: [...(index === 0 ? version.sections.map(toSection) : []), ...step.sections.map(toSection)],
         }))
       : [{ key: "default", title: "", description: null, isOptional: false, sections: version.sections.map(toSection) }];
-  return { formKey: "", formVersionId: version.id, steps, cta: version.layoutConfig?.cta ?? null };
+  return { formKey: "", formVersionId: version.id, steps, cta: version.layoutConfig?.cta ?? null, allowMultipleResponses };
 }
 
 /** Flattens `version.sections` (no step) and every step's own sections into one list, in the
@@ -148,6 +151,7 @@ interface FieldFormState {
   description: string;
   placeholder: string;
   options: string[];
+  allowCustomOptions: boolean;
   isRequired: boolean;
   colSpan: number;
   sectionKey: string;
@@ -160,6 +164,7 @@ const EMPTY_FIELD_FORM: FieldFormState = {
   description: "",
   placeholder: "",
   options: [],
+  allowCustomOptions: false,
   isRequired: false,
   colSpan: 12,
   sectionKey: "",
@@ -182,7 +187,7 @@ function slugify(label: string): string {
 function currentStructurePayload(version: ExpandedVersion) {
   return {
     steps: version.steps.map((s) => ({ key: s.key, title: s.title, description: s.description, displayOrder: s.displayOrder, isOptional: s.isOptional })),
-    sections: flattenSections(version).map((s) => ({ key: s.key, stepKey: s.stepKey, title: s.title, description: s.description, displayOrder: s.displayOrder })),
+    sections: flattenSections(version).map((s) => ({ key: s.key, stepKey: s.stepKey, title: s.title, description: s.description, icon: s.icon, displayOrder: s.displayOrder })),
   };
 }
 
@@ -233,6 +238,7 @@ function allFieldsPayloadIncludingSystem(version: ExpandedVersion) {
 export function FormBuilderClient({ formId }: { formId: string }) {
   const queryClient = useQueryClient();
 
+  const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [fieldDrawerOpen, setFieldDrawerOpen] = useState(false);
   const [editingFieldKey, setEditingFieldKey] = useState<string | null>(null);
   const [fieldForm, setFieldForm] = useState<FieldFormState>(EMPTY_FIELD_FORM);
@@ -257,7 +263,7 @@ export function FormBuilderClient({ formId }: { formId: string }) {
   const [confirmDeleteStepKey, setConfirmDeleteStepKey] = useState<string | null>(null);
 
   const [sectionModalOpen, setSectionModalOpen] = useState(false);
-  const [sectionForm, setSectionForm] = useState({ title: "", stepKey: "" });
+  const [sectionForm, setSectionForm] = useState({ title: "", stepKey: "", description: "", icon: "" });
   const [editingSectionKey, setEditingSectionKey] = useState<string | null>(null);
   const [confirmDeleteSectionKey, setConfirmDeleteSectionKey] = useState<string | null>(null);
 
@@ -347,6 +353,28 @@ export function FormBuilderClient({ formId }: { formId: string }) {
     onError: (err: Error) => setPublishError(err.message),
   });
 
+  // Multiple form responses feature — a form-type-level setting (`form_definitions`), independent
+  // of versioning, so it's a plain PATCH to the form type itself rather than routed through
+  // `patchDraftStructure`/the draft-version machinery below.
+  const [responseSettingsError, setResponseSettingsError] = useState<string | null>(null);
+  const allowMultipleResponsesMutation = useMutation({
+    mutationFn: async (allowMultipleResponses: boolean) => {
+      const res = await fetch(`${API_BASE}/platform/forms/${formId}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ allowMultipleResponses }),
+      });
+      if (!res.ok) {
+        const json = (await res.json().catch(() => null)) as { message?: string } | null;
+        throw new Error(json?.message ?? "Couldn't save this setting.");
+      }
+    },
+    onMutate: () => setResponseSettingsError(null),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["platform-form-detail", formId] }),
+    onError: (err: Error) => setResponseSettingsError(err.message),
+  });
+
   function openCreateField(sectionKey?: string) {
     setEditingSystemField(null);
     setEditingFieldKey(null);
@@ -376,6 +404,7 @@ export function FormBuilderClient({ formId }: { formId: string }) {
       description: field.description ?? "",
       placeholder: field.placeholder ?? "",
       options: field.options ?? [],
+      allowCustomOptions: !!field.validation?.allowCustomOptions,
       isRequired: field.isRequired,
       colSpan: field.layout?.colSpan ?? 12,
       sectionKey: field.sectionKey,
@@ -415,10 +444,17 @@ export function FormBuilderClient({ formId }: { formId: string }) {
       const sectionsPayload = currentStructurePayload(version).sections;
       const targetSectionExists = sectionsPayload.some((s) => s.key === targetSectionKey);
       if (!targetSectionExists) {
-        sectionsPayload.push({ key: targetSectionKey, stepKey: null, title: "General", description: null, displayOrder: sectionsPayload.length });
+        sectionsPayload.push({ key: targetSectionKey, stepKey: null, title: "General", description: null, icon: null, displayOrder: sectionsPayload.length });
       }
 
-      const nextDisplayOrder = flatSections.find((s) => s.key === targetSectionKey)?.fields.filter((f) => f.fieldKey !== editingFieldKey).length ?? 0;
+      // Editing a field in place (any change — options, label, required, …) must never silently
+      // relocate it: only a brand-new field, or one whose *section* changed, goes to the end of
+      // its target section; otherwise it keeps the exact `displayOrder` it already had.
+      const editingField = editingFieldKey ? flatSections.flatMap((s) => s.fields).find((f) => f.fieldKey === editingFieldKey) : null;
+      const nextDisplayOrder =
+        editingField && editingField.sectionKey === targetSectionKey
+          ? editingField.displayOrder
+          : (flatSections.find((s) => s.key === targetSectionKey)?.fields.filter((f) => f.fieldKey !== editingFieldKey).length ?? 0);
 
       const fieldsPayload = [
         ...existingFields.map((f) => ({
@@ -429,6 +465,7 @@ export function FormBuilderClient({ formId }: { formId: string }) {
           placeholder: f.placeholder,
           fieldType: f.fieldType,
           options: f.options,
+          validation: f.validation,
           isRequired: f.isRequired,
           displayOrder: f.displayOrder,
           layout: f.layout,
@@ -441,6 +478,15 @@ export function FormBuilderClient({ formId }: { formId: string }) {
           placeholder: fieldForm.placeholder || null,
           fieldType: fieldForm.fieldType,
           options: fieldForm.options.length > 0 ? fieldForm.options : null,
+          // Overlays only the one setting this drawer actually manages (`allowCustomOptions`) on
+          // top of whatever else was already in `validation` (e.g. `optionColors`/`optionIcons`,
+          // set only via a direct API call today — no picker UI here yet) — never a wholesale
+          // replace, which would otherwise silently discard that config on the field's very next
+          // unrelated edit (label, required, column width, …).
+          validation:
+            fieldForm.fieldType === "multiselect" || fieldForm.fieldType === "radio" || fieldForm.fieldType === "select"
+              ? { ...(editingField?.validation as Record<string, unknown> | null), allowCustomOptions: fieldForm.allowCustomOptions || undefined }
+              : (editingField?.validation ?? null),
           isRequired: fieldForm.isRequired,
           displayOrder: nextDisplayOrder,
           layout: { colSpan: fieldForm.colSpan },
@@ -544,13 +590,13 @@ export function FormBuilderClient({ formId }: { formId: string }) {
 
   function openCreateSection(stepKey?: string) {
     setEditingSectionKey(null);
-    setSectionForm({ title: "", stepKey: stepKey ?? "" });
+    setSectionForm({ title: "", stepKey: stepKey ?? "", description: "", icon: "" });
     setStructureError(null);
     setSectionModalOpen(true);
   }
   function openEditSection(section: ExpandedSection) {
     setEditingSectionKey(section.key);
-    setSectionForm({ title: section.title, stepKey: section.stepKey ?? "" });
+    setSectionForm({ title: section.title, stepKey: section.stepKey ?? "", description: section.description ?? "", icon: section.icon ?? "" });
     setStructureError(null);
     setSectionModalOpen(true);
   }
@@ -561,17 +607,31 @@ export function FormBuilderClient({ formId }: { formId: string }) {
       const structure = currentStructurePayload(version);
       if (editingSectionKey) {
         const index = structure.sections.findIndex((s) => s.key === editingSectionKey);
-        if (index !== -1) structure.sections[index] = { ...structure.sections[index], title: sectionForm.title.trim(), stepKey: sectionForm.stepKey || null };
+        if (index !== -1)
+          structure.sections[index] = {
+            ...structure.sections[index],
+            title: sectionForm.title.trim(),
+            stepKey: sectionForm.stepKey || null,
+            description: sectionForm.description.trim() || null,
+            icon: sectionForm.icon || null,
+          };
       } else {
         const key = slugify(sectionForm.title) || `section_${structure.sections.length + 1}`;
-        structure.sections.push({ key, stepKey: sectionForm.stepKey || null, title: sectionForm.title.trim(), description: null, displayOrder: structure.sections.length });
+        structure.sections.push({
+          key,
+          stepKey: sectionForm.stepKey || null,
+          title: sectionForm.title.trim(),
+          description: sectionForm.description.trim() || null,
+          icon: sectionForm.icon || null,
+          displayOrder: structure.sections.length,
+        });
       }
       await patchDraftStructure({ ...structure, fields: currentFieldsPayload(version) });
     },
     onSuccess: () => {
       setSectionModalOpen(false);
       setEditingSectionKey(null);
-      setSectionForm({ title: "", stepKey: "" });
+      setSectionForm({ title: "", stepKey: "", description: "", icon: "" });
       queryClient.invalidateQueries({ queryKey: ["platform-form-version", version?.id] });
     },
     onError: (err: Error) => setStructureError(err.message),
@@ -736,7 +796,7 @@ export function FormBuilderClient({ formId }: { formId: string }) {
   });
 
   const showOptions = fieldForm.fieldType === "select" || fieldForm.fieldType === "multiselect" || fieldForm.fieldType === "radio";
-  const previewForm = toPreviewForm(version);
+  const previewForm = toPreviewForm(version, detail?.allowMultipleResponses ?? false);
 
   function toCanvasField(field: ExpandedField, editable: boolean): CanvasField {
     return {
@@ -823,6 +883,14 @@ export function FormBuilderClient({ formId }: { formId: string }) {
           )}
         </div>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className="cursor-pointer text-sm font-medium text-cta hover:underline"
+            onClick={() => setSettingsModalOpen(true)}
+          >
+            Form settings
+          </button>
+          <div className="h-5 w-px bg-border" />
           {!draftVersion && (
             <Button variant="secondary" onClick={() => createDraftMutation.mutate(undefined)} isLoading={createDraftMutation.isPending}>
               New draft
@@ -835,6 +903,24 @@ export function FormBuilderClient({ formId }: { formId: string }) {
           )}
         </div>
       </header>
+
+      <Modal open={settingsModalOpen} onClose={() => setSettingsModalOpen(false)} title="Form settings">
+        <div className="space-y-4">
+          {responseSettingsError && <div className="banner-error">{responseSettingsError}</div>}
+          <Toggle
+            label="Allow multiple responses"
+            description="When enabled, users can submit this form more than once — each submission is stored as a separate, independent response. When disabled, a user may have at most one response."
+            checked={detail.allowMultipleResponses}
+            onChange={(checked) => allowMultipleResponsesMutation.mutate(checked)}
+            disabled={allowMultipleResponsesMutation.isPending}
+          />
+          <div className="flex justify-end border-t border-border pt-4">
+            <Button variant="secondary" onClick={() => setSettingsModalOpen(false)}>
+              Done
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       {publishError && <div className="banner-error mx-6 mt-3 shrink-0">{publishError}</div>}
 
@@ -1003,6 +1089,40 @@ export function FormBuilderClient({ formId }: { formId: string }) {
             value={sectionForm.title}
             onChange={(e) => setSectionForm((f) => ({ ...f, title: e.target.value }))}
           />
+          <Input
+            label="Description (optional)"
+            placeholder="A short line of context shown under the title"
+            value={sectionForm.description}
+            onChange={(e) => setSectionForm((f) => ({ ...f, description: e.target.value }))}
+          />
+          <div>
+            <p className="field-label">Icon (optional)</p>
+            <div className="flex flex-wrap gap-1.5">
+              <button
+                type="button"
+                className={`flex h-9 w-9 items-center justify-center rounded-lg border text-xs text-slate-400 ${sectionForm.icon === "" ? "border-cta bg-cta/5 text-cta" : "border-border hover:bg-slate-50"}`}
+                onClick={() => setSectionForm((f) => ({ ...f, icon: "" }))}
+                title="No icon"
+              >
+                ×
+              </button>
+              {(Object.keys(FORM_ICONS) as FormIconName[]).map((name) => {
+                const Icon = FORM_ICONS[name];
+                const selected = sectionForm.icon === name;
+                return (
+                  <button
+                    key={name}
+                    type="button"
+                    className={`flex h-9 w-9 items-center justify-center rounded-lg border ${selected ? "border-cta bg-cta/5 text-cta" : "border-border text-slate-500 hover:bg-slate-50"}`}
+                    onClick={() => setSectionForm((f) => ({ ...f, icon: name }))}
+                    title={name}
+                  >
+                    <Icon className="h-4 w-4" />
+                  </button>
+                );
+              })}
+            </div>
+          </div>
           {version && version.steps.length > 0 && (
             <div>
               <label className="field-label" htmlFor="sectionStepKey">
@@ -1138,6 +1258,18 @@ export function FormBuilderClient({ formId }: { formId: string }) {
                 </button>
               </div>
             </div>
+          )}
+          {(fieldForm.fieldType === "multiselect" || fieldForm.fieldType === "radio" || fieldForm.fieldType === "select") && (
+            <Toggle
+              label="Allow custom options"
+              description={
+                fieldForm.fieldType === "multiselect"
+                  ? "Let a respondent add their own entry beyond the configured options above."
+                  : "Let a respondent type in their own choice beyond the configured options above."
+              }
+              checked={fieldForm.allowCustomOptions}
+              onChange={(checked) => setFieldForm((f) => ({ ...f, allowCustomOptions: checked }))}
+            />
           )}
           <div>
             <label className="field-label" htmlFor="colSpan">

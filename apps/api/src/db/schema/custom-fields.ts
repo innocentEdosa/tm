@@ -26,6 +26,16 @@ export const formDefinitions = pgTable(
      * dependency with `form_versions.form_definition_id` — see data-model.md "Migration
      * Sequencing". */
     activeVersionId: uuid("active_version_id").references((): any => formVersions.id),
+    /** Form-level response policy (multiple-responses feature): when `true`, a respondent may
+     * submit this form type more than once, each submission its own independent record — when
+     * `false` (default), a consuming feature that models "submissions" enforces at most one per
+     * respondent. Purely a policy flag read by each consuming feature's own routes (e.g.
+     * `training-needs/tenant-training-needs-routes.ts`) — the Form Builder itself still never
+     * persists submissions (spec 033 FR-031), so this column only ever gates behavior in the
+     * feature-owned table, never creates one here. Defaults to `false` for any newly created form
+     * type; existing form types are backfilled to whatever preserves their current behavior (see
+     * migration 0153), never silently changed by this column's addition alone. */
+    allowMultipleResponses: boolean("allow_multiple_responses").notNull().default(false),
     createdBySuperAdminId: uuid("created_by_super_admin_id").references(() => superAdmins.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -97,7 +107,7 @@ export const formFields = pgTable(
     ),
     check(
       "form_fields_field_type_check",
-      sql`${table.fieldType} IN ('text', 'textarea', 'number', 'email', 'url', 'date', 'datetime', 'select', 'multiselect', 'radio', 'checkbox', 'toggle', 'file', 'user_select')`,
+      sql`${table.fieldType} IN ('text', 'textarea', 'number', 'email', 'url', 'date', 'datetime', 'select', 'multiselect', 'radio', 'checkbox', 'toggle', 'file', 'user_select', 'people_select', 'entity_select')`,
     ),
     check(
       "form_fields_created_by_check",
@@ -130,9 +140,10 @@ export const formFieldOrderOverrides = pgTable(
       .references(() => formFields.id, { onDelete: "cascade" }),
     /** `NULL` = use the field's own seeded order; a value = this tenant's override. */
     displayOrder: integer("display_order"),
-    /** This tenant hides an optional, non-system platform field from its own rendering, without
-     * touching the underlying platform field definition (spec FR-021). Never settable to `true`
-     * for a field with `isSystem = true` or `isRequired = true` — enforced in
+    /** This tenant hides an optional system or platform field from its own rendering, without
+     * touching the underlying field definition (spec FR-021, later relaxed to also allow an
+     * optional system field, not just platform). Never settable to `true` for a field with
+     * `isRequired = true`, system or not — enforced in
      * `apps/api/src/form-builder/visibility-rules.ts`, not by a DB constraint (spec FR-022). */
     isHidden: boolean("is_hidden").notNull().default(false),
     /** `NULL` = use the field's own description/placeholder; a value = this tenant's own

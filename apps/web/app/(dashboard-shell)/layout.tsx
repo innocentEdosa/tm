@@ -4,6 +4,7 @@ import { AppShell, type NavSection, type NavLinkItem, type NavEntry } from "@tm/
 import { getTenantSession } from "@/lib/tenant-session";
 import { AiAssistantLauncher } from "@/app/_shared/ai-assistant/ai-assistant-launcher";
 import { AiPageContextProvider } from "@/app/_shared/ai-assistant/ai-page-context";
+import { NotificationBell } from "@/app/_shared/notifications/notification-bell";
 
 const API_BASE = "/tenant-api/tenant-auth";
 
@@ -317,6 +318,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       navSections={navSections}
       footerEntries={footerEntries}
       identity={{ initial: session.email.charAt(0).toUpperCase(), primary: session.email, secondary: session.roleName ?? undefined }}
+      topbar={{ notificationsSlot: <NotificationBell subdomain={subdomain} userId={session.id} /> }}
       logoutHref={`${API_BASE}/logout?subdomain=${encodeURIComponent(subdomain)}`}
       afterLogoutHref="/tenant"
     >

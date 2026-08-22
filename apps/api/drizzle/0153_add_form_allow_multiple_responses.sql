@@ -1,0 +1,1 @@
+ALTER TABLE "form_definitions" ADD COLUMN "allow_multiple_responses" boolean DEFAULT false NOT NULL;

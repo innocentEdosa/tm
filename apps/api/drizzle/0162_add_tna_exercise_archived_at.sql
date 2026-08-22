@@ -1,0 +1,1 @@
+ALTER TABLE "tna_exercises" ADD COLUMN "archived_at" timestamp with time zone;

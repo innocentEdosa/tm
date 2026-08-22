@@ -1,0 +1,1 @@
+ALTER TABLE "file_attachments" ADD COLUMN "multipart_upload_id" text;

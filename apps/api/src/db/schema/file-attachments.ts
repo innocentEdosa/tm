@@ -46,6 +46,14 @@ export const fileAttachments = pgTable(
      * `ProposalCard` and the course/lesson image UI to render attribution where available. */
     metadata: jsonb("metadata"),
     status: text("status").notNull().default("pending"),
+    /** Video Lesson Upload — set only while a multipart upload session (large video) is in progress;
+     * NULL for every single-PUT attachment (the vast majority) and cleared back to NULL once
+     * `completeMultipartUpload`/`abortMultipartUpload` runs. This is the only extra state a
+     * multipart upload needs beyond what already exists here — R2 itself tracks which parts have
+     * been received for a given `uploadId`, so there's nothing else to persist (no per-part table,
+     * no separate "expected size" column: `size_bytes` already serves that role, verified against the
+     * real assembled object via `headObject` exactly like the existing single-PUT confirm flow). */
+    multipartUploadId: text("multipart_upload_id"),
     createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

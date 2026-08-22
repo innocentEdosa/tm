@@ -17,7 +17,6 @@ import {
   FileText,
   GraduationCap,
   ClipboardList,
-  Bell,
   Search,
   X,
   Store,
@@ -109,13 +108,18 @@ export interface AppShellProps {
   footerEntries?: NavEntry[];
   identity: { initial: string; primary: string; secondary?: string; avatarUrl?: string };
   /** The topbar row above the content area (search, notifications, signed-in identity). Fully
-   * optional — every field has a sensible default, since neither global search nor notifications
-   * have a real backend yet; this only renders the chrome, ready to wire up later. */
+   * optional — every field has a sensible default, since global search has no real backend yet;
+   * this only renders the chrome, ready to wire up later. */
   topbar?: {
     searchPlaceholder?: string;
     onSearch?: (query: string) => void;
-    hasUnreadNotifications?: boolean;
-    onNotificationsClick?: () => void;
+    /** A fully self-contained notification bell (trigger + its own dropdown/data-fetching), e.g.
+     * `<NotificationBell subdomain={subdomain} />`. `AppShell` renders it as-is in the topbar
+     * actions area and otherwise knows nothing about notifications — the same reason it never
+     * fetches search results itself. Omit to keep the topbar notification-free (e.g. the Super
+     * Admin platform shell, which shares this component but has no notification backend wired up
+     * yet). */
+    notificationsSlot?: React.ReactNode;
   };
   logoutHref: string;
   afterLogoutHref: string;
@@ -331,15 +335,7 @@ export function AppShell({
           )}
 
           <div className="shell-topbar-actions">
-            <button
-              type="button"
-              className="shell-topbar-bell"
-              aria-label="Notifications"
-              onClick={() => topbar?.onNotificationsClick?.()}
-            >
-              <Bell className="h-4 w-4" />
-              {topbar?.hasUnreadNotifications && <span className="shell-topbar-bell-dot" />}
-            </button>
+            {topbar?.notificationsSlot}
 
             <div className="shell-topbar-profile">
               <span className="shell-topbar-avatar">

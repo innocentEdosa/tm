@@ -307,9 +307,14 @@ describe("TNA: lifecycle transitions", () => {
 
       // Manager submits their own response; the assistant's stays pending.
       const managerHeaders = { "x-test-user-id": managerId, "x-test-tenant-id": tenantId };
+      const managerResponse = await server.inject({
+        method: "POST",
+        url: `/tenant/tna-assignments/${managerAssignment.id}/responses`,
+        headers: managerHeaders,
+      });
       const submit = await server.inject({
         method: "POST",
-        url: `/tenant/tna-assignments/${managerAssignment.id}/submit`,
+        url: `/tenant/tna-assignments/${managerAssignment.id}/responses/${managerResponse.json().data.id}/submit`,
         headers: managerHeaders,
         payload: { values: { skill_gaps: "Needs Excel training", priority: "High" } },
       });
@@ -371,10 +376,16 @@ describe("TNA: lifecycle transitions", () => {
         [managerId, assignments.find((a: { userId: string }) => a.userId === managerId)],
         [assistantId, assignments.find((a: { userId: string }) => a.userId === assistantId)],
       ] as const) {
+        const participantHeaders = { "x-test-user-id": userId, "x-test-tenant-id": tenantId };
+        const response = await server.inject({
+          method: "POST",
+          url: `/tenant/tna-assignments/${assignment.id}/responses`,
+          headers: participantHeaders,
+        });
         const submit = await server.inject({
           method: "POST",
-          url: `/tenant/tna-assignments/${assignment.id}/submit`,
-          headers: { "x-test-user-id": userId, "x-test-tenant-id": tenantId },
+          url: `/tenant/tna-assignments/${assignment.id}/responses/${response.json().data.id}/submit`,
+          headers: participantHeaders,
           payload: { values: { skill_gaps: "Gap", priority: "Low" } },
         });
         expect(submit.statusCode).toBe(200);

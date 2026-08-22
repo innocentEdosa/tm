@@ -3,6 +3,7 @@
 import { CalendarClock, ExternalLink } from "lucide-react";
 import type { ContentItem } from "@/lib/course-api-types";
 import ScormEmbed from "./scorm-embed";
+import UploadedVideoEmbed from "./uploaded-video-embed";
 
 /** Viewport-relative rather than a fixed px guess, so it scales the same way a 16:9 video's own
  * height does as the window resizes (and matches the article case's own `max-h-[70vh]` scale) —
@@ -10,10 +11,11 @@ import ScormEmbed from "./scorm-embed";
  * short article/live-class/test placeholder doesn't yank the whole page up. */
 const MIN_MEDIA_HEIGHT = "min-h-[60vh]";
 
-/** Recognizes a YouTube or Vimeo URL and returns its embeddable-iframe form; any other URL (a direct
- * file, a presigned R2 link, etc.) is treated as a playable file and handed straight to a `<video>`
- * tag instead — `payload.url` is an arbitrary admin-entered string (video-form.tsx only wires up
- * "video URL", not file upload), so there's no stored flag saying which case it is. */
+/** Recognizes a YouTube or Vimeo URL and returns its embeddable-iframe form; any other URL is treated
+ * as a direct playable file and handed straight to a `<video>` tag instead — `payload.url` is an
+ * arbitrary admin-entered string (the "video URL" method), so there's no stored flag saying which
+ * case it is. An *uploaded* video never reaches this function at all — see `payload.videoAttachmentId`
+ * above, resolved through `UploadedVideoEmbed` instead. */
 function getVideoEmbedUrl(url: string): string | null {
   const youtube = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([\w-]+)/);
   if (youtube) return `https://www.youtube.com/embed/${youtube[1]}`;
@@ -43,6 +45,9 @@ function EmptyMedia({ message }: { message: string }) {
 export default function LessonMedia({ item, onVideoEnded }: { item: ContentItem; onVideoEnded: () => void }) {
   switch (item.type) {
     case "video": {
+      if (item.payload.videoAttachmentId) {
+        return <UploadedVideoEmbed attachmentId={item.payload.videoAttachmentId} title={item.title} onEnded={onVideoEnded} />;
+      }
       const url = item.payload.url;
       if (!url) return <EmptyMedia message="No video has been added to this lesson yet." />;
       const embedUrl = getVideoEmbedUrl(url);

@@ -19,11 +19,17 @@ import { tnaExercises } from "./tna-exercises";
  * `departmentId` records which department context this assignment came from (null for role/user-
  * sourced assignments with no department context) — a person can hold more than one assignment for
  * the same exercise if they're reachable through more than one department (e.g. manager of two
- * targeted departments), one row per department. Response content itself lives in the existing
- * Custom Fields Framework (`custom_field_values`, `entityId` = this row's `id`, `formKey` =
- * `tna_response`) — this table only tracks *who*, *from where*, and *submission status*, never the
- * answers themselves, exactly mirroring how `training_needs` keeps its own fixed columns separate
- * from tenant-configurable custom-field answers.
+ * targeted departments), one row per department. This table only tracks *who* and *from where* —
+ * the answers themselves live one level down, in `tna_responses` (child rows, since a department can
+ * have more than one training need: a participant may submit any number of responses against a
+ * single assignment, not just one).
+ *
+ * `status` here means "has this assignment received at least one submitted response" — it flips
+ * `pending` -> `submitted` on the *first* `tna_responses` row submitted against it and never reverts,
+ * even though more responses can still be added afterward. `submittedAt` likewise records the first
+ * submission, not the latest. This is deliberately coarser than a single response's own status (see
+ * `tna_responses.status`) — it exists purely for roster/completion reporting (`getProgressCounts`),
+ * which only ever needs to know whether a participant has engaged at all.
  *
  * `magicLinkTokenHash` — a per-assignment secret letting the participant reach their response form
  * directly from the assignment-notification email with no login required (mirrors

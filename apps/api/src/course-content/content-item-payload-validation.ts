@@ -96,10 +96,24 @@ export function validateContentItemPayload(
 
   switch (type) {
     case "video":
-      if (typeof p.url !== "string" || !p.url.trim()) {
-        return { error: "payload.url is required for video content" };
+      // Video Lesson Upload — an uploaded video (`payload.videoAttachmentId`, a durable
+      // `file_attachments.id`) is now an alternative to the original "video URL" method
+      // (`payload.url`), the same either/or shape `article` already has for `body`/`externalUrl`.
+      // `uploadPending` is a third, deliberately narrow case: a real upload is in progress and this
+      // content item is only a valid anchor row until it finishes — never a legitimate end state.
+      // `CourseService.updateLesson` additionally refuses to let a lesson with `uploadPending` ever
+      // reach `status: "published"`, so this can never become a loophole for "complete" content that
+      // was never actually uploaded.
+      if (p.uploadPending === true) {
+        return { error: null };
       }
-      return { error: null };
+      if (typeof p.videoAttachmentId === "string" && p.videoAttachmentId.trim()) {
+        return { error: null };
+      }
+      if (typeof p.url === "string" && p.url.trim()) {
+        return { error: null };
+      }
+      return { error: "payload.url or payload.videoAttachmentId is required for video content" };
     case "article":
       if ((typeof p.body !== "string" || !p.body.trim()) && (typeof p.externalUrl !== "string" || !p.externalUrl.trim())) {
         return { error: "payload.body or payload.externalUrl is required for article content" };

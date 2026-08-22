@@ -28,13 +28,18 @@ export function validateFieldValue(field: FormField, value: unknown): string | n
       if (typeof value !== "string" || !/^https?:\/\/.+/i.test(value)) return `${field.label} must be a valid URL`;
       return null;
     case "select":
-    case "radio":
-      if (typeof value !== "string" || !(field.options ?? []).includes(value)) return `${field.label} must be one of the configured options`;
+    case "radio": {
+      const allowCustom = !!validation.allowCustomOptions;
+      if (typeof value !== "string" || value.trim().length === 0 || !(allowCustom || (field.options ?? []).includes(value)))
+        return `${field.label} must be one of the configured options`;
       return null;
-    case "multiselect":
-      if (!Array.isArray(value) || !value.every((v) => typeof v === "string" && (field.options ?? []).includes(v)))
+    }
+    case "multiselect": {
+      const allowCustom = !!validation.allowCustomOptions;
+      if (!Array.isArray(value) || !value.every((v) => typeof v === "string" && v.trim().length > 0 && (allowCustom || (field.options ?? []).includes(v))))
         return `${field.label} must be a set of the configured options`;
       return null;
+    }
     case "checkbox":
     case "toggle":
       if (typeof value !== "boolean") return `${field.label} is invalid`;
@@ -47,7 +52,12 @@ export function validateFieldValue(field: FormField, value: unknown): string | n
       if (validation.pattern && !new RegExp(validation.pattern).test(value)) return `${field.label} is not in the expected format`;
       return null;
     case "user_select":
+    case "entity_select":
       if (typeof value !== "string") return `${field.label} must be a valid selection`;
+      return null;
+    case "people_select":
+      if (!Array.isArray(value) || !value.every((v) => !!v && typeof v === "object" && "id" in v && "type" in v))
+        return `${field.label} must be a set of selected people or roles`;
       return null;
     default:
       return null;

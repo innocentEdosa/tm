@@ -41,6 +41,8 @@ export const FIELD_TYPES = [
   "toggle",
   "file",
   "user_select",
+  "people_select",
+  "entity_select",
 ] as const;
 export type FieldType = (typeof FIELD_TYPES)[number];
 

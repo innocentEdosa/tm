@@ -1,11 +1,13 @@
 import type { FastifyPluginAsync } from "fastify";
-import { eq, asc, and, inArray, isNull, ne, sql } from "drizzle-orm";
+import { eq, asc, desc, and, inArray, isNull, ne, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { requireTenantUserSession } from "../tenant-auth/require-tenant-user-session";
 import { requireAnyPermission } from "../permissions/require-permission";
 import { tnaExercises, tnaExerciseTargets, TNA_TARGET_TYPES, type TnaTargetType } from "../db/schema/tna-exercises";
 import { tnaAssignments } from "../db/schema/tna-assignments";
+import { tnaResponses } from "../db/schema/tna-responses";
 import { departments } from "../db/schema/departments";
+import { businessObjectives } from "../db/schema/business-objectives";
 import { roles, userRoles, rolePermissions } from "../db/schema/roles";
 import { users } from "../db/schema/users";
 import { tenants } from "../db/schema/tenants";
@@ -15,7 +17,15 @@ import { resolveTnaParticipants } from "./resolve-tna-participants";
 import { getFormFields } from "../custom-fields/field-key-uniqueness";
 import { validateCustomFieldValues, writeCustomFieldValues } from "../custom-fields/save-values";
 import { sendTnaAssignmentEmail } from "./tna-assignment-mailer";
-import { TNA_RESPONSE_FORM_KEY, isExerciseOpenForSubmission, getTnaResponseValues } from "./tna-shared";
+import { createNotification, createNotificationsForRecipients, truncateForNotification } from "../notifications/notification-service";
+import {
+  TNA_RESPONSE_FORM_KEY,
+  isExerciseOpenForSubmission,
+  listTnaResponses,
+  getOrCreateDraftResponse,
+  getWritableResponse,
+  markAssignmentRespondedIfFirst,
+} from "./tna-shared";
 import { generateSessionToken, hashSessionToken } from "../platform-auth/session";
 import type { Db } from "../db/client";
 
@@ -207,7 +217,8 @@ const tenantTnaRoutes: FastifyPluginAsync = async (fastify) => {
         .from(tnaExercises)
         .leftJoin(creator, eq(creator.id, tnaExercises.createdByUserId))
         .leftJoin(committer, eq(committer.id, tnaExercises.committedByUserId))
-        .orderBy(asc(tnaExercises.endDate));
+        .where(isNull(tnaExercises.archivedAt))
+        .orderBy(desc(tnaExercises.createdAt));
 
       const withProgress = await Promise.all(
         rows.map(async (row) => ({
@@ -408,6 +419,36 @@ const tenantTnaRoutes: FastifyPluginAsync = async (fastify) => {
             .where(eq(tnaAssignments.id, row.id));
           withTokens.push({ id: row.id, userId: row.userId, token });
         }
+        // In-app notification is awaited (unlike the fire-and-forget email below) — it's a fast,
+        // local write, so it stays inside this same transaction rather than racing the response
+        // against un-awaited work on a client that may already be released. Each recipient gets
+        // their OWN assignment id in both `metadata` and `actionUrl` — unlike a same-content
+        // broadcast (e.g. every training-request approver notified about one shared record), every
+        // participant here has a genuinely different destination (their own response form), so this
+        // is `createNotificationsForRecipients` (distinct per-row content), not `createNotifications`
+        // (identical content fan-out). Wrapped in try/catch, matching `notifyTnaParticipants`'s own
+        // error-swallowing convention just below — a notification bug must never fail the Start
+        // action itself. (This can't fully protect against a failure at the Postgres statement level
+        // itself, which would abort this whole transaction regardless of where it's caught — only
+        // against a JS-level failure before the query is sent — but every recipient id here was just
+        // read from this same transaction moments ago, so a constraint violation is not a realistic
+        // failure mode.)
+        try {
+          await createNotificationsForRecipients(
+            request.tenantDb,
+            withTokens.map((assignment) => ({
+              tenantId: request.user!.tenantId,
+              recipientId: assignment.userId,
+              type: "tna_assignment_created",
+              title: "New Training Needs Analysis assignment",
+              message: `You've been assigned to "${truncateForNotification(existing.title)}" — due ${existing.endDate}.`,
+              metadata: { entityType: "tna_assignment", entityId: assignment.id },
+              actionUrl: `/strategy/training-needs-analysis/my/${assignment.id}`,
+            })),
+          );
+        } catch (err) {
+          console.error("Failed to create TNA assignment notifications:", err);
+        }
         void notifyTnaParticipants(request.tenantDb, request.user!.tenantId, existing.title, existing.endDate, withTokens);
       }
 
@@ -458,6 +499,31 @@ const tenantTnaRoutes: FastifyPluginAsync = async (fastify) => {
       await request.tenantDb
         .update(tnaExercises)
         .set({ status: "active", closedAt: null, updatedAt: new Date() })
+        .where(eq(tnaExercises.id, exerciseId));
+      return { success: true, data: { id: exerciseId } };
+    },
+  );
+
+  // POST /tenant/tna-exercises/:exerciseId/archive — hides a closed exercise from the default
+  // list (`archivedAt`, mirrors `business_objectives`' own archive: a reversible-in-the-database
+  // lifecycle change, not a delete, distinct from `status`). Only a `closed` exercise can be
+  // archived — matches `reopen`'s own restriction, so the two actions never compete on the same
+  // row: still-active work isn't archivable, and a committed exercise (the tenant's finalized
+  // record) isn't either. No `/unarchive` route, same one-way-from-the-UI precedent
+  // `business_objectives`' own archive already established.
+  fastify.post<{ Params: { exerciseId: string } }>(
+    "/tenant/tna-exercises/:exerciseId/archive",
+    { preHandler: [requireTenantUserSession(), requireAnyPermission("tna.manage")] },
+    async (request, reply) => {
+      const { exerciseId } = request.params;
+      const [existing] = await request.tenantDb.select().from(tnaExercises).where(eq(tnaExercises.id, exerciseId));
+      if (!existing) return reply.code(404).send({ success: false, message: "Not found" });
+      if (existing.status !== "closed") {
+        return reply.code(409).send({ success: false, message: "Only a closed exercise can be archived." });
+      }
+      await request.tenantDb
+        .update(tnaExercises)
+        .set({ archivedAt: new Date(), updatedAt: new Date() })
         .where(eq(tnaExercises.id, exerciseId));
       return { success: true, data: { id: exerciseId } };
     },
@@ -571,8 +637,8 @@ const tenantTnaRoutes: FastifyPluginAsync = async (fastify) => {
         .where(eq(tnaAssignments.id, assignmentId));
       if (!row) return reply.code(404).send({ success: false, message: "Not found" });
 
-      const values = await getTnaResponseValues(request.tenantDb, assignmentId);
-      return { success: true, data: { ...row, responseValues: values } };
+      const responses = await listTnaResponses(request.tenantDb, assignmentId);
+      return { success: true, data: { ...row, responses } };
     },
   );
 
@@ -637,6 +703,19 @@ const tenantTnaRoutes: FastifyPluginAsync = async (fastify) => {
         })
         .returning();
 
+      try {
+        await createNotification(request.tenantDb, {
+          tenantId: request.user!.tenantId,
+          recipientId: created.userId,
+          type: "tna_assignment_created",
+          title: "New Training Needs Analysis assignment",
+          message: `You've been assigned to "${truncateForNotification(existing.title)}" — due ${existing.endDate}.`,
+          metadata: { entityType: "tna_assignment", entityId: created.id },
+          actionUrl: `/strategy/training-needs-analysis/my/${created.id}`,
+        });
+      } catch (err) {
+        console.error("Failed to create TNA assignment notification:", err);
+      }
       void notifyTnaParticipants(request.tenantDb, request.user!.tenantId, existing.title, existing.endDate, [
         { id: created.id, userId: created.userId, token },
       ]);
@@ -703,6 +782,27 @@ const tenantTnaRoutes: FastifyPluginAsync = async (fastify) => {
     },
   );
 
+  // GET /tenant/tna-assignments/business-objectives — backs the session-authenticated response
+  // form's "Business Objective" (`entity_select`) picker. Session-only, no `business_objective.*`
+  // permission required: a rank-and-file participant filling out their own TNA response may not
+  // hold that permission, and the list itself isn't sensitive (mirrors the public magic-link
+  // equivalent, `GET /public/tna-assignments/business-objectives` in public-tna-routes.ts, and
+  // `GET /tenant/business-objectives/categories`'s own no-extra-permission precedent). Only
+  // active (non-archived) objectives are ever offered, matching both of those.
+  fastify.get(
+    "/tenant/tna-assignments/business-objectives",
+    { preHandler: [requireTenantUserSession()] },
+    async (request) => {
+      const rows = await request.tenantDb
+        .select({ id: businessObjectives.id, title: businessObjectives.title })
+        .from(businessObjectives)
+        .where(isNull(businessObjectives.archivedAt))
+        .orderBy(businessObjectives.title)
+        .limit(50);
+      return { success: true, data: rows };
+    },
+  );
+
   // GET /tenant/tna-assignments/:assignmentId — a participant's own assignment detail (or an
   // admin's, for the same drill-in view participants get). Ownership-or-permission gate, not a
   // permission-only gate.
@@ -740,64 +840,91 @@ const tenantTnaRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(404).send({ success: false, message: "Not found" });
       }
 
-      const values = await getTnaResponseValues(request.tenantDb, assignmentId);
-      return { success: true, data: { ...row, responseValues: values } };
+      const responses = await listTnaResponses(request.tenantDb, assignmentId);
+      return { success: true, data: { ...row, responses } };
     },
   );
 
-  // PATCH /tenant/tna-assignments/:assignmentId — save progress on my own response, without
-  // submitting. Only the assignment's own owner may write it; only while pending and the exercise
-  // is still active.
-  fastify.patch<{ Params: { assignmentId: string }; Body: { values?: Record<string, unknown> } }>(
-    "/tenant/tna-assignments/:assignmentId",
+  // POST /tenant/tna-assignments/:assignmentId/responses — start a new response: the "Add a
+  // response"/"Add another response" action a participant uses because a department can have more
+  // than one training need. Idempotent — if a response is already open (`draft`), that same one is
+  // returned rather than erroring.
+  fastify.post<{ Params: { assignmentId: string } }>(
+    "/tenant/tna-assignments/:assignmentId/responses",
     { preHandler: [requireTenantUserSession()] },
     async (request, reply) => {
       const { assignmentId } = request.params;
       const [assignment] = await request.tenantDb
-        .select({ id: tnaAssignments.id, userId: tnaAssignments.userId, status: tnaAssignments.status, exerciseStatus: tnaExercises.status, endDate: tnaExercises.endDate })
+        .select({ id: tnaAssignments.id, userId: tnaAssignments.userId, exerciseStatus: tnaExercises.status, endDate: tnaExercises.endDate })
         .from(tnaAssignments)
         .innerJoin(tnaExercises, eq(tnaExercises.id, tnaAssignments.tnaExerciseId))
         .where(eq(tnaAssignments.id, assignmentId));
       if (!assignment || assignment.userId !== request.user!.id) {
         return reply.code(404).send({ success: false, message: "Not found" });
       }
-      if (assignment.status !== "pending") {
-        return reply.code(409).send({ success: false, message: "This response has already been submitted." });
+      if (!isExerciseOpenForSubmission(assignment.exerciseStatus, assignment.endDate)) {
+        return reply.code(409).send({ success: false, message: "This Training Needs Analysis is not currently accepting responses." });
+      }
+
+      const response = await getOrCreateDraftResponse(request.tenantDb, request.user!.tenantId, assignmentId);
+      return reply.code(201).send({ success: true, data: response });
+    },
+  );
+
+  // PATCH /tenant/tna-assignments/:assignmentId/responses/:responseId — save progress on one
+  // response, without submitting. Only the assignment's own owner may write it; only while that
+  // response is still a draft and the exercise is still active.
+  fastify.patch<{ Params: { assignmentId: string; responseId: string }; Body: { values?: Record<string, unknown> } }>(
+    "/tenant/tna-assignments/:assignmentId/responses/:responseId",
+    { preHandler: [requireTenantUserSession()] },
+    async (request, reply) => {
+      const { assignmentId, responseId } = request.params;
+      const [assignment] = await request.tenantDb
+        .select({ id: tnaAssignments.id, userId: tnaAssignments.userId, exerciseStatus: tnaExercises.status, endDate: tnaExercises.endDate })
+        .from(tnaAssignments)
+        .innerJoin(tnaExercises, eq(tnaExercises.id, tnaAssignments.tnaExerciseId))
+        .where(eq(tnaAssignments.id, assignmentId));
+      if (!assignment || assignment.userId !== request.user!.id) {
+        return reply.code(404).send({ success: false, message: "Not found" });
       }
       if (!isExerciseOpenForSubmission(assignment.exerciseStatus, assignment.endDate)) {
         return reply.code(409).send({ success: false, message: "This Training Needs Analysis is not currently accepting responses." });
+      }
+      const response = await getWritableResponse(request.tenantDb, assignmentId, responseId);
+      if (!response) {
+        return reply.code(409).send({ success: false, message: "This response has already been submitted." });
       }
 
       const values = request.body?.values ?? {};
       const fields = await getFormFields(request.tenantDb, TNA_RESPONSE_FORM_KEY);
-      await writeCustomFieldValues(request.tenantDb, request.user!.tenantId, TNA_RESPONSE_FORM_KEY, assignmentId, values, fields);
+      await writeCustomFieldValues(request.tenantDb, request.user!.tenantId, TNA_RESPONSE_FORM_KEY, responseId, values, fields);
 
-      return { success: true, data: { id: assignmentId } };
+      return { success: true, data: { id: responseId } };
     },
   );
 
-  // POST /tenant/tna-assignments/:assignmentId/submit — validates required fields, locks the
-  // response. Never editable again afterward (no reopen workflow exists — matches the spec's own
-  // "no longer edit after submission unless the workflow explicitly supports reopening", and it
-  // doesn't here).
-  fastify.post<{ Params: { assignmentId: string }; Body: { values?: Record<string, unknown> } }>(
-    "/tenant/tna-assignments/:assignmentId/submit",
+  // POST /tenant/tna-assignments/:assignmentId/responses/:responseId/submit — validates required
+  // fields, locks that one response. Never editable again afterward (no reopen workflow exists — a
+  // participant who wants to add more just starts another response instead).
+  fastify.post<{ Params: { assignmentId: string; responseId: string }; Body: { values?: Record<string, unknown> } }>(
+    "/tenant/tna-assignments/:assignmentId/responses/:responseId/submit",
     { preHandler: [requireTenantUserSession()] },
     async (request, reply) => {
-      const { assignmentId } = request.params;
+      const { assignmentId, responseId } = request.params;
       const [assignment] = await request.tenantDb
-        .select({ id: tnaAssignments.id, userId: tnaAssignments.userId, status: tnaAssignments.status, exerciseStatus: tnaExercises.status, endDate: tnaExercises.endDate })
+        .select({ id: tnaAssignments.id, userId: tnaAssignments.userId, exerciseStatus: tnaExercises.status, endDate: tnaExercises.endDate })
         .from(tnaAssignments)
         .innerJoin(tnaExercises, eq(tnaExercises.id, tnaAssignments.tnaExerciseId))
         .where(eq(tnaAssignments.id, assignmentId));
       if (!assignment || assignment.userId !== request.user!.id) {
         return reply.code(404).send({ success: false, message: "Not found" });
       }
-      if (assignment.status !== "pending") {
-        return reply.code(409).send({ success: false, message: "This response has already been submitted." });
-      }
       if (!isExerciseOpenForSubmission(assignment.exerciseStatus, assignment.endDate)) {
         return reply.code(409).send({ success: false, message: "This Training Needs Analysis is not currently accepting responses." });
+      }
+      const response = await getWritableResponse(request.tenantDb, assignmentId, responseId);
+      if (!response) {
+        return reply.code(409).send({ success: false, message: "This response has already been submitted." });
       }
 
       const values = request.body?.values ?? {};
@@ -807,13 +934,14 @@ const tenantTnaRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(422).send({ success: false, errors });
       }
 
-      await writeCustomFieldValues(request.tenantDb, request.user!.tenantId, TNA_RESPONSE_FORM_KEY, assignmentId, values, fields);
+      await writeCustomFieldValues(request.tenantDb, request.user!.tenantId, TNA_RESPONSE_FORM_KEY, responseId, values, fields);
       await request.tenantDb
-        .update(tnaAssignments)
+        .update(tnaResponses)
         .set({ status: "submitted", submittedAt: new Date(), updatedAt: new Date() })
-        .where(eq(tnaAssignments.id, assignmentId));
+        .where(eq(tnaResponses.id, responseId));
+      await markAssignmentRespondedIfFirst(request.tenantDb, assignmentId);
 
-      return { success: true, data: { id: assignmentId } };
+      return { success: true, data: { id: responseId } };
     },
   );
 };

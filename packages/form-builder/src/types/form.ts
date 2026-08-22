@@ -15,6 +15,12 @@ export interface EffectiveForm {
   /** Submit-button text/position, set through the Form Builder — `<FormRenderer>` falls back to
    * a plain "Submit" (and right-aligned) when this, or a specific setting within it, is absent. */
   cta?: FormCta | null;
+  /** Form-level response policy (multiple form responses feature,
+   * `form_definitions.allow_multiple_responses`) — `false` means a respondent may have at most
+   * one response for this form type; a consuming page reads this to decide whether to offer an
+   * "Add another response" action instead of only ever edit-in-place. Enforcement lives server-
+   * side in the consuming feature's own write route, never in this package. */
+  allowMultipleResponses: boolean;
 }
 
 export * from "./field";

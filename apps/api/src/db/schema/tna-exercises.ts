@@ -51,6 +51,13 @@ export const tnaExercises = pgTable(
       onDelete: "set null",
     }),
     committedAt: timestamp("committed_at", { withTimezone: true }),
+    // Archive is a separate, reversible-in-the-database-only lifecycle change (hidden from the
+    // default list, mirrors `business_objectives.archivedAt`) — distinct from `status`, which
+    // tracks the exercise's own workflow stage (draft/active/closed/under_review/committed). Only
+    // a `closed` exercise can be archived (see the `/archive` route) — an exercise still being
+    // worked (`active`/`under_review`) or already the tenant's committed record shouldn't disappear
+    // from view this way.
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

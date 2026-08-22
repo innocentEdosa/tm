@@ -29,6 +29,7 @@ export interface EffectiveFormSection {
   key: string;
   title: string;
   description: string | null;
+  icon: string | null;
   fields: EffectiveFormField[];
 }
 
@@ -48,6 +49,12 @@ export interface EffectiveForm {
    * (`form_versions.layout_config`) — `<FormRenderer>` falls back to a plain "Submit" when this
    * (or a specific setting within it) isn't set. */
   cta: FormLayoutConfig["cta"] | null;
+  /** Form-level response policy (multiple-responses feature, `form_definitions.allow_multiple_
+   * responses`) — surfaced here so a consuming feature's frontend can read it from the same call
+   * it already makes for rendering, without a second round-trip. `false` (the default) means a
+   * respondent may have at most one response; enforcement of that limit still lives in the
+   * consuming feature's own write route, never here (see get-effective-form.ts module doc). */
+  allowMultipleResponses: boolean;
 }
 
 /**
@@ -66,7 +73,11 @@ export async function getEffectiveForm(
   tenantId: string,
 ): Promise<EffectiveForm | null> {
   const [definition] = await tenantDb
-    .select({ id: formDefinitions.id, activeVersionId: formDefinitions.activeVersionId })
+    .select({
+      id: formDefinitions.id,
+      activeVersionId: formDefinitions.activeVersionId,
+      allowMultipleResponses: formDefinitions.allowMultipleResponses,
+    })
     .from(formDefinitions)
     .where(eq(formDefinitions.key, formKey));
   if (!definition || !definition.activeVersionId) {
@@ -194,6 +205,7 @@ export async function getEffectiveForm(
     key: section.key,
     title: section.title,
     description: section.description,
+    icon: section.icon,
     fields: fieldsBySectionId.get(section.id) ?? [],
   });
 
@@ -240,5 +252,5 @@ export async function getEffectiveForm(
     .where(and(eq(tenantFormCtaOverrides.tenantId, tenantId), eq(tenantFormCtaOverrides.formDefinitionId, definition.id)));
   const cta = (ctaOverride?.cta as FormLayoutConfig["cta"] | undefined) ?? layoutConfig?.cta ?? null;
 
-  return { formKey, formVersionId: version.id, steps: effectiveSteps, cta };
+  return { formKey, formVersionId: version.id, steps: effectiveSteps, cta, allowMultipleResponses: definition.allowMultipleResponses };
 }

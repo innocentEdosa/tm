@@ -7,9 +7,11 @@ import { closeTestPool, withTenantDb } from "../helpers/pg";
 import { departments } from "../../src/db/schema/departments";
 import { users } from "../../src/db/schema/users";
 
-/** Save-progress / submit behavior on a participant's own `tna_assignments` row: required-field
- * validation, duplicate-submission prevention, and deadline enforcement (an exercise past its
- * `endDate` — or not `active` at all — must reject both save and submit). */
+/** Save-progress / submit behavior on one of a participant's `tna_responses` rows (children of their
+ * `tna_assignments` row — a department can have more than one training need, so an assignment can
+ * hold more than one response): required-field validation, duplicate-submission prevention, and
+ * deadline enforcement (an exercise past its `endDate` — or not `active` at all — must reject
+ * starting, saving, and submitting a response alike). */
 describe("TNA: assignment save/submit", () => {
   afterAll(async () => {
     await closeTestPool();
@@ -35,6 +37,11 @@ describe("TNA: assignment save/submit", () => {
     return { assignmentId, managerId, exerciseId };
   }
 
+  async function startResponse(server: FastifyInstance, assignmentId: string, headers: Record<string, string>) {
+    const res = await server.inject({ method: "POST", url: `/tenant/tna-assignments/${assignmentId}/responses`, headers });
+    return res;
+  }
+
   it("save-progress persists without validation; submit enforces required fields", async () => {
     const tenantId = randomUUID();
     await seedTenant(tenantId);
@@ -47,9 +54,13 @@ describe("TNA: assignment save/submit", () => {
       const { assignmentId, managerId } = await seedActiveExercise(server, tenantId, adminId, "2099-12-31");
       const headers = { "x-test-user-id": managerId, "x-test-tenant-id": tenantId };
 
+      const started = await startResponse(server, assignmentId, headers);
+      expect(started.statusCode).toBe(201);
+      const responseId = started.json().data.id;
+
       const saveDraft = await server.inject({
         method: "PATCH",
-        url: `/tenant/tna-assignments/${assignmentId}`,
+        url: `/tenant/tna-assignments/${assignmentId}/responses/${responseId}`,
         headers,
         payload: { values: { skill_gaps: "" } },
       });
@@ -57,7 +68,7 @@ describe("TNA: assignment save/submit", () => {
 
       const missingRequired = await server.inject({
         method: "POST",
-        url: `/tenant/tna-assignments/${assignmentId}/submit`,
+        url: `/tenant/tna-assignments/${assignmentId}/responses/${responseId}/submit`,
         headers,
         payload: { values: {} },
       });
@@ -66,16 +77,16 @@ describe("TNA: assignment save/submit", () => {
 
       const submit = await server.inject({
         method: "POST",
-        url: `/tenant/tna-assignments/${assignmentId}/submit`,
+        url: `/tenant/tna-assignments/${assignmentId}/responses/${responseId}/submit`,
         headers,
         payload: { values: { skill_gaps: "Needs Excel training", priority: "High" } },
       });
       expect(submit.statusCode).toBe(200);
 
-      // Cannot submit twice.
+      // Cannot submit the same response twice.
       const secondSubmit = await server.inject({
         method: "POST",
-        url: `/tenant/tna-assignments/${assignmentId}/submit`,
+        url: `/tenant/tna-assignments/${assignmentId}/responses/${responseId}/submit`,
         headers,
         payload: { values: { skill_gaps: "Different answer", priority: "Low" } },
       });
@@ -84,11 +95,61 @@ describe("TNA: assignment save/submit", () => {
       // Cannot edit further via save-progress once submitted, either.
       const editAfterSubmit = await server.inject({
         method: "PATCH",
-        url: `/tenant/tna-assignments/${assignmentId}`,
+        url: `/tenant/tna-assignments/${assignmentId}/responses/${responseId}`,
         headers,
         payload: { values: { skill_gaps: "Trying to change it" } },
       });
       expect(editAfterSubmit.statusCode).toBe(409);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("supports adding another response after the first is submitted — a department can have more than one training need", async () => {
+    const tenantId = randomUUID();
+    await seedTenant(tenantId);
+    const adminId = randomUUID();
+    await seedUser(tenantId, adminId);
+    await seedUserWithRole(tenantId, adminId, ["tna.manage"]);
+
+    const server = await buildTestServer();
+    try {
+      const { assignmentId, managerId } = await seedActiveExercise(server, tenantId, adminId, "2099-12-31");
+      const headers = { "x-test-user-id": managerId, "x-test-tenant-id": tenantId };
+
+      const first = await startResponse(server, assignmentId, headers);
+      const firstId = first.json().data.id;
+      await server.inject({
+        method: "POST",
+        url: `/tenant/tna-assignments/${assignmentId}/responses/${firstId}/submit`,
+        headers,
+        payload: { values: { skill_gaps: "First need", priority: "High" } },
+      });
+
+      // Starting a second response is allowed once the first is locked.
+      const second = await startResponse(server, assignmentId, headers);
+      expect(second.statusCode).toBe(201);
+      const secondId = second.json().data.id;
+      expect(secondId).not.toBe(firstId);
+
+      const secondSubmit = await server.inject({
+        method: "POST",
+        url: `/tenant/tna-assignments/${assignmentId}/responses/${secondId}/submit`,
+        headers,
+        payload: { values: { skill_gaps: "Second need", priority: "Low" } },
+      });
+      expect(secondSubmit.statusCode).toBe(200);
+
+      const detail = await server.inject({ method: "GET", url: `/tenant/tna-assignments/${assignmentId}`, headers });
+      const responses = detail.json().data.responses as { id: string; status: string }[];
+      expect(responses).toHaveLength(2);
+      expect(responses.every((r) => r.status === "submitted")).toBe(true);
+
+      // Starting again while no draft is open is idempotent per open draft, but re-requesting with
+      // none open creates a fresh one rather than erroring.
+      const third = await startResponse(server, assignmentId, headers);
+      expect(third.statusCode).toBe(201);
+      expect(third.json().data.id).not.toBe(secondId);
     } finally {
       await server.close();
     }
@@ -105,22 +166,11 @@ describe("TNA: assignment save/submit", () => {
     try {
       const { assignmentId, managerId } = await seedActiveExercise(server, tenantId, adminId, "2020-01-02");
       const headers = { "x-test-user-id": managerId, "x-test-tenant-id": tenantId };
-      const submit = await server.inject({
-        method: "POST",
-        url: `/tenant/tna-assignments/${assignmentId}/submit`,
-        headers,
-        payload: { values: { skill_gaps: "Late submission", priority: "Low" } },
-      });
-      expect(submit.statusCode).toBe(409);
-      expect(submit.json().message).toMatch(/not currently accepting responses/);
 
-      const save = await server.inject({
-        method: "PATCH",
-        url: `/tenant/tna-assignments/${assignmentId}`,
-        headers,
-        payload: { values: { skill_gaps: "Late save" } },
-      });
-      expect(save.statusCode).toBe(409);
+      // No window ever existed to open a response for this exercise, so even starting one is blocked.
+      const started = await startResponse(server, assignmentId, headers);
+      expect(started.statusCode).toBe(409);
+      expect(started.json().message).toMatch(/not currently accepting responses/);
     } finally {
       await server.close();
     }
@@ -136,14 +186,28 @@ describe("TNA: assignment save/submit", () => {
     const server = await buildTestServer();
     try {
       const { assignmentId, managerId, exerciseId } = await seedActiveExercise(server, tenantId, adminId, "2099-12-31");
+      const headers = { "x-test-user-id": managerId, "x-test-tenant-id": tenantId };
+
+      // Start a response while the exercise is still open, so there's an in-progress draft to
+      // exercise the post-close gate against.
+      const started = await startResponse(server, assignmentId, headers);
+      const responseId = started.json().data.id;
+
       const adminHeaders = { "x-test-user-id": adminId, "x-test-tenant-id": tenantId };
       const close = await server.inject({ method: "POST", url: `/tenant/tna-exercises/${exerciseId}/close`, headers: adminHeaders });
       expect(close.statusCode).toBe(200);
 
-      const headers = { "x-test-user-id": managerId, "x-test-tenant-id": tenantId };
+      const save = await server.inject({
+        method: "PATCH",
+        url: `/tenant/tna-assignments/${assignmentId}/responses/${responseId}`,
+        headers,
+        payload: { values: { skill_gaps: "Too late" } },
+      });
+      expect(save.statusCode).toBe(409);
+
       const submit = await server.inject({
         method: "POST",
-        url: `/tenant/tna-assignments/${assignmentId}/submit`,
+        url: `/tenant/tna-assignments/${assignmentId}/responses/${responseId}/submit`,
         headers,
         payload: { values: { skill_gaps: "Too late", priority: "Low" } },
       });

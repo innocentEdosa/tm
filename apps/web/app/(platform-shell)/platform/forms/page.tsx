@@ -69,7 +69,11 @@ export default function PlatformFormsListPage() {
   const formsQuery = useQuery({
     queryKey: ["platform-forms", page, debouncedSearch],
     queryFn: async (): Promise<ListData> => {
-      const qs = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE) });
+      // `builtInFirst` here too (not just the "Create form" popover below) — otherwise the
+      // framework-shipped defaults (Department, TNA, Training Request, …) can get pushed off
+      // page 1 by however many custom/test form types have since been created, ordered purely
+      // by recency (spec FR-001 makes custom-type volume unbounded).
+      const qs = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE), builtInFirst: "true" });
       if (debouncedSearch) qs.set("search", debouncedSearch);
       const res = await fetch(`${API_BASE}/platform/forms?${qs.toString()}`, { credentials: "include" });
       const json = (await res.json()) as { data: ListData };
@@ -84,7 +88,7 @@ export default function PlatformFormsListPage() {
   const quickListQuery = useQuery({
     queryKey: ["platform-forms-quick-list"],
     queryFn: async (): Promise<FormTypeRow[]> => {
-      const res = await fetch(`${API_BASE}/platform/forms?page=1&pageSize=${QUICK_LIST_SIZE}`, { credentials: "include" });
+      const res = await fetch(`${API_BASE}/platform/forms?page=1&pageSize=${QUICK_LIST_SIZE}&builtInFirst=true`, { credentials: "include" });
       const json = (await res.json()) as { data: ListData };
       return json.data.forms;
     },

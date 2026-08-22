@@ -73,28 +73,36 @@ describe("TNA: magic-link response access (no session)", () => {
       const body = get.json().data;
       expect(body.exerciseTitle).toBe("Magic Link Test");
       expect(body.status).toBe("pending");
+      expect(body.responses).toEqual([]);
       expect(body.form.steps.flatMap((s: { sections: { fields: unknown[] }[] }) => s.sections.flatMap((sec) => sec.fields)).length).toBeGreaterThan(0);
+
+      const started = await server.inject({
+        method: "POST",
+        url: `/public/tna-assignments/responses?token=${token}&subdomain=${subdomain}`,
+      });
+      expect(started.statusCode).toBe(201);
+      const responseId = started.json().data.id;
 
       const saveDraft = await server.inject({
         method: "PATCH",
-        url: `/public/tna-assignments?token=${token}&subdomain=${subdomain}`,
+        url: `/public/tna-assignments/responses/${responseId}?token=${token}&subdomain=${subdomain}`,
         payload: { values: { skill_gaps: "Draft answer" } },
       });
       expect(saveDraft.statusCode).toBe(200);
 
       const afterDraft = await server.inject({ method: "GET", url: `/public/tna-assignments?token=${token}&subdomain=${subdomain}` });
-      expect(afterDraft.json().data.responseValues.skill_gaps).toBe("Draft answer");
+      expect(afterDraft.json().data.responses[0].values.skill_gaps).toBe("Draft answer");
 
       const missingRequired = await server.inject({
         method: "POST",
-        url: `/public/tna-assignments/submit?token=${token}&subdomain=${subdomain}`,
+        url: `/public/tna-assignments/responses/${responseId}/submit?token=${token}&subdomain=${subdomain}`,
         payload: { values: { skill_gaps: "Draft answer" } },
       });
       expect(missingRequired.statusCode).toBe(422);
 
       const submit = await server.inject({
         method: "POST",
-        url: `/public/tna-assignments/submit?token=${token}&subdomain=${subdomain}`,
+        url: `/public/tna-assignments/responses/${responseId}/submit?token=${token}&subdomain=${subdomain}`,
         payload: { values: { skill_gaps: "Final answer", priority: "High" } },
       });
       expect(submit.statusCode).toBe(200);
@@ -104,16 +112,25 @@ describe("TNA: magic-link response access (no session)", () => {
 
       const secondSubmit = await server.inject({
         method: "POST",
-        url: `/public/tna-assignments/submit?token=${token}&subdomain=${subdomain}`,
+        url: `/public/tna-assignments/responses/${responseId}/submit?token=${token}&subdomain=${subdomain}`,
         payload: { values: { skill_gaps: "Second try", priority: "Low" } },
       });
       expect(secondSubmit.statusCode).toBe(409);
+
+      // A department can have more than one training need — a second response can still be started
+      // and submitted via the same magic link after the first is locked.
+      const startedAgain = await server.inject({
+        method: "POST",
+        url: `/public/tna-assignments/responses?token=${token}&subdomain=${subdomain}`,
+      });
+      expect(startedAgain.statusCode).toBe(201);
+      expect(startedAgain.json().data.id).not.toBe(responseId);
     } finally {
       await server.close();
     }
   });
 
-  it("rejects an unrecognized token, and blocks submission once the deadline has passed", async () => {
+  it("rejects an unrecognized token, and blocks starting a response once the deadline has passed", async () => {
     const { subdomain } = await seedStartedExercise(randomUUID(), "2099-12-31");
     const { subdomain: pastSubdomain, token: pastToken } = await seedStartedExercise(randomUUID(), "2020-01-02");
 
@@ -125,12 +142,11 @@ describe("TNA: magic-link response access (no session)", () => {
       });
       expect(badToken.statusCode).toBe(404);
 
-      const submitPastDeadline = await server.inject({
+      const startPastDeadline = await server.inject({
         method: "POST",
-        url: `/public/tna-assignments/submit?token=${pastToken}&subdomain=${pastSubdomain}`,
-        payload: { values: { skill_gaps: "Too late", priority: "Low" } },
+        url: `/public/tna-assignments/responses?token=${pastToken}&subdomain=${pastSubdomain}`,
       });
-      expect(submitPastDeadline.statusCode).toBe(409);
+      expect(startPastDeadline.statusCode).toBe(409);
     } finally {
       await server.close();
     }

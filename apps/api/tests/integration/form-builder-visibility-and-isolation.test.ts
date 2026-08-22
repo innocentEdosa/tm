@@ -5,8 +5,10 @@ import { seedTenant, seedUser, seedUserWithRole, seedSuperAdminSession } from ".
 import { closeTestPool } from "../helpers/pg";
 
 /** Form Builder spec (033), User Story 3 — covers tasks.md T041/T042: tenant isolation of
- * customizations, and the server-side rule that a required/system field can never be hidden
- * (spec FR-021/FR-022/FR-024), enforced even via a direct API call, not only hidden in the UI. */
+ * customizations, and the server-side rule that a required field (system or platform) can never
+ * be hidden (spec FR-022, its required-field half — the system-field half was later deliberately
+ * relaxed: an *optional* system field may be hidden the same as any optional platform field, see
+ * `visibility-rules.ts`), enforced even via a direct API call, not only hidden in the UI. */
 describe("form builder: tenant isolation and visibility rules", () => {
   afterAll(async () => {
     await closeTestPool();
@@ -123,6 +125,51 @@ describe("form builder: tenant isolation and visibility rules", () => {
         payload: { hidden: true },
       });
       expect(hideRes.statusCode).toBe(403);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("allows a Tenant Admin to hide an optional system field (e.g. Department's `status`), relaxing FR-022's original system-field-never-hideable rule", async () => {
+    const server = await buildTestServer();
+    try {
+      const tenantId = randomUUID();
+      await seedTenant(tenantId);
+      const userId = randomUUID();
+      await seedUser(tenantId, userId);
+      await seedUserWithRole(tenantId, userId, ["forms.manage.tenant"]);
+      const headers = { "x-test-user-id": userId, "x-test-tenant-id": tenantId };
+
+      const effective = (await server.inject({ method: "GET", url: `/tenant/forms/department/effective`, headers })).json().data;
+      const allFields = effective.steps.flatMap((s: { sections: { fields: { id: string; fieldKey: string; isSystem: boolean; isRequired: boolean }[] }[] }) =>
+        s.sections.flatMap((sec) => sec.fields),
+      );
+      const statusField = allFields.find((f: { fieldKey: string }) => f.fieldKey === "status");
+      expect(statusField).toBeDefined();
+      expect(statusField.isSystem).toBe(true);
+      expect(statusField.isRequired).toBe(false);
+
+      const hideRes = await server.inject({
+        method: "PATCH",
+        url: `/tenant/forms/department/fields/${statusField.id}/visibility`,
+        headers,
+        payload: { hidden: true },
+      });
+      expect(hideRes.statusCode).toBe(200);
+
+      const effectiveAfter = (await server.inject({ method: "GET", url: `/tenant/forms/department/effective`, headers })).json().data;
+      const labelsAfter = effectiveAfter.steps.flatMap((s: { sections: { fields: { fieldKey: string }[] }[] }) => s.sections.flatMap((sec) => sec.fields.map((f) => f.fieldKey)));
+      expect(labelsAfter).not.toContain("status");
+
+      // Unhide restores it — this only ever toggles this tenant's own override, never the shared
+      // system field row.
+      const unhideRes = await server.inject({
+        method: "PATCH",
+        url: `/tenant/forms/department/fields/${statusField.id}/visibility`,
+        headers,
+        payload: { hidden: false },
+      });
+      expect(unhideRes.statusCode).toBe(200);
     } finally {
       await server.close();
     }

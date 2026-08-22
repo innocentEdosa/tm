@@ -754,6 +754,17 @@ export const CourseService = {
     if (input.status !== undefined && !PUBLISH_STATUSES.includes(input.status)) {
       return fail("invalid", "Invalid status");
     }
+    // Video Lesson Upload — `{ uploadPending: true }` is a legitimate DRAFT-only placeholder (an
+    // upload still in progress, or abandoned partway through), never a valid published state. Checked
+    // against whatever payload this update will actually leave in place — either the one being set
+    // right now, or the row's existing one if this call doesn't touch payload at all — so publishing
+    // can never race past an upload that hasn't actually finished.
+    if (input.status === "published" && existing.type === "video") {
+      const effectivePayload = (input.payload !== undefined ? input.payload : existing.payload) as { uploadPending?: boolean } | null;
+      if (effectivePayload?.uploadPending === true) {
+        return fail("invalid", "Cannot publish a video lesson until its video upload is complete");
+      }
+    }
 
     const [updated] = await ctx.db
       .update(contentItems)

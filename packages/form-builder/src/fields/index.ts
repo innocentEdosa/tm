@@ -15,6 +15,8 @@ import { CheckboxField } from "./CheckboxField";
 import { ToggleField } from "./ToggleField";
 import { FileField } from "./FileField";
 import { UserSelectField } from "./UserSelectField";
+import { PeopleSelectField } from "./PeopleSelectField";
+import { EntitySelectField } from "./EntitySelectField";
 
 /** One built-in component per `FieldType` (spec FR-012/FR-027) — `FormRenderer`'s type switch,
  * kept as a plain lookup table rather than a JSX switch statement so it stays a single place to
@@ -34,6 +36,8 @@ export const FIELD_TYPE_COMPONENTS: Record<FieldType, ComponentType<FieldRendere
   toggle: ToggleField,
   file: FileField,
   user_select: UserSelectField,
+  people_select: PeopleSelectField,
+  entity_select: EntitySelectField,
 };
 
 export type { FieldRendererProps } from "./field-renderer-props";
@@ -51,3 +55,5 @@ export { CheckboxField } from "./CheckboxField";
 export { ToggleField } from "./ToggleField";
 export { FileField } from "./FileField";
 export { UserSelectField } from "./UserSelectField";
+export { PeopleSelectField } from "./PeopleSelectField";
+export { EntitySelectField } from "./EntitySelectField";
